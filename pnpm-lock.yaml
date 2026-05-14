@@ -72,8 +72,8 @@ importers:
   packages/react:
     dependencies:
       '@proxies-sx/pool-sdk':
-        specifier: workspace:*
-        version: link:../sdk
+        specifier: ^0.5.1
+        version: 0.5.1
     devDependencies:
       '@testing-library/jest-dom':
         specifier: ^6.5.0
@@ -721,6 +721,10 @@ packages:
 
   '@panva/hkdf@1.2.1':
     resolution: {integrity: sha512-6oclG6Y3PiDFcoyk8srjLfVKyMfVCKJ27JwNPViuXziFpmdz+MZnZN/aKY0JGXgYuO/VghU0jcOAZgWXZ1Dmrw==}
+
+  '@proxies-sx/pool-sdk@0.5.1':
+    resolution: {integrity: sha512-QXc2b18PYWJmFQKrbvx3MYL7g6xNApr06U3vuKoSSDu6YX6AbpUDID2Q0JioEPx4LMuyer7ihtAr4XrWSflW/w==}
+    engines: {node: '>=18.17.0'}
 
   '@rollup/rollup-android-arm-eabi@4.60.2':
     resolution: {integrity: sha512-dnlp69efPPg6Uaw2dVqzWRfAWRnYVb1XJ8CyyhIbZeaq4CA5/mLeZ1IEt9QqQxmbdvagjLIm2ZL8BxXv5lH4Yw==}
@@ -2343,6 +2347,8 @@ snapshots:
       fastq: 1.20.1
 
   '@panva/hkdf@1.2.1': {}
+
+  '@proxies-sx/pool-sdk@0.5.1': {}
 
   '@rollup/rollup-android-arm-eabi@4.60.2':
     optional: true

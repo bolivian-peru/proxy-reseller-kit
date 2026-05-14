@@ -576,22 +576,35 @@ export class SessionsApi {
   constructor(private readonly client: ProxiesClient) {}
 
   /**
-   * List the current authenticated user's active sessions, including
-   * their `proxyUrl` template strings (with `<PASSWORD>` placeholder)
-   * for one-click copy in dashboards.
+   * List active sessions.
    *
-   * @example
+   * **Multi-tenant resellers MUST pass `pakKey`** — without it, the
+   * gateway scopes by the API-key owner (the reseller), so a customer
+   * dashboard built on top would see every other customer's sessions.
+   * The `pakKey` arg scopes the result to one customer's `pak_` only.
+   *
+   * @param pakKey  Optional. The customer's `pak_*` key to scope to.
+   *                Required when each end-customer has their own pak.
+   *
+   * @example single-tenant (your own usage)
    * ```ts
    * const { sessions, count } = await client.sessions.list();
-   * for (const s of sessions) {
-   *   if (s.isSynthesizedSid) continue;            // hide internal
-   *   const url = s.proxyUrl.replace('<PASSWORD>', myPak);
-   *   console.log(s.country, s.currentIp, '→', url);
-   * }
    * ```
+   *
+   * @example multi-tenant reseller
+   * ```ts
+   * // In your customer dashboard backend
+   * const { sessions } = await client.sessions.list(customer.pakKey);
+   * ```
+   *
+   * @since 0.4.0 — `pakKey` param added 0.5.0 to close cross-customer
+   *   session-list leak; passing it is strongly recommended for resellers.
    */
-  list(): Promise<ActiveSessionsResponse> {
-    return this.client.request<ActiveSessionsResponse>('/gateway/pool/my-sessions');
+  list(pakKey?: string): Promise<ActiveSessionsResponse> {
+    const qs = pakKey ? `?pakId=${encodeURIComponent(pakKey)}` : '';
+    return this.client.request<ActiveSessionsResponse>(
+      `/gateway/pool/my-sessions${qs}`,
+    );
   }
 
   /**
@@ -600,8 +613,13 @@ export class SessionsApi {
    *
    * Idempotent — closing an already-closed or non-existent session is
    * not an error (returns `success: false` with `Session not found`).
-   * Ownership is enforced server-side: passing a sessionKey that
-   * doesn't belong to the caller returns the same "not found" response.
+   *
+   * **Caller note (multi-tenant resellers):** the upstream ownership
+   * check is at the API-key level (the reseller), not the customer.
+   * You MUST verify the sessionKey belongs to this customer's `pak_`
+   * before calling — list with `pakKey` first, then close keys that
+   * appeared in that scoped list. Otherwise a customer could close
+   * another customer's session if they discovered the sessionKey.
    */
   close(sessionKey: string): Promise<{ success: boolean; message: string }> {
     return this.client.request(

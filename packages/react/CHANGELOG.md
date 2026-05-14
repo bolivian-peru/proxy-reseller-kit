@@ -2,6 +2,51 @@
 
 All notable changes to this package are documented here.
 
+## 0.5.2 — Cross-customer session-scoping fix
+
+Closes a multi-tenant data-leak + privilege issue in the session route
+handlers exposed by `createPoolApiHandlers()`. Affects any reseller
+using `<PoolPortal>` (or its `<ActiveSessionsTable>` subcomponent) to
+serve multiple end-customers behind one `psx_` API key.
+
+### Fixed (cross-customer)
+
+- **`handleListSessions`** (`GET /api/pool/my-sessions`) — previously
+  called `proxies.sessions.list()` with no scope. Upstream filters by
+  the API-key owner = the RESELLER, not the customer. End result:
+  customer A logging into the reseller's dashboard saw every other
+  customer's live sessions in `<ActiveSessionsTable>`. The handler now
+  resolves the calling customer's `pak_` first and passes it as
+  `sessions.list(pakKey)` so only that customer's sessions are returned.
+
+- **`handleCloseSession`** (`DELETE /api/pool/my-sessions/:sessionKey`)
+  — upstream ownership check is at API-key level only. A customer who
+  discovered another customer's `sessionKey` could close it. Handler
+  now lists the customer's own scoped sessions first and refuses any
+  `sessionKey` that doesn't appear there (returns 404).
+
+- **`handleCloseAllSessions`** (`DELETE /api/pool/my-sessions`) —
+  previously called `sessions.closeAll()`, which closes every session
+  under the API-key owner — i.e. EVERY customer of the reseller in a
+  single click. Replaced with a per-session loop scoped to the
+  calling customer's pak. Audit event `sessions.closed_all` still
+  fires with the actual count closed.
+
+### Changed
+
+- **Dependency** `@proxies-sx/pool-sdk: ^0.5.1 → ^0.5.2` (needed for
+  the new optional `pakKey` arg on `sessions.list`).
+
+### Performance
+
+- The session routes now do one extra `poolKeys.get(keyId)` round-trip
+  per call to resolve the customer's `pak_`. This is acceptable —
+  session-routes are user-initiated and infrequent. If the per-session
+  ownership re-check becomes a hot path for high-customer-count
+  resellers, a future version may cache pak resolution in-process.
+
+Reported and patched during a live debug session 2026-05-14.
+
 ## 0.5.0 — SDK 0.5.0 bump + server.ts get() fix
 
 Tracks SDK 0.5.0 (Pool Access Key security hardening) — bump dependency

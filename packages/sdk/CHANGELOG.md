@@ -5,7 +5,45 @@ All notable changes to this package are documented here. The format is based on
 semver from 0.3.0 onwards (the public surface is everything exported from
 `dist/index.d.ts`).
 
-## Unreleased — server-side improvements (no SDK change required)
+## 0.5.2 — Multi-tenant session-scoping fix
+
+Closes a cross-customer data leak in `client.sessions.list()` when the
+SDK is used by multi-tenant resellers (one `psx_` API key, many
+`pak_` end-customers).
+
+### Fixed
+
+- **`client.sessions.list()` cross-customer leak** — previously called
+  `/v1/gateway/pool/my-sessions` with no scope, which on the platform
+  side filters by the API-key owner (the reseller), not the end-customer.
+  In a reseller dashboard, that meant customer A could see every other
+  customer's live sessions through the same `<ActiveSessionsTable />`.
+  The method now takes an optional `pakKey` argument that's forwarded
+  as `?pakId=` — pass your end-customer's `pak_` value to scope the
+  list to just their sessions.
+
+### Changed
+
+- **`client.sessions.list(pakKey?: string)`** — new optional argument.
+  Backwards compatible: existing single-tenant callers (your own app
+  using one API key for your own usage) work unchanged.
+- **`client.sessions.close(sessionKey)` and `closeAll()`** — no signature
+  change, but the docstrings now make clear that upstream ownership is
+  enforced at the API-key level. Multi-tenant callers MUST list first
+  with `pakKey` and only close session keys that appeared there.
+
+### Recommended upgrade path for resellers
+
+1. Bump to `^0.5.2`.
+2. In your customer dashboard backend, pass the customer's `pak_` value
+   to `sessions.list(pak)`.
+3. If you use `@proxies-sx/pool-portal-react`'s `createPoolApiHandlers`,
+   upgrade that to `0.5.2` as well — it does the scoping for you.
+
+Reported during a live debug session 2026-05-14 with a reseller whose
+customer dashboard was returning the wrong customer's sessions.
+
+## 0.5.1 — server-side improvements (no SDK change required)
 
 The platform shipped a new pool-reconciliation subsystem on 2026-05-04
 (commit `8df63a49` on the `gb-system-api` repo). It runs every 5 min,
