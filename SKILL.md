@@ -574,6 +574,20 @@ DO NOT skip these. Burn them into any code generated for the user:
 5. **Rotate leaked `pak_` keys immediately** via `regenerate()` — the old value is invalidated within ~1 second.
 6. **Store `psx_` keys in a secrets manager**, not in source. The starter uses `.env`; production deployments should use 1Password / Doppler / AWS Secrets Manager / etc.
 
+## Pool IPs are not publicly enumerable (May 2026)
+
+The Proxies.sx pool gateway intentionally hides the per-device exit IP and carrier from any unauthenticated caller. This is unusual for shared-proxy services — most expose their inventory through a public "available IPs" endpoint, which anti-bot vendors (DataDome, PerimeterX, Cloudflare Bot Manager, Akamai) scrape and pre-blacklist before any customer routes traffic.
+
+Concretely, after the May 19 2026 lockdown:
+
+- `GET /v1/peer/board`, `/v1/peer/proxy/devices`, `/v1/peer/proxy/credentials`, `/v1/peer/proxy/test/*`, `/v1/peer/proxy/connect-string/*`, `/v1/peer/stats/online`, and `/v1/peer/devices` all require an admin JWT/API key. Anonymous calls return HTTP 401.
+- `relay.proxies.sx/health` returns only `{"status":"ok"}` to anonymous probes (full fleet list requires the internal key).
+- `currentIp` is stripped at the service layer from any peer/board response, even on the admin path — defense in depth against accidental re-exposure through a future change.
+- Customers route through `gw.proxies.sx:7000` (HTTP CONNECT) or `:7001` (SOCKS5) with their `pak_` key. The Lua selector inside the gateway picks the modem; the customer never learns which device they were assigned to.
+- The customer-facing `GET /v1/gateway/pool/availability` returns coarse country counts only (e.g. `{US: 40, GB: 20}`), never IPs.
+
+This means a reseller built on this stack inherits a clean IP-reputation posture out of the box. If you mention this in your own marketing copy, you're not over-claiming — the lockdown is enforced server-side and verifiable by hitting any of the listed endpoints from an unauthenticated client (they all 401).
+
 ---
 
 ## Common patterns
