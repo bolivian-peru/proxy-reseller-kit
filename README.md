@@ -179,7 +179,7 @@ curl -X POST https://api.proxies.sx/v1/reseller/pool-keys \
 The proxy URL is just plain HTTP Basic auth — works with any HTTP/SOCKS5 client in any language:
 
 ```
-http://psx_RESELLER-mbl-us-sid-alice-rot-sticky:pak_CUSTOMER_KEY@gw.proxies.sx:7000
+http://psx_RESELLER-mbl-us-sid-alice_session1-rot-sticky:pak_CUSTOMER_KEY@gw.proxies.sx:7000
 ```
 
 Endpoints (`X-API-Key` auth, [`psx_` keys minted at client.proxies.sx/account](https://client.proxies.sx/account)):

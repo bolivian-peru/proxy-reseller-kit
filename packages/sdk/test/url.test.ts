@@ -13,8 +13,8 @@ describe('buildProxyUrl', () => {
   });
 
   it('encodes country + rotation + sid in the username', () => {
-    expect(buildProxyUrl(USER, KEY, { country: 'us', rotation: 'sticky', sid: 'alice' })).toBe(
-      `http://psx_abc123-mbl-us-sid-alice-rot-sticky:pak_000000000000000000000001@${GATEWAY_HOST}:${HTTP_PORT}`,
+    expect(buildProxyUrl(USER, KEY, { country: 'us', rotation: 'sticky', sid: 'alice_session1' })).toBe(
+      `http://psx_abc123-mbl-us-sid-alice_session1-rot-sticky:pak_000000000000000000000001@${GATEWAY_HOST}:${HTTP_PORT}`,
     );
   });
 

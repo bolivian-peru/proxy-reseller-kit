@@ -18,14 +18,20 @@ export const SOCKS5_PORT = 7001;
  * username DSL — see
  * {@link https://client.proxies.sx/pool-proxy | the public docs}.
  *
+ * **`sid` rule (sticky session id):** must be **8–64 characters**, lowercase
+ * letters / digits / underscore (`[a-z0-9_]`), and not a predictable value
+ * (plain sequential numbers and prefixes like `test`/`demo`/`admin`/`user` are
+ * rejected). Use your customer's stable id, e.g. `cust_8f3a21bd`. Shorter or
+ * predictable sids are rejected by the gateway with `E_USERNAME_PARSE`.
+ *
  * @example
  * ```ts
  * buildProxyUrl('psx_abc123', 'pak_xxxxxxxxxxxxxxxxxxxxxxxx', {
  *   country: 'us',
- *   sid: 'alice',
+ *   sid: 'alice_session1',
  *   rotation: 'sticky',
  * });
- * // → "http://psx_abc123-mbl-us-sid-alice-rot-sticky:pak_...@gw.proxies.sx:7000"
+ * // → "http://psx_abc123-mbl-us-sid-alice_session1-rot-sticky:pak_...@gw.proxies.sx:7000"
  * ```
  *
  * @param proxyUsername Your reseller identifier, e.g. `psx_abc123`.

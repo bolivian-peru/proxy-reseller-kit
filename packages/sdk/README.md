@@ -43,10 +43,10 @@ const key = await proxies.poolKeys.create({
 // Build the proxy URL they'll use in their HTTP client
 const url = proxies.buildProxyUrl(key.key, {
   country: 'us',
-  sid: 'alice',
+  sid: 'alice_session1',
   rotation: 'sticky',
 });
-// → "http://psx_abc123-mbl-us-sid-alice-rot-sticky:pak_...@gw.proxies.sx:7000"
+// → "http://psx_abc123-mbl-us-sid-alice_session1-rot-sticky:pak_...@gw.proxies.sx:7000"
 
 // Hand the URL to the customer
 await email(customer, url);
@@ -412,7 +412,7 @@ curl -X POST https://api.proxies.sx/v1/reseller/pool-keys \
 **The proxy URL itself is plain HTTP Basic auth** — works with any HTTP/SOCKS5 client in any language. The username carries optional config tokens:
 
 ```
-http://psx_RESELLER_USERNAME-mbl-us-sid-alice-rot-sticky:pak_CUSTOMER_KEY@gw.proxies.sx:7000
+http://psx_RESELLER_USERNAME-mbl-us-sid-alice_session1-rot-sticky:pak_CUSTOMER_KEY@gw.proxies.sx:7000
 ```
 
 Token format inside the username (separated by `-`):
@@ -437,8 +437,8 @@ key = resp.json()["key"]  # "pak_..."
 
 # Use it as a proxy:
 proxies = {
-    "http":  f"http://psx_RESELLER-mbl-us-sid-alice-rot-sticky:{key}@gw.proxies.sx:7000",
-    "https": f"http://psx_RESELLER-mbl-us-sid-alice-rot-sticky:{key}@gw.proxies.sx:7000",
+    "http":  f"http://psx_RESELLER-mbl-us-sid-alice_session1-rot-sticky:{key}@gw.proxies.sx:7000",
+    "https": f"http://psx_RESELLER-mbl-us-sid-alice_session1-rot-sticky:{key}@gw.proxies.sx:7000",
 }
 r = requests.get("https://api.ipify.org", proxies=proxies)
 ```

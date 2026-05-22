@@ -285,7 +285,7 @@ const proxyUrl = proxies.buildProxyUrl(key.key, {
   sid: customerId,    // sticky session — same customer = same exit IP
   rotation: 'sticky',
 });
-// → "http://psx_abc-mbl-us-sid-123-rot-sticky:pak_xyz@gw.proxies.sx:7000"
+// → "http://psx_abc-mbl-us-sid-cust_7a3f9b-rot-sticky:pak_xyz@gw.proxies.sx:7000"
 ```
 
 **Other operations:**
@@ -508,7 +508,7 @@ The customer's HTTP/SOCKS5 client connects to:
 |---|---|---|
 | Pool | `mbl`, `peer` | `mbl` = ProxySmart mobile modems (default), `peer` = residential peer devices |
 | Country | `us`, `de`, `pl`, `fr`, `es`, `gb` | ISO 3166-1 alpha-2 |
-| `sid-{id}` | `sid-alice` | Sticky session — same `sid` keeps the same exit IP |
+| `sid-{id}` | `sid-alice_session1` | Sticky session — same `sid` keeps the same exit IP |
 | `rot-{mode}` | `rot-sticky`, `rot-auto10`, `rot-auto30`, `rot-hard`, `rot-none` | IP rotation policy |
 | `city-{name}` | `city-nyc` | City filter (when supported) |
 | `carrier-{name}` | `carrier-att`, `carrier-tmobile` | Carrier filter |
