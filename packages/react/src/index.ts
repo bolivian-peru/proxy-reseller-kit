@@ -25,6 +25,9 @@ export type { ActiveSessionsTableProps } from './ActiveSessionsTable';
 export { PoolDocsPanel } from './PoolDocsPanel';
 export type { PoolDocsPanelProps } from './PoolDocsPanel';
 
+export { PakQuickstart } from './PakQuickstart';
+export type { PakQuickstartProps } from './PakQuickstart';
+
 export { PoolStockGrid } from './PoolStockGrid';
 export type { PoolStockGridProps } from './PoolStockGrid';
 

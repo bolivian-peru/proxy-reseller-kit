@@ -334,6 +334,12 @@ export interface ActiveSession {
   /** The accountId (proxyUsername) the session belongs to. */
   accountId: string;
   /**
+   * Id of the Pool Access Key (`pak_`) that opened this session (absent for
+   * non-pak sessions). In multi-tenant reseller setups this is the per-customer
+   * ownership marker — matches a customer's `getUserKeyId`.
+   */
+  pakKeyId?: string;
+  /**
    * The session id from the customer's `-sid-` token, or a synthesized
    * `auto_*` / `socks5_*` id for sessions created without an explicit sid.
    * Synthesized sessions get a 5-min TTL and are not meant to be reused.

@@ -189,44 +189,24 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
   };
 
   /**
-   * Resolve the customer's pak_ value (not just the keyId) so session
-   * routes can scope by pakId. Returns null if the customer has no key
-   * — handlers short-circuit with 404 in that case.
+   * GET /me/sessions — the CURRENT user's live gateway sessions only.
    *
-   * Cached implicitly via the SDK's request layer; one extra round-trip
-   * per session-route call is acceptable given how rarely customers open
-   * the sessions tab.
-   */
-  const resolveCustomerPak = async (userId: string): Promise<string | null> => {
-    const keyId = await getUserKeyId(userId);
-    if (!keyId) return null;
-    try {
-      const key = await proxies.poolKeys.get(keyId);
-      return key.key ?? null;
-    } catch {
-      return null;
-    }
-  };
-
-  /**
-   * GET /my-sessions — proxies to SDK `client.sessions.list(pakKey)`.
-   *
-   * Scoping (May 2026 — closes cross-customer session-list leak):
-   * the upstream `/v1/gateway/pool/my-sessions` filters by the API-key
-   * owner = the reseller, not the end-customer. We must pass the
-   * customer's pak_ as `?pakId=` so the upstream filters down to just
-   * THIS customer's sessions. Without it, customer A would see every
-   * other customer's sessions inside the same reseller.
+   * MUST be scoped by the user's own pak: `proxies.sessions.list()` uses the
+   * reseller's API key and would otherwise return EVERY customer's sessions.
+   * We resolve the caller's key id via `getUserKeyId` and pass it as `pakId`
+   * so the platform filters server-side. A user without a key has no sessions.
    */
   const handleListSessions = async (req: Request): Promise<Response> => {
     const userId = await getSessionUserId(req);
     if (!userId) return json({ error: 'unauthorized' }, { status: 401 });
 
-    const pakKey = await resolveCustomerPak(userId);
-    if (!pakKey) return json({ error: 'no_key' }, { status: 404 });
+    const keyId = await getUserKeyId(userId);
+    if (!keyId) {
+      return json({ sessions: [], count: 0 }, { headers: { 'Cache-Control': 'private, no-store' } });
+    }
 
     try {
-      const result = await proxies.sessions.list(pakKey);
+      const result = await proxies.sessions.list({ pakId: keyId });
       return json(result, { headers: { 'Cache-Control': 'private, no-store' } });
     } catch (err) {
       const apiErr = err as ProxiesApiError;
@@ -238,14 +218,9 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
   };
 
   /**
-   * DELETE /my-sessions/:sessionKey — closes one session.
-   *
-   * Ownership re-check (May 2026): the upstream close route ONLY checks
-   * that the sessionKey belongs to the API-key owner (= the reseller),
-   * not to the requesting customer. We therefore list the customer's
-   * own sessions first (scoped by their pak_) and refuse to close any
-   * sessionKey that doesn't appear there. Otherwise a customer who
-   * discovered another customer's sessionKey could close it.
+   * DELETE /me/sessions/:sessionKey — closes one session the caller owns.
+   * Scoped by the caller's pak (`pakId`) so a customer cannot close a
+   * co-tenant's session; the platform returns "not found" on a mismatch.
    */
   const handleCloseSession = async (
     req: Request,
@@ -254,18 +229,11 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
     const userId = await getSessionUserId(req);
     if (!userId) return json({ error: 'unauthorized' }, { status: 401 });
 
-    const pakKey = await resolveCustomerPak(userId);
-    if (!pakKey) return json({ error: 'no_key' }, { status: 404 });
+    const keyId = await getUserKeyId(userId);
+    if (!keyId) return json({ success: false, message: 'Session not found' });
 
     try {
-      // Ownership re-check: only allow closing keys in this customer's scope.
-      const scoped = await proxies.sessions.list(pakKey);
-      const owned = scoped.sessions?.some((s: any) => s.sessionKey === sessionKey);
-      if (!owned) {
-        return json({ error: 'not_found' }, { status: 404 });
-      }
-
-      const result = await proxies.sessions.close(sessionKey);
+      const result = await proxies.sessions.close(sessionKey, { pakId: keyId });
       if (onAudit) {
         await onAudit({ type: 'session.closed', userId, sessionKey });
       }
@@ -280,40 +248,23 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
   };
 
   /**
-   * DELETE /my-sessions — closes ALL of the current customer's sessions.
-   *
-   * Scoping (May 2026): the upstream closeAll closes every session for
-   * the API-key owner — i.e. EVERY customer of this reseller. That's
-   * catastrophic. We instead list the customer's scoped sessions and
-   * close them one-by-one with the per-session ownership re-check.
+   * DELETE /me/sessions — closes ALL of the CURRENT user's sessions only.
+   * Scoped by the caller's pak (`pakId`) so this never closes other customers'
+   * sessions under the same reseller API key.
    */
   const handleCloseAllSessions = async (req: Request): Promise<Response> => {
     const userId = await getSessionUserId(req);
     if (!userId) return json({ error: 'unauthorized' }, { status: 401 });
 
-    const pakKey = await resolveCustomerPak(userId);
-    if (!pakKey) return json({ error: 'no_key' }, { status: 404 });
+    const keyId = await getUserKeyId(userId);
+    if (!keyId) return json({ success: true, message: 'No sessions', count: 0 });
 
     try {
-      const scoped = await proxies.sessions.list(pakKey);
-      const keys: string[] = (scoped.sessions || [])
-        .map((s: any) => s.sessionKey)
-        .filter(Boolean);
-
-      let closed = 0;
-      for (const k of keys) {
-        try {
-          const r = await proxies.sessions.close(k);
-          if (r?.success) closed++;
-        } catch {
-          // Best-effort — keep closing the rest.
-        }
-      }
-
+      const result = await proxies.sessions.closeAll({ pakId: keyId });
       if (onAudit) {
-        await onAudit({ type: 'sessions.closed_all', userId, count: closed });
+        await onAudit({ type: 'sessions.closed_all', userId, count: result.count });
       }
-      return json({ success: true, message: 'ok', count: closed });
+      return json(result);
     } catch (err) {
       const apiErr = err as ProxiesApiError;
       return json(

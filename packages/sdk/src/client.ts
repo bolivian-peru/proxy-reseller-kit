@@ -578,17 +578,19 @@ export class SessionsApi {
   /**
    * List active sessions.
    *
-   * **Multi-tenant resellers MUST pass `pakKey`** — without it, the
-   * gateway scopes by the API-key owner (the reseller), so a customer
-   * dashboard built on top would see every other customer's sessions.
-   * The `pakKey` arg scopes the result to one customer's `pak_` only.
+   * MULTI-TENANT: when one API key serves many customers, pass `{ pakId }` to
+   * scope the result to a single customer's sessions. `pakId` is the customer's
+   * Pool Access Key id (`PoolAccessKey.id`, what `getUserKeyId` returns) or its
+   * `pak_` value. Without it, the API key holder's full session list is returned.
    *
-   * @param pakKey  Optional. The customer's `pak_*` key to scope to.
-   *                Required when each end-customer has their own pak.
-   *
-   * @example single-tenant (your own usage)
+   * @example
    * ```ts
-   * const { sessions, count } = await client.sessions.list();
+   * const { sessions, count } = await client.sessions.list({ pakId });
+   * for (const s of sessions) {
+   *   if (s.isSynthesizedSid) continue;            // hide internal
+   *   const url = s.proxyUrl.replace('<PASSWORD>', myPak);
+   *   console.log(s.country, s.currentIp, '→', url);
+   * }
    * ```
    *
    * @example multi-tenant reseller
@@ -600,41 +602,36 @@ export class SessionsApi {
    * @since 0.4.0 — `pakKey` param added 0.5.0 to close cross-customer
    *   session-list leak; passing it is strongly recommended for resellers.
    */
-  list(pakKey?: string): Promise<ActiveSessionsResponse> {
-    const qs = pakKey ? `?pakId=${encodeURIComponent(pakKey)}` : '';
-    return this.client.request<ActiveSessionsResponse>(
-      `/gateway/pool/my-sessions${qs}`,
-    );
+  list(opts?: { pakId?: string }): Promise<ActiveSessionsResponse> {
+    const qs = opts?.pakId ? `?pakId=${encodeURIComponent(opts.pakId)}` : '';
+    return this.client.request<ActiveSessionsResponse>(`/gateway/pool/my-sessions${qs}`);
   }
 
   /**
-   * Close ONE of the current user's sessions. The customer's connection
-   * drops on the next gateway-side check (within ~5 s).
+   * Close ONE session. The customer's connection drops on the next
+   * gateway-side check (within ~5 s).
    *
-   * Idempotent — closing an already-closed or non-existent session is
-   * not an error (returns `success: false` with `Session not found`).
-   *
-   * **Caller note (multi-tenant resellers):** the upstream ownership
-   * check is at the API-key level (the reseller), not the customer.
-   * You MUST verify the sessionKey belongs to this customer's `pak_`
-   * before calling — list with `pakKey` first, then close keys that
-   * appeared in that scoped list. Otherwise a customer could close
-   * another customer's session if they discovered the sessionKey.
+   * Idempotent — closing an already-closed or non-existent session returns
+   * `success: false` with `Session not found`. MULTI-TENANT: pass `{ pakId }`
+   * so the server verifies the session belongs to that customer before closing —
+   * without it, any session under the API key holder is closable.
    */
-  close(sessionKey: string): Promise<{ success: boolean; message: string }> {
+  close(sessionKey: string, opts?: { pakId?: string }): Promise<{ success: boolean; message: string }> {
+    const qs = opts?.pakId ? `?pakId=${encodeURIComponent(opts.pakId)}` : '';
     return this.client.request(
-      `/gateway/pool/my-sessions/${encodeURIComponent(sessionKey)}`,
+      `/gateway/pool/my-sessions/${encodeURIComponent(sessionKey)}${qs}`,
       { method: 'DELETE' },
     );
   }
 
   /**
-   * Close ALL active sessions for the current user. Use sparingly —
-   * this terminates every live connection, including ones the customer
-   * is actively using.
+   * Close ALL active sessions. Use sparingly. MULTI-TENANT: pass `{ pakId }` to
+   * close only that customer's sessions — WITHOUT it this closes every session
+   * for the API key holder (i.e. all customers of a reseller).
    */
-  closeAll(): Promise<{ success: boolean; message: string; count: number }> {
-    return this.client.request('/gateway/pool/my-sessions', { method: 'DELETE' });
+  closeAll(opts?: { pakId?: string }): Promise<{ success: boolean; message: string; count: number }> {
+    const qs = opts?.pakId ? `?pakId=${encodeURIComponent(opts.pakId)}` : '';
+    return this.client.request(`/gateway/pool/my-sessions${qs}`, { method: 'DELETE' });
   }
 }
 

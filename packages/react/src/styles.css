@@ -640,3 +640,148 @@
   color: var(--psx-muted);
   font-size: 13px;
 }
+
+/* ──────────────────────────────────────────────────────────────────
+   PakQuickstart — 30-second customer onboarding card.
+   Designed to live next to the customer's pak credential display.
+   ────────────────────────────────────────────────────────────── */
+
+.pp-pakquick {
+  font-family: var(--pp-font, system-ui, -apple-system, sans-serif);
+  color: var(--pp-fg, #111);
+  background: var(--pp-bg, #fff);
+  border: 1px solid var(--pp-border, #e5e7eb);
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 760px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.pp-pakquick__header { margin-bottom: 14px; }
+.pp-pakquick__title  { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+.pp-pakquick__lead   { color: var(--pp-muted, #6b7280); margin: 0; font-size: 13px; }
+
+.pp-pakquick__creds {
+  background: #f8fafc;
+  border: 1px solid var(--pp-border, #e5e7eb);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pp-pakquick__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.pp-pakquick__label { color: var(--pp-muted, #6b7280); width: 90px; flex-shrink: 0; }
+.pp-pakquick__mono  { font-family: var(--pp-code-font, ui-monospace, monospace); font-size: 13px; flex: 1; word-break: break-all; }
+.pp-pakquick__btn-link {
+  background: none;
+  border: 0;
+  color: var(--pp-primary, #2563eb);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+.pp-pakquick__btn-link:hover { text-decoration: underline; }
+
+.pp-pakquick__meter { margin: 14px 0; }
+.pp-pakquick__meter-row {
+  display: flex; justify-content: space-between;
+  font-size: 12px; color: var(--pp-muted, #6b7280);
+  margin-bottom: 4px;
+}
+.pp-pakquick__meter-bar {
+  background: #e5e7eb; height: 6px; border-radius: 3px; overflow: hidden;
+}
+.pp-pakquick__meter-fill {
+  background: var(--pp-primary, #2563eb);
+  height: 100%;
+  transition: width 240ms ease;
+}
+
+.pp-pakquick__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 14px 0;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+.pp-pakquick__field {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px; color: var(--pp-muted, #6b7280);
+}
+.pp-pakquick__field--check { flex-direction: row; align-items: center; gap: 8px; }
+.pp-pakquick__field select,
+.pp-pakquick__field input[type=text] {
+  padding: 6px 8px;
+  border: 1px solid var(--pp-border, #e5e7eb);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  min-width: 180px;
+}
+
+.pp-pakquick__example { margin: 14px 0; }
+.pp-pakquick__example-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; color: var(--pp-muted, #6b7280);
+  margin-bottom: 6px;
+}
+.pp-pakquick__btn {
+  background: var(--pp-primary, #2563eb);
+  color: #fff;
+  border: 0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.pp-pakquick__btn:hover { opacity: 0.9; }
+.pp-pakquick__pre {
+  background: #0f172a;
+  color: #f1f5f9;
+  padding: 12px;
+  border-radius: 8px;
+  font-family: var(--pp-code-font, ui-monospace, monospace);
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+.pp-pakquick__details { margin: 12px 0; }
+.pp-pakquick__details summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--pp-primary, #2563eb);
+  padding: 6px 0;
+  user-select: none;
+}
+.pp-pakquick__details summary:hover { text-decoration: underline; }
+
+.pp-pakquick__hint { font-size: 13px; color: var(--pp-muted, #6b7280); margin: 8px 0; }
+
+.pp-pakquick__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+.pp-pakquick__table th,
+.pp-pakquick__table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--pp-border, #e5e7eb);
+  vertical-align: top;
+}
+.pp-pakquick__table th { color: var(--pp-muted, #6b7280); font-weight: 500; font-size: 12px; }
+.pp-pakquick__table code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 12px; }

@@ -96,6 +96,44 @@ Non-JS users: skip the npm packages and call the REST API directly. See [`SKILL.
 
 ---
 
+## Show your customers HOW to use their pak (recommended)
+
+Customers who get a `pak_` and a password but don't know the username format
+(`pak_xxx-mbl-COUNTRY`) just 407 once and give up. **Conversion problem #1.**
+
+Three ways to fix it (pick one or stack them):
+
+**1. Drop in `<PakQuickstart>`** — React component, prefilled with the customer's actual credentials:
+
+```tsx
+import { PakQuickstart } from '@proxies-sx/pool-portal-react';
+import '@proxies-sx/pool-portal-react/styles.css';
+
+<PakQuickstart
+  pak={pak.key}
+  secret={pakSecret}        // optional; defaults to placeholder
+  capGB={pak.trafficCapGB}
+  usedGB={pak.trafficUsedMB / 1024}
+/>
+```
+
+Renders: 30-second curl, country picker, sticky-session toggle, copy buttons,
+SOCKS5 + Python + Node + Playwright snippets, troubleshooting table.
+~80 lines tall, drops in next to wherever you display the pak.
+
+**2. Link to the hosted explainer** — for portals not built in React:
+```
+https://agents.proxies.sx/pool-quickstart.html?pak=pak_xxx&pw=YOUR_PASSWORD
+```
+The page reads `pak` and `pw` from the URL and prefills the curl. Iframe it,
+linked-button it, or paste the URL into a welcome email.
+
+**3. Email it on mint** — when you mint a pak, send the customer an email with
+the credentials AND a link to the quickstart. Even a single line — *"Here's
+your pak. Use it like this: `curl -x http://pak_xxx-mbl-us:PW@gw.proxies.sx:7000 https://api.ipify.org`. Full quickstart: https://agents.proxies.sx/pool-quickstart.html"* — converts ~3× better than no email.
+
+---
+
 ## Quickstart
 
 ### Deploy a full storefront in 10 minutes
