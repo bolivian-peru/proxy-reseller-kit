@@ -5,7 +5,31 @@ All notable changes to this package are documented here. The format is based on
 semver from 0.3.0 onwards (the public surface is everything exported from
 `dist/index.d.ts`).
 
-## 0.5.2 — Multi-tenant session-scoping fix
+> **Published on npm: `0.5.1` (latest).** `0.5.2` and `0.6.0` below are staged in
+> this repo but **not yet published**. Until `npm view @proxies-sx/pool-sdk
+> version` reads `0.6.0`, multi-tenant resellers must lock down the session routes
+> at their own route layer — see the React package README "Session routes —
+> multi-tenant security" and `RESELLER-UPDATE-PROMPT` in the repo root.
+
+## 0.6.0 — Per-customer session scoping (`{ pakId }`) [unreleased]
+
+Finalizes the multi-tenant session fix drafted in 0.5.2 with an explicit,
+typed scoping argument instead of a positional one.
+
+### Added / Changed
+
+- **`sessions.list({ pakId })` / `close(key, { pakId })` / `closeAll({ pakId })`** —
+  all three session methods now take an options object with a `pakId` (a
+  customer's Pool Access Key id or `pak_` value). When passed, the platform
+  filters/verifies ownership at the **end-customer** level, not just the API-key
+  owner. Called with no argument, behavior is unchanged (account-wide).
+- **`ActiveSession.pakKeyId`** — sessions now carry the owning key id, so a
+  dashboard can attribute each session to a customer.
+- Supersedes 0.5.2's positional `list(pakKey)` shape (which never shipped to
+  npm). `@proxies-sx/pool-portal-react` 0.6.1 threads `getUserKeyId` into every
+  session route on top of this.
+
+## 0.5.2 — Multi-tenant session-scoping fix [superseded by 0.6.0, never published]
 
 Closes a cross-customer data leak in `client.sessions.list()` when the
 SDK is used by multi-tenant resellers (one `psx_` API key, many

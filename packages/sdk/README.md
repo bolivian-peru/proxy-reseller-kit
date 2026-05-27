@@ -132,13 +132,15 @@ The platform requires recent auth (JWT < 5 min OR `X-Confirm-Password`) for `POS
 
 ### `proxies.sessions` (v0.4.0+)
 
-Live gateway session management for the current reseller's customers.
+Live gateway session management. **These operate at the scope of your `psx_` API
+key — i.e. across ALL of your customers, not per-customer** (see the security
+warning below before exposing them in a multi-tenant dashboard).
 
 | Method | Returns | Description |
 |---|---|---|
-| `list()` | `{ sessions: ActiveSession[]; count: number }` | All live sessions for the current account, with `proxyUrl`/`socks5Url` template strings (`<PASSWORD>` placeholder) |
-| `close(sessionKey)` | `{ success, message }` | Close one session. Idempotent + ownership-checked server-side |
-| `closeAll()` | `{ success, count }` | Close all live sessions for the current user |
+| `list()` | `{ sessions: ActiveSession[]; count: number }` | All live sessions under your API key, with `proxyUrl`/`socks5Url` template strings (`<PASSWORD>` placeholder) |
+| `close(sessionKey)` | `{ success, message }` | Close one session by key. Idempotent. Ownership is checked at the **API-key** level, not per end-customer |
+| `closeAll()` | `{ success, count }` | Close **every** live session under your API key |
 
 ```ts
 const { sessions } = await proxies.sessions.list();
@@ -150,9 +152,21 @@ for (const s of sessions) {
 await proxies.sessions.close('gw:session:psx_xxx:bot07');
 ```
 
+> ⚠️ **Multi-tenant security (read before building a customer-facing sessions UI).**
+> On the published **0.5.x** SDK these three methods take **no arguments** and
+> `ActiveSession` has **no `pakKeyId`** — there is no per-customer filter. If you
+> expose them to end-customers through `@proxies-sx/pool-portal-react`'s
+> auto-handlers, **any signed-in customer can list/close/wipe other customers'
+> sessions.** Until 0.6.x ships, do **not** expose these routes to customers —
+> lock them down at your route layer (return empty for the list, 403 for closes).
+> See the React package's "Session routes — multi-tenant security" section and
+> `RESELLER-UPDATE-PROMPT` for drop-in code. Per-customer scoping
+> (`list({ pakId })`, `close(key, { pakId })`, `ActiveSession.pakKeyId`) lands in
+> **0.6.0** — confirm with `npm view @proxies-sx/pool-sdk version` before relying on it.
+
 `ActiveSession` carries `country`, `pool`, `currentIp`, `bytesIn/Out`,
 `requestCount`, `ttl`, `expiresAt`, `rotation`, `proxyUrl`, `socks5Url`,
-`isSynthesizedSid`. See [CHANGELOG.md](./CHANGELOG.md#040--sessions-api-multi-port-spawner-ux)
+`isSynthesizedSid` (plus `pakKeyId` in 0.6.0+). See [CHANGELOG.md](./CHANGELOG.md#040--sessions-api-multi-port-spawner-ux)
 for full type details.
 
 #### Idempotency on writes (v0.3.0+)

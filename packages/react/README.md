@@ -167,6 +167,12 @@ Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation
 
 ### `<ActiveSessionsTable>` — live session manager (v0.4.0+)
 
+> ⚠️ **Do NOT mount this in a multi-tenant customer dashboard on 0.5.x.** The
+> `/my-sessions` routes it polls are **not scoped per-customer** on the published
+> SDK (see "Session routes — multi-tenant security" below). It is safe only in a
+> **single-tenant / admin** context (one operator viewing all sessions). For
+> customer-facing dashboards, leave it out until you upgrade to 0.6.x.
+
 ```tsx
 <ActiveSessionsTable
   apiRoute="/api/pool"
@@ -204,15 +210,55 @@ Live online endpoint counts per country for both `mbl` mobile and `peer` residen
 
 ### Server handlers (v0.4.0+)
 
-`createPoolApiHandlers()` now exports a third method (`DELETE`) for the new session routes:
+`createPoolApiHandlers()` exports three methods. `GET` (`/me`, `/stock`,
+`/incidents`, `/my-sessions`) and `POST` (`/regenerate`) and `DELETE`
+(`/my-sessions`):
 
-| Method | Path | Action |
-|---|---|---|
-| `GET` | `<route>/my-sessions` | List current user's sessions |
-| `DELETE` | `<route>/my-sessions/<sessionKey>` | Close one (ownership-checked upstream) |
-| `DELETE` | `<route>/my-sessions` | Close all for current user |
+| Method | Path | Action | Scoped to caller? |
+|---|---|---|---|
+| `GET` | `<route>/me` | Current user's `pak_` + usage | ✅ via `getUserKeyId` |
+| `POST` | `<route>/regenerate` | Rotate current user's key | ✅ via `getUserKeyId` |
+| `GET` | `<route>/my-sessions` | List sessions | ⚠️ **NO on 0.5.x** — returns all account sessions |
+| `DELETE` | `<route>/my-sessions/<sessionKey>` | Close one | ⚠️ **NO on 0.5.x** — any key under the account |
+| `DELETE` | `<route>/my-sessions` | Close all | ⚠️ **NO on 0.5.x** — every account session |
 
-Make sure your route file exports all three: `export const { GET, POST, DELETE } = createPoolApiHandlers({...})`.
+`export const { GET, POST, DELETE } = createPoolApiHandlers({...})`.
+
+#### Session routes — multi-tenant security (REQUIRED on 0.5.x)
+
+`/me` and `/regenerate` are scoped to the caller via `getUserKeyId`. **The
+`/my-sessions` routes are NOT.** On the published 0.5.x SDK the underlying
+`sessions.list()/close()/closeAll()` take no arguments and `ActiveSession` has no
+`pakKeyId`, so the handlers operate across **every** session under your `psx_`
+API key. A signed-in customer can call these routes directly (cookie auth) and
+**list, close, or wipe other customers' sessions** — even with the UI removed,
+the routes stay mounted.
+
+**If your app is multi-tenant (each end-customer has their own `pak_`), lock the
+session routes down at your route layer until you upgrade to 0.6.x:**
+
+```ts
+const base = createPoolApiHandlers({ proxies, getSessionUserId, getUserKeyId, gatewayHost });
+const isSessionPath = (req: Request) => /\/my-sessions(?:\/|$)/.test(new URL(req.url).pathname);
+
+export async function GET(req: Request) {
+  if (isSessionPath(req))
+    return Response.json({ sessions: [], count: 0 }, { headers: { 'Cache-Control': 'private, no-store' } });
+  return base.GET(req);
+}
+export async function DELETE(req: Request) {
+  if (isSessionPath(req)) return Response.json({ error: 'session_management_disabled' }, { status: 403 });
+  return base.DELETE(req);
+}
+export const POST = base.POST;
+```
+
+Sessions still auto-expire via the gateway's Redis TTL, so customers lose nothing
+functional — only the manual session panel, which returns when **0.6.x** ships
+(`sessions.list({ pakId })` + `ActiveSession.pakKeyId` + `createPoolApiHandlers`
+auto-threading `getUserKeyId` into every session route). Single-tenant/admin apps
+(one operator viewing all sessions) can mount the routes as-is. Full copy-paste
+guidance for non-React stacks: `RESELLER-UPDATE-PROMPT` in the repo root.
 
 ---
 

@@ -2,7 +2,31 @@
 
 All notable changes to this package are documented here.
 
-## 0.5.2 — Cross-customer session-scoping fix
+> **Published on npm: `0.5.1` (latest).** `0.5.2` and `0.6.1` below are staged in
+> this repo but **not yet published**. On the published `0.5.x`, the
+> `/my-sessions` routes from `createPoolApiHandlers()` are **not scoped per
+> end-customer** — multi-tenant resellers must lock them down at their own route
+> layer (see README "Session routes — multi-tenant security" and
+> `RESELLER-UPDATE-PROMPT` in the repo root). `0.6.1` fixes this natively.
+
+## 0.6.1 — Session routes scoped via `getUserKeyId` (`{ pakId }`) [unreleased]
+
+Depends on `@proxies-sx/pool-sdk@^0.6.0`. Completes the multi-tenant session
+fix end-to-end: `createPoolApiHandlers()` now threads the per-request
+`getUserKeyId` into **every** session route, so customers only ever see and
+close their own sessions — no host-side wrapper needed.
+
+### Fixed / Changed
+
+- **`handleListSessions` / `handleCloseSession` / `handleCloseAllSessions`** now
+  resolve the caller's key id via `getUserKeyId` and pass it as `{ pakId }` to
+  the SDK. A user with no key gets an empty list / no-op close (never an unscoped
+  account-wide call). Supersedes 0.5.2's client-side ownership re-check.
+- **`<PakQuickstart>`** added — minimal copy-the-proxy-string onboarding block.
+- After upgrading to `^0.6.1`, remove any `/my-sessions` route-layer lockdown you
+  added for 0.5.x and re-enable `<ActiveSessionsTable>`.
+
+## 0.5.2 — Cross-customer session-scoping fix [superseded by 0.6.1, never published]
 
 Closes a multi-tenant data-leak + privilege issue in the session route
 handlers exposed by `createPoolApiHandlers()`. Affects any reseller
