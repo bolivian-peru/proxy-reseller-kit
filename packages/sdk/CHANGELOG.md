@@ -5,13 +5,14 @@ All notable changes to this package are documented here. The format is based on
 semver from 0.3.0 onwards (the public surface is everything exported from
 `dist/index.d.ts`).
 
-> **Published on npm: `0.5.1` (latest).** `0.5.2` and `0.6.0` below are staged in
-> this repo but **not yet published**. Until `npm view @proxies-sx/pool-sdk
-> version` reads `0.6.0`, multi-tenant resellers must lock down the session routes
-> at their own route layer — see the React package README "Session routes —
-> multi-tenant security" and `RESELLER-UPDATE-PROMPT` in the repo root.
+> **npm registry latest: `0.5.1`.** The current **`0.6.0`** build is distributed
+> as a GitHub release tarball ([v0.6.1](https://github.com/bolivian-peru/proxy-reseller-kit/releases/tag/v0.6.1))
+> until it is published to npm:
+> ```bash
+> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.1/proxies-sx-pool-sdk-0.6.0.tgz
+> ```
 
-## 0.6.0 — Per-customer session scoping (`{ pakId }`) [unreleased]
+## 0.6.0 — Per-customer session scoping (`{ pakId }`) [released via GitHub tarball v0.6.1]
 
 Finalizes the multi-tenant session fix drafted in 0.5.2 with an explicit,
 typed scoping argument instead of a positional one.

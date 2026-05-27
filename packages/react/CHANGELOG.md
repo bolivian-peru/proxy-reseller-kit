@@ -2,14 +2,14 @@
 
 All notable changes to this package are documented here.
 
-> **Published on npm: `0.5.1` (latest).** `0.5.2` and `0.6.1` below are staged in
-> this repo but **not yet published**. On the published `0.5.x`, the
-> `/my-sessions` routes from `createPoolApiHandlers()` are **not scoped per
-> end-customer** — multi-tenant resellers must lock them down at their own route
-> layer (see README "Session routes — multi-tenant security" and
-> `RESELLER-UPDATE-PROMPT` in the repo root). `0.6.1` fixes this natively.
+> **npm registry latest: `0.5.1`.** The current **`0.6.1`** build is distributed
+> as a GitHub release tarball ([v0.6.1](https://github.com/bolivian-peru/proxy-reseller-kit/releases/tag/v0.6.1))
+> until it is published to npm. Installing it pulls `pool-sdk@0.6.0` automatically:
+> ```bash
+> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.1/proxies-sx-pool-portal-react-0.6.1.tgz
+> ```
 
-## 0.6.1 — Session routes scoped via `getUserKeyId` (`{ pakId }`) [unreleased]
+## 0.6.1 — Session routes scoped via `getUserKeyId` (`{ pakId }`) [released via GitHub tarball v0.6.1]
 
 Depends on `@proxies-sx/pool-sdk@^0.6.0`. Completes the multi-tenant session
 fix end-to-end: `createPoolApiHandlers()` now threads the per-request
