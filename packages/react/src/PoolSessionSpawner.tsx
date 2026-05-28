@@ -26,9 +26,10 @@ import type {
  * - `same`: all spawned URLs share a single sid. They all hit the
  *   SAME gateway session and SAME IP. Use for sticky-IP workflows
  *   that distribute work across multiple consumers.
- * - `none`: no sid token. The gateway synthesizes a per-connection
- *   `auto_*` id with 5-min TTL — fine for one-shot probes, NOT for
- *   stateful workflows. The active-sessions table hides these by default.
+ * - `none`: per-row sid (same wire format as `unique`) but treated as
+ *   throwaway by the caller — used when you don't want long-lived
+ *   stickiness but still need N distinct URLs (the spawner never emits
+ *   identical strings; 4 identical rows is a UX bug, not a feature).
  *
  * @public
  */
@@ -162,9 +163,13 @@ export function buildProxyString(opts: {
 }): string {
   const port = opts.protocol === 'http' ? 7000 : 7001;
   const tokens = [opts.pool, opts.country];
-  if (opts.sessionType === 'unique') tokens.push('sid', `${opts.sessionPrefix}${opts.index}`);
-  else if (opts.sessionType === 'same') tokens.push('sid', opts.sessionPrefix);
-  // 'none' → no -sid- token; gateway synthesizes a 5-min-TTL id.
+  // Always inject a sid when spawning a multi-row table. 'same' shares one;
+  // 'unique' and 'none' both give per-row sids — the only difference is that
+  // 'none' callers don't want long-lived stickiness, but the URLs must still be
+  // distinct or the spawner is useless (4 identical strings is a UX bug).
+  // The gateway will still synthesize a fresh internal session when needed.
+  if (opts.sessionType === 'same') tokens.push('sid', opts.sessionPrefix);
+  else tokens.push('sid', `${opts.sessionPrefix}${opts.index}`);
   if (opts.rotation !== 'none' && opts.rotation !== 'auto10') {
     tokens.push('rot', opts.rotation);
   }
@@ -394,7 +399,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
           >
             <option value="unique">Unique per row (each gets its own IP)</option>
             <option value="same">Same sid (all share one IP)</option>
-            <option value="none">No sid (synthesized, 5-min TTL)</option>
+            <option value="none">Throwaway per row (distinct URLs, short-lived)</option>
           </select>
         </label>
 
