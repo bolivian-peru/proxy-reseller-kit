@@ -11,9 +11,23 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Node ≥ 20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
 
-[**Skill (AI agents)**](#for-ai-agents-and-code-builders) · [**Pick a path**](#pick-an-integration-path) · [**Quickstart**](#quickstart) · [**Architecture**](#architecture) · [**Deploy**](#deploy)
+[**Skill (AI agents)**](#for-ai-agents-and-code-builders) · [**Pick a path**](#pick-an-integration-path) · [**Quickstart**](#quickstart) · [**Architecture**](#architecture) · [**Deploy**](#deploy) · [**📖 Wiki**](https://github.com/bolivian-peru/proxy-reseller-kit/wiki)
 
 </div>
+
+---
+
+## 📖 Wiki — operational and conceptual docs
+
+Long-form docs that don't belong inline with code live in the **[wiki](https://github.com/bolivian-peru/proxy-reseller-kit/wiki)**:
+
+- [Getting Started](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Getting-Started) — full onboarding from zero
+- [Integration Paths](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Integration-Paths) — A/B/C/D decision tree
+- [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation) ⭐ — what "sticky" actually guarantees on mobile carriers
+- [Pak Key Lifecycle](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Pak-Key-Lifecycle) — mint, top-up, rotate, revoke
+- [x402 and Wallet Setup](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup) — accept USDC from AI agents
+- [Troubleshooting](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Troubleshooting) — flat error catalog
+- [Glossary](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Glossary) — every term defined
 
 ---
 
@@ -160,6 +174,29 @@ linked-button it, or paste the URL into a welcome email.
 **3. Email it on mint** — when you mint a pak, send the customer an email with
 the credentials AND a link to the quickstart. Even a single line — *"Here's
 your pak. Use it like this: `curl -x http://pak_xxx-mbl-us:PW@gw.proxies.sx:7000 https://api.ipify.org`. Full quickstart: https://agents.proxies.sx/pool-quickstart.html"* — converts ~3× better than no email.
+
+---
+
+## Accept USDC from AI agents (x402)
+
+If your customers include autonomous AI agents — Claude, GPT, browser-using
+agents, scrapers run by other agents — you can sell them proxies the way
+the rest of the agent economy already pays for things: **HTTP 402 + USDC**.
+
+The flow is the same one [agents.proxies.sx](https://agents.proxies.sx) uses today:
+
+1. Agent calls your endpoint with no payment.
+2. You return `402 Payment Required` with your USDC wallet + price.
+3. Agent pays on-chain (Base ~2s, Solana ~400ms) and retries with the tx hash.
+4. You verify via the **public Coinbase facilitator** (no node needed, no
+   chain infra), mint a `pak_` capped at exactly what they paid for, return it.
+
+That's ~80 lines of route handler — full drop-in (Next.js App Router),
+economics, and security model in **[`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md)**.
+
+You keep the margin between what you charge the agent (USDC) and what
+the platform charges you ($4/GB) — same wholesale economics as your
+Stripe storefront, on a different rail.
 
 ---
 
@@ -428,7 +465,7 @@ A: NextAuth (Auth.js) is free and runs on your own Postgres. Every other option 
 A: A `schema.sql` file is readable by anyone who knows SQL. There's no generated client, no migration framework to learn, no hidden magic. The whole data layer is ~30 lines in [`src/lib/db.ts`](./apps/starter/src/lib/db.ts).
 
 **Q: Why Stripe-only?**
-A: Starting simple. x402/USDC payment support ships in a future release for AI-agent customers. Open a PR if you want it sooner.
+A: Stripe is the default rail in `apps/starter/` because it's what most resellers want for human customers. For **AI-agent customers**, you can accept USDC via x402 today — see [`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md). Both rails run side-by-side in the same app, settling into the same `psx_` account balance.
 
 **Q: Can I use this without being a Proxies.sx reseller?**
 A: You need a Proxies.sx reseller API key to mint `pak_` sub-keys. Sign up at [client.proxies.sx](https://client.proxies.sx), upgrade to reseller access (email us), then mint an API key.
