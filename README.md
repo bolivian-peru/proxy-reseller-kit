@@ -82,6 +82,8 @@ curl -x http://psx_xxx-any-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org
 
 The reseller kit exposes the pool toggle in `<PoolSessionSpawner>` and `<PoolDocsPanel>`; if you build your own UI, just include the token when constructing the username via `buildProxyUrl` / `buildProxyString` (see `@proxies-sx/pool-sdk`).
 
+**Which pool for sticky-IP workflows?** Sticky pins the **modem**, not the IP — mobile carriers can rotate egress IPs via CGNAT even on a held modem (the gateway smart-picks the most IP-stable modem available, but the carrier always has the final say). For workflows that need a TRULY immutable IP (cf_clearance, banking, mTLS bound to source IP), use `-peer-` — residential ISPs hold IPs hours-to-days. Full Layer-1-vs-Layer-2 explanation in the wiki: [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
+
 ---
 
 ## Two-sided dashboard pattern (recommended for SaaS resellers)
@@ -204,17 +206,17 @@ Stripe storefront, on a different rail.
 
 > **📦 Current version: 0.6.x — install from the GitHub release.**
 > The npm registry currently serves the older `0.5.x`. The current **0.6.x**
-> build (per-customer session scoping + white-label) is distributed as
-> self-contained release tarballs. Installing the React package pulls the SDK
-> automatically:
+> build (per-customer session scoping + white-label + sticky smart-selection
+> copy alignment) is distributed as self-contained release tarballs.
+> Installing the React package pulls the SDK automatically:
 > ```bash
 > # Full kit (React components + SDK):
-> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.1/proxies-sx-pool-portal-react-0.6.1.tgz
+> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.2/proxies-sx-pool-portal-react-0.6.2.tgz
 > # SDK only:
-> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.1/proxies-sx-pool-sdk-0.6.0.tgz
+> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.2/proxies-sx-pool-sdk-0.6.1.tgz
 > ```
 > The plain `npm install @proxies-sx/...` commands below install `0.5.x` until
-> 0.6.x is published to npm. See [Releases](https://github.com/bolivian-peru/proxy-reseller-kit/releases/tag/v0.6.1).
+> 0.6.x is published to npm. See [Releases](https://github.com/bolivian-peru/proxy-reseller-kit/releases/tag/v0.6.2).
 
 ### Deploy a full storefront in 10 minutes
 

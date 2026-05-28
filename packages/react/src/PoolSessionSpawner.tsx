@@ -124,8 +124,10 @@ const COUNTRY_LABELS: Record<string, { name: string; flag: string }> = {
 const ROTATION_OPTS: { value: RotationMode; label: string }[] = [
   { value: 'none', label: 'Default (10 min)' },
   { value: 'auto10', label: '10 minutes' },
-  { value: 'sticky', label: 'Sticky (no rotation)' },
-  { value: 'hard', label: 'Hard (new IP per connection)' },
+  // Sticky pins the modem AND the gateway smart-picks the most IP-stable
+  // modem in the country (carrier-CGNAT-aware selection, May 2026).
+  { value: 'sticky', label: 'Sticky (pin to most IP-stable modem)' },
+  { value: 'hard', label: 'Hard (new modem per connection)' },
 ];
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */

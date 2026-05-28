@@ -267,12 +267,22 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
 
 function RotationModes({ classNames }: { classNames: PoolPortalClassNames }): JSX.Element {
   const rows: Array<{ token: string; ttl: string; behavior: string; defaultMark?: boolean }> = [
-    { token: '-rot-auto5', ttl: '5 min', behavior: 'New IP every 5 minutes (soft rotation: pick different endpoint).' },
-    { token: '-rot-auto10', ttl: '10 min', behavior: 'New IP every 10 minutes.', defaultMark: true },
-    { token: '-rot-auto20', ttl: '20 min', behavior: 'New IP every 20 minutes.' },
-    { token: '-rot-auto60', ttl: '60 min', behavior: 'New IP every 60 minutes.' },
-    { token: '-rot-sticky', ttl: '1 h', behavior: 'Keep the same IP forever (until device goes offline or TTL hits).' },
-    { token: '-rot-hard', ttl: 'per-conn', behavior: 'Force a different endpoint on EVERY new connection. No reuse.' },
+    { token: '-rot-auto5', ttl: '5 min', behavior: 'New modem every 5 minutes (soft rotation: pick different endpoint).' },
+    { token: '-rot-auto10', ttl: '10 min', behavior: 'New modem every 10 minutes.', defaultMark: true },
+    { token: '-rot-auto20', ttl: '20 min', behavior: 'New modem every 20 minutes.' },
+    { token: '-rot-auto60', ttl: '60 min', behavior: 'New modem every 60 minutes.' },
+    {
+      token: '-rot-sticky',
+      ttl: '1 h',
+      behavior:
+        'Pin to one modem for the full session. The gateway smart-selects the most IP-stable modem in the country (mobile carriers vary widely in CGNAT aggressiveness; we pick the one whose IP holds longest). NOTE: the IP itself can still change inside the carrier\'s CGNAT pool — sticky pins the MODEM, not the IP.',
+    },
+    {
+      token: '-rot-hard',
+      ttl: 'per-conn',
+      behavior:
+        'Pin a modem per session like sticky, but a fresh TCP connection from your client picks a different modem. Useful for parallel workers that each want their own stable modem.',
+    },
     { token: '-rot-ondemand', ttl: 'per-conn', behavior: 'Default behavior with no auto-rotate timer (reuses while connected).' },
   ];
 
@@ -280,9 +290,22 @@ function RotationModes({ classNames }: { classNames: PoolPortalClassNames }): JS
     <section className={cn('psx-docs-section', classNames.card)}>
       <h3 className="psx-docs-h3">IP rotation modes</h3>
       <p className="psx-docs-p">
-        Rotation tokens control how often the gateway swaps your exit IP. The
-        TTL column is what the gateway evicts the session at; manual close is
-        only needed if you want the IP released earlier.
+        Rotation tokens control how the gateway selects endpoints. The TTL
+        column is what the gateway evicts the session at; manual close is only
+        needed if you want the IP released earlier.{' '}
+        <strong>For sticky/hard:</strong> the gateway pins the MODEM, not the
+        IP — mobile carriers can rotate egress IPs out of CGNAT pools even while
+        the modem connection is held. We compensate by smart-selecting the
+        most IP-stable modem in your country. See the wiki page{' '}
+        <a
+          href="https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation"
+          target="_blank"
+          rel="noreferrer"
+          className="psx-docs-link"
+        >
+          Sticky Sessions and Rotation
+        </a>{' '}
+        for the full Layer-1-vs-Layer-2 explanation.
       </p>
       <table className="psx-docs-table">
         <thead>

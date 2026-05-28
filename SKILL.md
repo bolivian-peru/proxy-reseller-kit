@@ -282,10 +282,16 @@ await db.update(customerId, { pakKeyId: key.id, pakKey: key.key });
 // 3. Build the proxy URL the customer uses in their HTTP client
 const proxyUrl = proxies.buildProxyUrl(key.key, {
   country: 'us',
-  sid: customerId,    // sticky session — same customer = same exit IP
-  rotation: 'sticky',
+  sid: customerId,    // sticky session — pin to one modem for this customer
+  rotation: 'sticky', // gateway smart-picks the most IP-stable modem available
 });
 // → "http://psx_abc-mbl-us-sid-cust_7a3f9b-rot-sticky:pak_xyz@gw.proxies.sx:7000"
+//
+// IMPORTANT: sticky pins the MODEM, not the IP. Mobile carriers can rotate
+// the modem's egress IP via CGNAT — the gateway compensates by picking the
+// most IP-stable modem available, but if your workflow requires a TRULY
+// immutable IP (cf_clearance, banking), use the residential `peer` pool
+// instead. See: https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation
 ```
 
 **Other operations:**
@@ -506,10 +512,10 @@ The customer's HTTP/SOCKS5 client connects to:
 
 | Token | Example | Meaning |
 |---|---|---|
-| Pool | `mbl`, `peer` | `mbl` = ProxySmart mobile modems (default), `peer` = residential peer devices |
+| Pool | `mbl`, `peer`, `any` | `mbl` = our own mobile-carrier modems (production-recommended), `peer` = residential community network, `any` = auto-pick (mobile-first) |
 | Country | `us`, `de`, `pl`, `fr`, `es`, `gb` | ISO 3166-1 alpha-2 |
-| `sid-{id}` | `sid-alice_session1` | Sticky session — same `sid` keeps the same exit IP |
-| `rot-{mode}` | `rot-sticky`, `rot-auto10`, `rot-auto30`, `rot-hard`, `rot-none` | IP rotation policy |
+| `sid-{id}` | `sid-alice_session1` | Pin the customer to one modem for this session — same `sid` returns to the same modem |
+| `rot-{mode}` | `rot-sticky`, `rot-auto5`, `rot-auto10`, `rot-auto20`, `rot-auto60`, `rot-hard`, `rot-ondemand` | Rotation policy. `sticky`/`hard` → gateway smart-picks the most IP-stable modem available. `auto*` → swap modems every N min. |
 | `city-{name}` | `city-nyc` | City filter (when supported) |
 | `carrier-{name}` | `carrier-att`, `carrier-tmobile` | Carrier filter |
 
@@ -518,7 +524,7 @@ The customer's HTTP/SOCKS5 client connects to:
 http://psx_acme-mbl-us-sid-customer123-rot-sticky:pak_a1b2c3@gw.proxies.sx:7000
 ```
 
-This says: route customer123's traffic through US mobile modems, keep the same exit IP for the session.
+This says: route customer123's traffic through US mobile modems, pin to one modem for the session. The gateway smart-selects the most IP-stable modem available (lowest observed carrier-NAT rotation rate). Note: this pins the **modem** — the carrier can still rotate the egress IP via CGNAT. For workflows that need an immutable IP (cf_clearance, banking), use the residential `peer` pool. Full explanation: [wiki page Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
 The SDK's `buildProxyUrl(pakKey, opts)` generates this. In other languages, build the string manually:
 

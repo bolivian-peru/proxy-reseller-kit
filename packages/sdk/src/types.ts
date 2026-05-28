@@ -27,38 +27,46 @@ export type Country = KnownCountry | (string & {});
 /**
  * IP rotation strategy encoded in the proxy username.
  *
+ * IMPORTANT — what "sticky" actually means (May 2026, gateway #295 Phase 1):
+ *
+ *   Sticky pins the **modem**, not the IP. Mobile carriers operate CGNAT
+ *   pools that re-issue egress IPs to a held modem connection on their own
+ *   cadence (T-Mobile rotates aggressively; Verizon less so). The gateway
+ *   compensates by smart-selecting the most IP-stable modem in the requested
+ *   country: it tracks observed rotation rate per modem and weights that at
+ *   50% of the selection score when rotation is `sticky` or `hard`.
+ *
+ *   For workflows that need a TRULY immutable IP (cf_clearance, banking,
+ *   mTLS bound to source IP), use the residential `peer` pool — residential
+ *   ISPs hold IPs hours-to-days. See the wiki page "Sticky Sessions and
+ *   Rotation" for the full Layer-1-vs-Layer-2 explanation.
+ *
  * Behavior at the gateway level:
  *
  * - `none` — Default. The gateway picks an endpoint per session and
- *   reuses it for the session's TTL (1h default). Different connections
- *   from the same `pak_` may land on different endpoints, but a single
- *   long-lived connection stays on one IP.
- * - `auto10` / `auto30` — Same as `none` but the session expires (and a
- *   new endpoint is picked) every 10 / 30 minutes. Suitable for
- *   long-running scrapers that want periodic rotation.
- * - `sticky` — Pin to the same endpoint for the session's lifetime
- *   regardless of the auto-interval. Combine with `sid` to keep a
- *   workflow on one IP across reconnects.
- * - `hard` — On every new connection, force the gateway to pick a
- *   *different* endpoint than last time. Useful when the previous IP
- *   got blocked. Burns through endpoints faster — use sparingly.
- */
-/**
- * Gateway rotation policies. Aligned with the gateway's
- * `ROTATION_INTERVALS` map. `'none'` is the SDK convenience value for
- * "no `-rot-` token" — the gateway then falls back to a 5-min synth
- * session (or full TTL when `-sid-` is explicit).
+ *   reuses it for the session's TTL (1h default).
+ * - `auto5` / `auto10` / `auto20` / `auto60` — Soft rotation: every N
+ *   minutes the gateway swaps the modem. Score formula = load*0.8 + health*0.2
+ *   (favor empty, healthy modems — diversity is the goal).
+ * - `ondemand` — No auto-rotate timer; reuse the chosen modem while connected.
+ * - `sticky` — Pin to one modem for the session lifetime. Selector weights
+ *   `ipStabilityScore` at 50% — picks the most IP-stable modem available.
+ * - `hard` — Same modem-pinning as sticky, but a fresh TCP connection picks a
+ *   different modem. Useful for parallel workers that each want their own
+ *   stable modem.
+ *
+ * Tokens emitted: `-rot-{mode}`. `none` emits no token.
  */
 export type RotationMode =
   | 'none'      // no -rot- token; gateway uses default
-  | 'auto5'     // new IP every 5 min
-  | 'auto10'    // new IP every 10 min (default)
-  | 'auto20'    // new IP every 20 min
-  | 'auto30'    // new IP every 30 min
-  | 'auto60'    // new IP every 60 min
-  | 'ondemand'  // new IP only on new connection
-  | 'sticky'    // same IP for session duration
-  | 'hard';     // force modem reconnect (per-connection IP)
+  | 'auto5'     // new modem every 5 min
+  | 'auto10'    // new modem every 10 min (default)
+  | 'auto20'    // new modem every 20 min
+  | 'auto30'    // new modem every 30 min
+  | 'auto60'    // new modem every 60 min
+  | 'ondemand'  // reuse while connected; no timer
+  | 'sticky'    // pin one modem; gateway smart-picks the most IP-stable
+  | 'hard';     // pin one modem per session; fresh connection = fresh modem
 
 /** Pool the customer's traffic will route through. `mbl` = ProxySmart mobile modems. `peer` = residential Android peers. */
 export type Pool = 'mbl' | 'peer';

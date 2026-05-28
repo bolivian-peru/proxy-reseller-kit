@@ -155,8 +155,8 @@ Compose with `<PoolPortal>` for full reseller-dashboard parity with `client.prox
   proxyPassword={me.pakKey}
   countries={['us', 'de', 'gb', 'es', 'fr', 'pl']}
   defaultPool="mbl"
-  defaultRotation="sticky"
-  defaultSessionType="unique"        // unique-per-row sids → unique IPs
+  defaultRotation="sticky"           // gateway smart-picks the most IP-stable modem
+  defaultSessionType="unique"        // unique-per-row sids → different modems per row
   onSpawn={(urls) => analytics.track('proxy_spawn', { count: urls.length })}
 />
 ```
@@ -164,6 +164,16 @@ Compose with `<PoolPortal>` for full reseller-dashboard parity with `client.prox
 Count slider (1–100), country / pool / protocol / rotation / sid-mode controls, "Generate" → N proxy URLs, per-row Copy + bulk Copy-all + Download .txt. The `showTtlControl` prop (v0.4.2 default true) exposes a "Session TTL override" field that appends `-ttl-<seconds>` to the username DSL (range 60-2592000 = 1 min to 30 days).
 
 Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation)` helpers for hand-rolled UIs.
+
+**Session-type semantics** (the `sessionType` prop / `-sid-` token behavior):
+
+| `sessionType` | Per-row behavior | When N spawned URLs are used |
+|---|---|---|
+| `unique` | Each row gets its own random `-sid-<prefix><index>` | N different modems (one per row) — best for parallel workers that each want their own stable IP |
+| `same` | All rows share the same `-sid-<prefix>` | All rows land on the SAME modem — useful when many parallel sockets from one customer should share one exit |
+| `none` | Each row gets a random `-sid-<row-specific>` | Same as `unique` in practice — every row distinct (we always emit a sid; "none" just means "you didn't pick a prefix") |
+
+**Sticky semantics (#295 Phase 1, May 2026):** when `defaultRotation="sticky"` or `"hard"`, the gateway weighs IP-stability heavily when picking each row's modem — you get the modems whose carrier holds their egress IP best. Note that mobile CGNAT can still rotate the IP even on a held modem (the gateway pins the MODEM, not the IP). For workflows that need a truly immutable IP, switch `defaultPool="peer"` (residential IPs hold for hours-to-days). Full Layer-1-vs-Layer-2 explanation: [wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
 ### `<ActiveSessionsTable>` — live session manager (v0.4.0+)
 

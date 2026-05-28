@@ -12,6 +12,38 @@ semver from 0.3.0 onwards (the public surface is everything exported from
 > npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.1/proxies-sx-pool-sdk-0.6.0.tgz
 > ```
 
+## 0.6.1 — Sticky semantics docs (sticky smart-selection, May 2026)
+
+Documentation-only release that brings the SDK's `RotationMode` TSDoc and
+README into alignment with the gateway-side change in #295 Phase 1.
+
+### Changed
+
+- **`RotationMode` TSDoc** — explicitly documents that `sticky` and `hard` now
+  trigger gateway-side **IP-stability-aware modem selection** (50% weight on
+  `ipStabilityScore` in the Lua selector). Previous text "same IP for session
+  duration" was misleading because it implied a guarantee the carrier doesn't
+  give us. New text explains that sticky pins the MODEM (not the IP), the
+  gateway picks the most IP-stable modem, and customers needing a TRULY
+  immutable IP should use the residential `peer` pool.
+- **README rotation table** — adds `auto5` / `auto20` / `auto60` / `ondemand`
+  to the rotation modes list (they were always supported, just not enumerated)
+  and links to the wiki "Sticky Sessions and Rotation" page.
+- **`buildProxyUrl` example comment** — clarified to mention smart-selection
+  and CGNAT caveat.
+
+### Wire-compatible
+
+No runtime change to `buildProxyUrl()` output. SDK callers don't need to do
+anything — sticky behavior at the gateway is automatically smarter for every
+existing `pak_` minted by this SDK.
+
+### Background
+
+See gb-system-api commit `e4d5bb5e` for the gateway-side blip-grace fix and
+the matching `ipStabilityScore` smart-select work. Customer portal copy +
+wiki "Sticky Sessions and Rotation" page also updated.
+
 ## 0.6.0 — Per-customer session scoping (`{ pakId }`) [released via GitHub tarball v0.6.1]
 
 Finalizes the multi-tenant session fix drafted in 0.5.2 with an explicit,

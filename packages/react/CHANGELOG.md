@@ -9,6 +9,39 @@ All notable changes to this package are documented here.
 > npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.1/proxies-sx-pool-portal-react-0.6.1.tgz
 > ```
 
+## 0.6.2 — Sticky-rotation copy reflects smart-selection (May 2026)
+
+UI-copy and docs release that aligns the React components with the gateway's
+new sticky-session behavior (#295 Phase 1).
+
+### Changed
+
+- **`<PoolSessionSpawner>` rotation picker** — sticky label changed from
+  `'Sticky (no rotation)'` to `'Sticky (pin to most IP-stable modem)'`; hard
+  label changed from `'Hard (new IP per connection)'` to `'Hard (new modem
+  per connection)'`. Reflects that the gateway pins the MODEM not the IP,
+  and now smart-picks the most IP-stable modem available.
+- **`<PoolDocsPanel>` rotation modes table** — sticky / hard descriptions
+  rewritten to explain the smart-selection behavior, the Layer-1-vs-Layer-2
+  reality (carrier CGNAT can still rotate the IP on a held modem), and link
+  to the wiki "Sticky Sessions and Rotation" page for the full explanation.
+  `auto*` rows reworded to "new modem every N minutes" (was "new IP every
+  N minutes" — now technically accurate).
+- **React package README** — `<PoolSessionSpawner>` section now documents
+  the `sessionType` semantics table (unique / same / none) and the sticky
+  smart-selection caveat with the wiki link.
+
+### Wire-compatible
+
+No prop-signature changes. No new dependencies. Existing apps render the
+new copy automatically on next build.
+
+### Background
+
+See `@proxies-sx/pool-sdk@0.6.1` CHANGELOG for the corresponding type-docs
+update, and gb-system-api commit `e4d5bb5e` for the gateway-side blip-grace
+fix + the matching `ipStabilityScore` smart-select work.
+
 ## 0.6.1 — Session routes scoped via `getUserKeyId` (`{ pakId }`) [released via GitHub tarball v0.6.1]
 
 Depends on `@proxies-sx/pool-sdk@^0.6.0`. Completes the multi-tenant session

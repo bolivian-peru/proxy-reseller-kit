@@ -259,8 +259,8 @@ import { buildProxyUrl } from '@proxies-sx/pool-sdk';
 | `country` | `'us' \| 'de' \| 'pl' \| 'fr' \| 'es' \| 'gb'` | `'us'` |
 | `carrier` | `string` | `'att'`, `'tmobile'`, `'vodafone'` |
 | `city` | `string` | `'nyc'`, `'berlin'` |
-| `sid` | `string` | `'customer-123'` (same sid = same endpoint with `rotation: 'sticky'`) |
-| `rotation` | `'none' \| 'auto10' \| 'auto30' \| 'sticky' \| 'hard'` | `'sticky'` |
+| `sid` | `string` | `'customer-123'` (same sid + `rotation: 'sticky'` → returns to the same modem) |
+| `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'hard'` | `'sticky'` — pins one modem AND gateway smart-picks the most IP-stable modem available. See [wiki: Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation) for what sticky guarantees at the carrier level. |
 | `pool` | `'mbl' \| 'peer'` | `'mbl'` (mobile modems) or `'peer'` (residential peers) |
 | `protocol` | `'http' \| 'socks5'` | `'http'` (port 7000) or `'socks5'` (port 7001) |
 | `host` | `string` | Override gateway host, e.g. `'edge-eu.proxies.sx'` |
@@ -433,7 +433,7 @@ Token format inside the username (separated by `-`):
 - `mbl` / `peer` — pool type (mobile modems vs residential peers)
 - `us` / `de` / `pl` / `fr` / `es` / `gb` — country code
 - `sid-<id>` — sticky session id (same `sid` = same exit IP for the session)
-- `rot-sticky` / `rot-auto10` / `rot-auto30` / `rot-hard` / `rot-none` — rotation mode
+- `rot-sticky` / `rot-auto5` / `rot-auto10` / `rot-auto20` / `rot-auto60` / `rot-ondemand` / `rot-hard` — rotation mode (sticky/hard → gateway smart-picks most IP-stable modem)
 - `city-<name>` / `carrier-<name>` — optional filters
 
 ### Examples in other languages
