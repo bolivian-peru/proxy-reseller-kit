@@ -6,6 +6,8 @@
 
 A self-hosted branded reseller portal for the [Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy). Next.js 15 App Router, NextAuth (Auth.js v5) magic-link login, raw Postgres (no ORM), Stripe checkout. Zero paid dependencies besides what the operator chooses (SMTP provider, hosting).
 
+**Engineering principles apply here too.** The kit-wide principles (preserve behavior, clarity over brevity, no nested ternaries, scope discipline — inherited from Anthropic's [`code-simplifier`](https://github.com/anthropics/claude-plugins-official/blob/main/plugins/code-simplifier/agents/code-simplifier.md)) are stated in full in the [parent `CLAUDE.md`](../../CLAUDE.md#engineering-principles-how-to-write-code-in-this-repo). This is a *template the operator will own and modify* — so the bar is "leave them a codebase they can confidently change," not "show off." When the operator's taste diverges from this starter's, their taste wins; this scaffold is a starting point, not a cage. Customize freely above the floor of the security rules in "Don't do these things."
+
 ## Repo shape
 
 ```
@@ -143,6 +145,12 @@ catch (err) {
 }
 ```
 
+### Accept USDC from AI agents via x402 (alongside Stripe)
+
+The starter ships Stripe for human card payments. To *also* sell to autonomous AI-agent customers, add a second payment rail on the same app — both settle into the same `psx_` account, so your wholesale economics are identical. The agent hits a 402 endpoint, pays USDC on Base/Solana, retries with the transaction hash, and you mint a `pak_` capped at what they paid.
+
+This is a **new route**, not a change to the Stripe flow — add it, don't refactor checkout (scope discipline). The full drop-in handler lives in [`docs/X402-RESELLER-INTEGRATION.md`](../../docs/X402-RESELLER-INTEGRATION.md); drop it at `src/app/api/x402-proxy/route.ts`. Set the wallet + price env vars per the [x402 and Wallet Setup wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup), and add them to `.env.example` in the same commit (the env-var rule below). The mint call is the same `proxies.poolKeys.create()` you already use in the Stripe webhook — with the on-chain transaction hash as the `idempotencyKey` so agent retries never double-mint.
+
 ### Switch from the dev console-logger to real email
 Set `EMAIL_SERVER_HOST`, `EMAIL_SERVER_PORT`, `EMAIL_SERVER_USER`, `EMAIL_SERVER_PASSWORD`, `EMAIL_FROM` in `.env`. NextAuth picks them up automatically (see `src/lib/auth.ts` — the presence of `EMAIL_SERVER_HOST` + `EMAIL_FROM` flips SMTP on).
 
@@ -214,6 +222,17 @@ Every variable used by the app is documented in `.env.example`. The agent rule: 
 - **Magic link never arrives** — if SMTP isn't configured, check the server console. If SMTP is configured, check your provider's logs and `EMAIL_FROM` DNS (SPF/DKIM).
 - **Stripe webhook 400** — signature mismatch. Make sure `STRIPE_WEBHOOK_SECRET` matches the one `stripe listen` printed (dev) or the dashboard endpoint secret (prod).
 - **Customer paid but no key** — check the `webhook_events` table for their event; check `purchases` for the row; check the server console for the Pool API error.
+
+## Further reading
+
+- [Parent `CLAUDE.md`](../../CLAUDE.md) — kit-wide architecture, engineering principles, SDK invariants
+- [`SKILL.md`](../../SKILL.md) — the integration skill (paths, DSL grammar, security non-negotiables)
+- [`docs/X402-RESELLER-INTEGRATION.md`](../../docs/X402-RESELLER-INTEGRATION.md) — USDC/x402 handler
+- **[Wiki](https://github.com/bolivian-peru/proxy-reseller-kit/wiki)** — operational + conceptual docs:
+  [Getting Started](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Getting-Started) ·
+  [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation) ·
+  [Pak Key Lifecycle](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Pak-Key-Lifecycle) ·
+  [Troubleshooting](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Troubleshooting)
 
 ## License
 

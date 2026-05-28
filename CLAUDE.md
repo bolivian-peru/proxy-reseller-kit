@@ -36,6 +36,19 @@ api.proxies.sx/v1/reseller/pool-keys   ← Customer NEVER touches this
 
 The `pak_` key is the *customer's* credential. The `psx_` API key is the *reseller's* credential and MUST stay server-side.
 
+## Engineering principles (how to write code in this repo)
+
+This is a public, MIT-licensed SDK that strangers will read, fork, and trust with their customers' credentials. The bar is therefore higher than internal code: every line is documentation by example. The principles below are inherited verbatim from Anthropic's [`code-simplifier`](https://github.com/anthropics/claude-plugins-official/blob/main/plugins/code-simplifier/agents/code-simplifier.md) agent and are binding when you modify anything here.
+
+1. **Preserve functionality.** "Never change what the code does — only how it does it." The SDK has published consumers; a refactor that alters a return shape, an error type, or a URL-encoding edge case is a breaking change even if no test caught it. Behavior is the contract.
+2. **Apply project standards.** ES modules, `function` over arrow functions, explicit return-type annotations, React `Props` types, real error handling, consistent naming. New code must be indistinguishable from the code beside it.
+3. **Clarity over brevity.** "Explicit code is often better than overly compact code." A reseller debugging their integration at 2am will read this source. Optimize for that reader, not for line count.
+4. **No nested ternaries.** "Prefer switch statements or if/else chains for multiple conditions." Control flow must be visible.
+5. **Don't over-simplify.** Do not remove helpful abstractions, fuse unrelated concerns, or trade debuggability for cleverness. The `url.ts` token builder, the retry/jitter logic, and the runtime validators look verbose *on purpose* — that verbosity is what makes them safe to extend.
+6. **Scope discipline.** "Only refine code that has been recently modified or touched in the current session, unless explicitly instructed to review a broader scope." If you're adding a method to `client.ts`, you are not reformatting `types.ts` because you opened it.
+
+**The reasoning behind the rules:** an SDK earns trust by being predictable. Predictability is a property of the *whole surface over time*, not of any single clever commit — so the discipline is conservative on purpose. When a change to the platform contract collides with a desire for cleaner code, the contract wins and the cleanliness waits. When two implementations are equally correct, choose the one a forking stranger will understand fastest. And when you genuinely see a better shape — a clearer type, a simpler handler dispatch, a method that should exist — propose it and build it; "feel free to customize" is real, the floor is only the [Key invariants](#key-invariants) and the security model below, everything above that floor is craft you're trusted to exercise.
+
 ## Repo layout
 
 ```
@@ -168,6 +181,20 @@ npm publish --access public
 - `GET /pool-keys/:id/audit?before=&limit=` — same scoped to one key. Add as `client.poolKeys.auditForKey(id, { before?, limit? })`.
 
 Adding these is a 0.5.0 minor bump. Reference: see `customer-proxies-sx-main/src/lib/api.ts` `poolKeysApi` for the response shape and `customer-proxies-sx-main/src/pages/PoolKeys.tsx` for end-to-end UX.
+
+## Documentation map (keep these in sync when behavior changes)
+
+The kit's knowledge lives in three tiers. When you change behavior, update the tier(s) that describe it — drift between them is the most common way this kit misleads the people building on it.
+
+| Tier | Where | Audience | Update when… |
+|---|---|---|---|
+| **Code-adjacent** | `README.md`, `packages/*/README.md`, `SKILL.md`, this file | Agents + devs integrating or extending | The API surface, invariants, or security model changes |
+| **In-repo docs** | `docs/X402-RESELLER-INTEGRATION.md`, `docs/TWO-SIDED-DASHBOARD.md`, `docs/MIGRATION-*.md` | Devs implementing a specific pattern | A pattern's shape changes, or a new version migration lands |
+| **Wiki** | [github.com/bolivian-peru/proxy-reseller-kit/wiki](https://github.com/bolivian-peru/proxy-reseller-kit/wiki) | Resellers (operational + conceptual) | Operational reality shifts — new error codes, country stock, sticky behavior |
+
+**Wiki pages** (8, MVP shipped May 2026): Home, Getting-Started, Integration-Paths, Sticky-Sessions-and-Rotation, Pak-Key-Lifecycle, x402-and-Wallet-Setup, Troubleshooting, Glossary. Editable via `git clone https://github.com/bolivian-peru/proxy-reseller-kit.wiki.git` — direct push to `master`, no PR. Four more pages are tracked-but-deliberately-unbuilt (Webhooks, Migrating-From-Another-Provider, Pricing-Strategy, Per-Country-Stock); each has an explicit trigger condition and should NOT be written speculatively — wait for the real reseller question that justifies it.
+
+**The x402 payment rail** is documented but not yet packaged: `docs/X402-RESELLER-INTEGRATION.md` (code) + the x402-and-Wallet-Setup wiki page (operations) are canonical. A `createX402PaidProxyHandler()` factory for `@proxies-sx/pool-portal-react/server` is earmarked for **0.7.x** — until it ships, the copy-paste handler in the doc is the implementation. If you build that factory, follow the existing `createPoolApiHandlers()` shape in `packages/react/src/server.ts` and keep the verification/mint/return stages legible (see Engineering principle 5 — this is exactly the kind of code that should stay verbose).
 
 ## Future direction docs
 

@@ -1,6 +1,6 @@
 ---
 name: proxies-sx-pool-portal
-description: Build a branded mobile-proxy reseller business or embed Proxies.sx mobile/residential proxies into any user-facing app. Trigger this skill whenever the user wants to resell proxies, mint per-customer access keys (pak_*), embed a proxy dashboard into their site, deploy a Next.js proxy storefront, integrate the Proxies.sx Pool Gateway, build a customer-facing proxy product, or add 4G/5G mobile proxies to ANY stack — JavaScript, TypeScript, React, Next.js, Python, PHP, Ruby, Go, Rust, or plain curl. Use it the moment the user says "mobile proxy", "proxy reseller", "pak_ keys", "pool gateway", "proxy dashboard", "embed proxies", "white-label proxy", or anything implying customer-facing proxy delivery — even if they don't explicitly ask for "this skill".
+description: Build a branded mobile-proxy reseller business or embed Proxies.sx mobile/residential proxies into any user-facing app. Trigger this skill whenever the user wants to resell proxies, mint per-customer access keys (pak_*), embed a proxy dashboard into their site, deploy a Next.js proxy storefront, integrate the Proxies.sx Pool Gateway, build a customer-facing proxy product, sell proxies to AI agents for USDC via the x402 payment protocol, or add 4G/5G mobile proxies to ANY stack — JavaScript, TypeScript, React, Next.js, Python, PHP, Ruby, Go, Rust, or plain curl. Use it the moment the user says "mobile proxy", "proxy reseller", "pak_ keys", "pool gateway", "proxy dashboard", "embed proxies", "white-label proxy", "x402 proxy", "sell proxies for USDC", "proxy for AI agents", or anything implying customer-facing proxy delivery — even if they don't explicitly ask for "this skill".
 ---
 
 # Proxies.sx Pool Portal — Reseller Toolkit
@@ -28,6 +28,25 @@ Use it for any of these intents:
 - "Build a `pak_` key minting flow"
 
 If the user mentions Pool Gateway, `pak_` keys, `psx_` reseller keys, `gw.proxies.sx:7000`, or any of the SDK/component names above, this skill applies.
+
+---
+
+## How to work — core principles (read before generating anything)
+
+You are not transcribing this skill into the user's repo. You are *translating* an integration into the grain of **their** codebase — their naming, their framework, their error conventions, their taste. Hold two ideas at once: this skill is **authoritative about the platform** (the API contract, the security boundaries, the invariants below are non-negotiable and externally enforced), and **advisory about the implementation** (every code sample here is a reference spelling, not scripture — adapt it freely so it reads like the user wrote it).
+
+These engineering principles are inherited verbatim from Anthropic's [`code-simplifier`](https://github.com/anthropics/claude-plugins-official/blob/main/plugins/code-simplifier/agents/code-simplifier.md) agent. They govern every line you emit:
+
+1. **Preserve functionality.** "Never change what the code does — only how it does it." When you touch the user's existing files, all original features, outputs, and behaviors must survive intact. An integration that breaks their checkout to add a proxy dashboard is a failure, not a feature.
+2. **Apply project standards.** Follow the conventions already present in *their* code: ES modules, `function` declarations over arrow functions where the file does, explicit return types, the framework's idiomatic error handling, consistent naming. Match the house style; do not impose this skill's.
+3. **Clarity over brevity.** "Explicit code is often better than overly compact code." Reduce nesting, delete redundancy, name things well — but never at the cost of legibility. A reviewer should understand the integration in one read.
+4. **No nested ternaries.** "Avoid nested ternary operators — prefer switch statements or if/else chains for multiple conditions." Dense one-liners that hide control flow are a defect, not a flourish.
+5. **Don't over-simplify.** Do not create overly clever solutions, combine too many concerns into one function, remove helpful abstractions, or make the code harder to debug or extend. Fewer lines is not the objective; a system the user can maintain after you leave is.
+6. **Scope discipline.** "Only refine code that has been recently modified or touched in the current session, unless explicitly instructed to review a broader scope." You are adding a proxy integration — you are not refactoring their auth layer because you happened to read it.
+
+**The philosophical core, stated plainly:** a good integration is one the user forgets was generated. It dissolves into their codebase. It introduces exactly the new capability they asked for and not one accidental dependency, opinion, or stylistic divergence more. Optimize for the second reader — the maintainer six months from now who must extend this without you — over the cleverness of the first write. When the platform contract and the user's preference collide, the contract wins (it's enforced server-side; their preference is not). Everywhere else, defer to their world.
+
+**You are encouraged to customize.** If the user's stack suggests a cleaner shape than the reference samples here — a different state manager, a server framework this skill doesn't show, a billing rail other than Stripe, a component library of their own — build it that way and say so. The samples exist to make the *contract* unambiguous, not to constrain the *craft*. The only hard floor is the security non-negotiables and the key invariants; above that floor, exercise judgment.
 
 ---
 
@@ -638,11 +657,45 @@ console.log(`${ours.trafficUsedGB} / ${ours.trafficCapGB ?? '∞'} GB used`);
 
 ### Top-up: customer pays for more, increase the cap
 
+Prefer the atomic `topUp()` over a read-modify-write `update()` — it `$inc`s the cap and extends expiry in a single server-side write, immune to the race where two concurrent renewals clobber each other:
+
 ```ts
-await proxies.poolKeys.update(customer.pakKeyId, {
-  trafficCapGB: customer.trafficCapGB + additionalGB,
+await proxies.poolKeys.topUp(customer.pakKeyId, {
+  addTrafficGB: additionalGB,
+  extendDays: 30,
+  idempotencyKey: stripeEvent.id,
 });
+// If the key auto-suspended at its old cap, top-up does NOT re-enable it —
+// flip it back explicitly (see Auto-Suspend section above):
+await proxies.poolKeys.update(customer.pakKeyId, { enabled: true });
 ```
+
+### Customer is an AI agent → accept USDC via x402 (instead of, or alongside, Stripe)
+
+If the buyer is an autonomous agent rather than a human with a card, you can sell proxies on the same rail the agent economy already speaks: **HTTP 402 + USDC on-chain**. The agent calls your endpoint, gets `402 Payment Required` with *your* wallet address, pays on Base or Solana, retries with the transaction hash, and you mint a `pak_` capped at exactly what they paid for. You keep the margin between your retail USDC price and the platform's wholesale rate — the same economics as Stripe, on a different rail, with no chargebacks and second-scale settlement.
+
+The shape, in one breath: **verify the on-chain payment with the public facilitator → mint a `pak_` whose `idempotencyKey` is the transaction hash (so retries never double-mint) → return the proxy URL.** You run no chain node and no payment infrastructure.
+
+```ts
+// Sketch — the full ~80-line drop-in handler is in docs/X402-RESELLER-INTEGRATION.md
+const verify = await fetch('https://x402.org/facilitator/verify', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ signature: txHash }),
+}).then((r) => r.json());
+
+if (!verify.valid) return Response.json({ error: 'unverified' }, { status: 402 });
+
+const key = await proxies.poolKeys.create({
+  label: `x402:${verify.payer}:${txHash.slice(0, 10)}`,
+  trafficCapGB: gbPaidFor,
+  expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+  idempotencyKey: txHash, // the tx hash IS the natural dedupe key
+});
+return Response.json({ proxyUrl: proxies.buildProxyUrl(key.key, { country, rotation: 'sticky' }) });
+```
+
+**Full code + flow diagram + security model:** [`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md). **Operational wallet setup** (creating Base + Solana wallets, env config, end-to-end test, treasury hygiene): the [x402 and Wallet Setup wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup). This is the canonical pattern — there is no `@proxies-sx/pool-portal-x402` package yet (a `createX402PaidProxyHandler()` factory is earmarked for 0.7.x); until then, the copy-paste handler in the doc IS the implementation.
 
 ---
 
@@ -670,7 +723,21 @@ When the user needs more than this skill provides, point them to the right file 
 | `apps/starter/README.md` | Full Next.js storefront deployment guide |
 | `apps/starter/CLAUDE.md` | Per-task instructions for AI agents customizing the starter (change brand, add country, add admin page, change DB schema) |
 | `CLAUDE.md` | Repo-wide architecture + invariants for AI agents working ON the SDK code itself |
+| `docs/X402-RESELLER-INTEGRATION.md` | Accept USDC from AI agents — full drop-in handler, flow diagram, reseller economics |
+| `docs/TWO-SIDED-DASHBOARD.md` | Admin-side vs customer-side architecture, with a Coronium-style reference |
 | `SECURITY.md` | Production hardening checklist |
+
+**Wiki** ([github.com/bolivian-peru/proxy-reseller-kit/wiki](https://github.com/bolivian-peru/proxy-reseller-kit/wiki)) — operational and conceptual depth that doesn't live in the code. Point the user (or read yourself) when the question is *operational* or *conceptual* rather than *API-shaped*:
+
+| Wiki page | When to read |
+|---|---|
+| [Getting Started](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Getting-Started) | First-time onboarding: signup → reseller upgrade → first `psx_` key → first customer |
+| [Integration Paths](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Integration-Paths) | Long-form A/B/C/D decision tree with per-language worked examples |
+| [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation) | **Before answering any "the IP keeps changing" question** — gateway sticky (Layer 1) vs carrier CGNAT (Layer 2), cf_clearance failure mode, dedicated-port escape hatch |
+| [Pak Key Lifecycle](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Pak-Key-Lifecycle) | Full mint → use → top-up → rotate → suspend → revoke state machine + audit log |
+| [x402 and Wallet Setup](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup) | Operational USDC setup — wallets, env config, end-to-end test, treasury hygiene |
+| [Troubleshooting](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Troubleshooting) | Flat error catalog: reseller API + every gateway `E_*` code + Stripe/x402 webhook debugging |
+| [Glossary](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Glossary) | Precise one-line definitions of every term + acronym |
 
 ---
 
