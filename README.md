@@ -43,6 +43,33 @@ This repo takes care of the **software** — SDK, drop-in React component, full 
 
 ---
 
+## Two device networks, one gateway
+
+The same gateway endpoint (`gw.proxies.sx:7000` HTTP / `:7001` SOCKS5) routes through either of two device networks — your customer chooses by a token in their proxy username. Same credentials, same DSL, same `$4/GB` — only the device pool differs.
+
+| Token | Network | Status | Best for |
+|---|---|---|---|
+| **`-mbl-`** | **Mobile** (our own fleet of stable 4G/5G mobile-carrier devices) | **Production · recommended** | Workloads that need consistent speed and uptime. Monitored quality, predictable throughput. The default we suggest customers start on. |
+| **`-peer-`** | **Residential** (real home- and mobile-ISP connections from our community network) | **Growing — fleet expanding daily** | High-volume tasks where residential IPs improve success rate on consumer-facing sites that profile mobile vs residential differently. |
+| **`-any-`** | Auto-pick | — | Prefers mobile; falls back to residential when mobile is fully utilized in the requested country. |
+
+Example proxy URLs (same `pak_` everywhere — only the token changes):
+
+```bash
+# Mobile (default, production)
+curl -x http://psx_xxx-mbl-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org
+
+# Residential (growing community network)
+curl -x http://psx_xxx-peer-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org
+
+# Auto-pick — prefer mobile, fall back to residential
+curl -x http://psx_xxx-any-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org
+```
+
+The reseller kit exposes the pool toggle in `<PoolSessionSpawner>` and `<PoolDocsPanel>`; if you build your own UI, just include the token when constructing the username via `buildProxyUrl` / `buildProxyString` (see `@proxies-sx/pool-sdk`).
+
+---
+
 ## Two-sided dashboard pattern (recommended for SaaS resellers)
 
 Most production resellers ship **TWO dashboards**, not one:
