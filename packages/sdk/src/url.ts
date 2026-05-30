@@ -24,6 +24,17 @@ export const SOCKS5_PORT = 7001;
  * rejected). Use your customer's stable id, e.g. `cust_8f3a21bd`. Shorter or
  * predictable sids are rejected by the gateway with `E_USERNAME_PARSE`.
  *
+ * **Stickiness needs a sid.** `sticky` / `sticky-strict` / `auto*` only persist
+ * across connections when you pass a stable `sid` — it is the session's "port
+ * name". Without one, every connection starts a fresh session and you get a
+ * new endpoint. Always pass the SAME `sid` for requests that should share an IP.
+ *
+ * **IP-stability contract.** Sticky pins the *modem*, not the IP — mobile
+ * carrier CGNAT may still re-NAT the exit IP. For an IP that holds across a
+ * whole workflow (cf_clearance, banking 2FA), use `rotation: 'sticky-strict'`
+ * with `pool: 'peer'` (residential home-ISP IPs are stable for hours), or a
+ * dedicated modem.
+ *
  * @example
  * ```ts
  * buildProxyUrl('psx_abc123', 'pak_xxxxxxxxxxxxxxxxxxxxxxxx', {
@@ -32,6 +43,17 @@ export const SOCKS5_PORT = 7001;
  *   rotation: 'sticky',
  * });
  * // → "http://psx_abc123-mbl-us-sid-alice_session1-rot-sticky:pak_...@gw.proxies.sx:7000"
+ * ```
+ *
+ * @example Held residential IP (strongest stability):
+ * ```ts
+ * buildProxyUrl('psx_abc123', 'pak_xxxxxxxxxxxxxxxxxxxxxxxx', {
+ *   country: 'us',
+ *   pool: 'peer',
+ *   sid: 'alice_session1',
+ *   rotation: 'sticky-strict',
+ * });
+ * // → "http://psx_abc123-peer-us-sid-alice_session1-rot-sticky-strict:pak_...@gw.proxies.sx:7000"
  * ```
  *
  * @param proxyUsername Your reseller identifier, e.g. `psx_abc123`.

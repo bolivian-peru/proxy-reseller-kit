@@ -58,13 +58,23 @@ describe('buildProxyUrl', () => {
     expect(url).toContain('@edge-eu.proxies.sx:7000');
   });
 
-  it.each(['none', 'auto10', 'auto30', 'sticky', 'hard'] as const)(
+  it.each(['none', 'auto10', 'auto30', 'sticky', 'sticky-strict', 'hard'] as const)(
     'accepts rotation mode %s',
     (rotation) => {
       const url = buildProxyUrl(USER, KEY, { rotation });
       expect(url).toContain(`-rot-${rotation}`);
     },
   );
+
+  it('emits -rot-sticky-strict for the strict-sticky mode (gateway parses rot=sticky + strict)', () => {
+    const url = buildProxyUrl(USER, KEY, {
+      country: 'us',
+      pool: 'peer',
+      sid: 'alice_session1',
+      rotation: 'sticky-strict',
+    });
+    expect(url).toContain('-peer-us-sid-alice_session1-rot-sticky-strict');
+  });
 
   it('throws ProxiesConfigError on missing proxyUsername', () => {
     expect(() => buildProxyUrl('', KEY)).toThrow(ProxiesConfigError);

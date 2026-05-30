@@ -58,15 +58,22 @@ export type Country = KnownCountry | (string & {});
  * Tokens emitted: `-rot-{mode}`. `none` emits no token.
  */
 export type RotationMode =
-  | 'none'      // no -rot- token; gateway uses default
-  | 'auto5'     // new modem every 5 min
-  | 'auto10'    // new modem every 10 min (default)
-  | 'auto20'    // new modem every 20 min
-  | 'auto30'    // new modem every 30 min
-  | 'auto60'    // new modem every 60 min
-  | 'ondemand'  // reuse while connected; no timer
-  | 'sticky'    // pin one modem; gateway smart-picks the most IP-stable
-  | 'hard';     // pin one modem per session; fresh connection = fresh modem
+  | 'none'          // no -rot- token; gateway uses default
+  | 'auto5'         // new modem every 5 min
+  | 'auto10'        // new modem every 10 min (default)
+  | 'auto20'        // new modem every 20 min
+  | 'auto30'        // new modem every 30 min
+  | 'auto60'        // new modem every 60 min
+  | 'ondemand'      // reuse while connected; no timer
+  | 'sticky'        // pin one modem; gateway smart-picks the most IP-stable
+  | 'sticky-strict' // like sticky, but the gateway weights IP-stability harder
+                    // and applies a minimum-stability floor — lands you on the
+                    // endpoint whose exit IP holds best. Pair with the `peer`
+                    // (residential) pool for a near-immutable IP. Requires a sid.
+  | 'hard';         // pins like `sticky` (NOT a new IP per request). A true
+                    // carrier-IP reset only happens via the /rotate action and
+                    // is unavailable for residential peers — at routing time
+                    // `hard` is equivalent to `sticky`.
 
 /** Pool the customer's traffic will route through. `mbl` = ProxySmart mobile modems. `peer` = residential Android peers. */
 export type Pool = 'mbl' | 'peer';

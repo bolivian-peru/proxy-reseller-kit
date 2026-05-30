@@ -534,7 +534,7 @@ The customer's HTTP/SOCKS5 client connects to:
 | Pool | `mbl`, `peer`, `any` | `mbl` = our own mobile-carrier modems (production-recommended), `peer` = residential community network, `any` = auto-pick (mobile-first) |
 | Country | `us`, `de`, `pl`, `fr`, `es`, `gb` | ISO 3166-1 alpha-2 |
 | `sid-{id}` | `sid-alice_session1` | Pin the customer to one modem for this session — same `sid` returns to the same modem |
-| `rot-{mode}` | `rot-sticky`, `rot-auto5`, `rot-auto10`, `rot-auto20`, `rot-auto60`, `rot-hard`, `rot-ondemand` | Rotation policy. `sticky`/`hard` → gateway smart-picks the most IP-stable modem available. `auto*` → swap modems every N min. |
+| `rot-{mode}` | `rot-sticky`, `rot-sticky-strict`, `rot-auto5`, `rot-auto10`, `rot-auto20`, `rot-auto60`, `rot-hard`, `rot-ondemand` | Rotation policy. `sticky`/`sticky-strict`/`hard` pin the modem (gateway smart-picks the most IP-stable; `hard` ≡ `sticky`, NOT a new IP per request). `sticky-strict` adds a min-stability floor — best on the `peer` pool. `auto*` swap every N min. **Needs a `-sid-` to persist across connections.** |
 | `city-{name}` | `city-nyc` | City filter (when supported) |
 | `carrier-{name}` | `carrier-att`, `carrier-tmobile` | Carrier filter |
 
