@@ -204,19 +204,21 @@ Stripe storefront, on a different rail.
 
 ## Quickstart
 
-> **📦 Current version: 0.6.x — install from the GitHub release.**
-> The npm registry currently serves the older `0.5.x`. The current **0.6.x**
-> build (per-customer session scoping + white-label + sticky smart-selection
-> copy alignment) is distributed as self-contained release tarballs.
-> Installing the React package pulls the SDK automatically:
+> **📦 Current version: 0.7.0 — install from the GitHub release.**
+> The npm registry currently serves the older `0.5.x`. The current **0.7.0**
+> build (adds the `sticky-strict` rotation mode + corrects `hard` semantics —
+> `hard` pins like sticky, NOT "new IP per request" — and teaches the `-sid-`
+> requirement, on top of 0.6.x per-customer session scoping + white-label) is
+> distributed as self-contained release tarballs. Installing the React package
+> pulls the SDK automatically:
 > ```bash
 > # Full kit (React components + SDK):
-> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.2/proxies-sx-pool-portal-react-0.6.2.tgz
+> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.7.0/proxies-sx-pool-portal-react-0.7.0.tgz
 > # SDK only:
-> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.2/proxies-sx-pool-sdk-0.6.1.tgz
+> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.7.0/proxies-sx-pool-sdk-0.7.0.tgz
 > ```
 > The plain `npm install @proxies-sx/...` commands below install `0.5.x` until
-> 0.6.x is published to npm. See [Releases](https://github.com/bolivian-peru/proxy-reseller-kit/releases/tag/v0.6.2).
+> 0.7.0 is published to npm. See [Releases](https://github.com/bolivian-peru/proxy-reseller-kit/releases/tag/v0.7.0).
 
 ### Deploy a full storefront in 10 minutes
 
