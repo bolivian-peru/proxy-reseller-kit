@@ -127,9 +127,9 @@ const ROTATION_OPTS: { value: RotationMode; label: string }[] = [
   // Sticky pins the modem AND the gateway smart-picks the most IP-stable
   // modem in the country (carrier-CGNAT-aware selection, May 2026).
   { value: 'sticky', label: 'Sticky (pin to most IP-stable modem)' },
-  // Strict additionally applies a min-stability floor; best on the residential
-  // peer pool, where IPs hold for hours.
-  { value: 'sticky-strict', label: 'Sticky-strict (best IP hold — pair with peer)' },
+  // Strict additionally applies a min-stability floor; best on the peer pool
+  // (community SDK network), where home/ISP IPs hold for hours.
+  { value: 'sticky-strict', label: 'Sticky-strict (best IP hold — pair with the peer pool)' },
   // `hard` pins like sticky at routing time — NOT a new modem per request.
   { value: 'hard', label: 'Hard (pins like sticky)' },
 ];
@@ -363,8 +363,9 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             onChange={(e) => setPool(e.target.value as Pool)}
             className={cn('psx-select', classNames.select)}
           >
-            <option value="mbl">Mobile (mbl)</option>
-            <option value="peer">Residential peer</option>
+            <option value="mbl">Mobile — production modems</option>
+            <option value="peer">Peer network — community (mobile + residential)</option>
+            <option value="any">Any — best available</option>
           </select>
         </label>
 

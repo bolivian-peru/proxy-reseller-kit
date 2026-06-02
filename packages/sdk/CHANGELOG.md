@@ -1,5 +1,15 @@
 # Changelog — `@proxies-sx/pool-sdk`
 
+## 0.8.0
+
+- **Pool model clarified.** `peer` is the **community SDK network** (mixed mobile + residential
+  home/ISP IPs) — no longer mislabeled "residential only". Added `any`/`best` to the `Pool` type
+  and the `<PoolSessionSpawner>` pool picker.
+- **Per-pool country stock.** Docs + components clarify that country availability differs by pool;
+  filter the country picker by the selected pool (`countries[CC].modem` / `.peer`).
+- Throughput-floor note (`PEER_THROUGHPUT_FLOOR_KBPS` ~500 KB/s) added to the guide.
+
+
 All notable changes to this package are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 semver from 0.3.0 onwards (the public surface is everything exported from

@@ -32,8 +32,8 @@ export const SOCKS5_PORT = 7001;
  * **IP-stability contract.** Sticky pins the *modem*, not the IP — mobile
  * carrier CGNAT may still re-NAT the exit IP. For an IP that holds across a
  * whole workflow (cf_clearance, banking 2FA), use `rotation: 'sticky-strict'`
- * with `pool: 'peer'` (residential home-ISP IPs are stable for hours), or a
- * dedicated modem.
+ * with `pool: 'peer'` (the community SDK network — real home/ISP IPs hold for
+ * hours), or a dedicated modem.
  *
  * @example
  * ```ts
@@ -54,6 +54,7 @@ export const SOCKS5_PORT = 7001;
  *   rotation: 'sticky-strict',
  * });
  * // → "http://psx_abc123-peer-us-sid-alice_session1-rot-sticky-strict:pak_...@gw.proxies.sx:7000"
+ * // (peer = community network: real mobile + residential home IPs)
  * ```
  *
  * @param proxyUsername Your reseller identifier, e.g. `psx_abc123`.

@@ -173,7 +173,7 @@ Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation
 | `same` | All rows share the same `-sid-<prefix>` | All rows land on the SAME modem — useful when many parallel sockets from one customer should share one exit |
 | `none` | Each row gets a random `-sid-<row-specific>` | Same as `unique` in practice — every row distinct (we always emit a sid; "none" just means "you didn't pick a prefix") |
 
-**Sticky semantics (#295 Phase 1, May 2026):** when `defaultRotation="sticky"` or `"hard"`, the gateway weighs IP-stability heavily when picking each row's modem — you get the modems whose carrier holds their egress IP best. Note that mobile CGNAT can still rotate the IP even on a held modem (the gateway pins the MODEM, not the IP). For workflows that need a truly immutable IP, switch `defaultPool="peer"` (residential IPs hold for hours-to-days). Full Layer-1-vs-Layer-2 explanation: [wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
+**Sticky semantics (#295 Phase 1, May 2026):** when `defaultRotation="sticky"` or `"hard"`, the gateway weighs IP-stability heavily when picking each row's modem — you get the modems whose carrier holds their egress IP best. Note that mobile CGNAT can still rotate the IP even on a held modem (the gateway pins the MODEM, not the IP). For workflows that need a truly immutable IP, switch `defaultPool="peer"` (the community SDK network — real home/ISP IPs hold for hours-to-days). Full Layer-1-vs-Layer-2 explanation: [wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
 ### `<ActiveSessionsTable>` — live session manager (v0.4.0+)
 
@@ -216,7 +216,7 @@ Four collapsible sections: how-it-works flow (5-step request lifecycle), usernam
 />
 ```
 
-Live online endpoint counts per country for both `mbl` mobile and `peer` residential pools. Auto-polls `/api/pool/stock` every 30 s (matches server-side cache TTL). Health pills: green ≥ 5 endpoints, amber < 5.
+Live online endpoint counts per country for both the `mbl` mobile-modem pool and the `peer` community network. **Country stock differs per pool** — a country may have modems but no peers (or vice-versa); filter your picker by the selected pool. Auto-polls `/api/pool/stock` every 30 s (matches server-side cache TTL). Health pills: green ≥ 5 endpoints, amber < 5.
 
 ### Server handlers (v0.4.0+)
 

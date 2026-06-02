@@ -15,6 +15,22 @@ Source: <https://github.com/bolivian-peru/proxy-reseller-kit>. License: MIT.
 
 ---
 
+## Pools & per-pool country stock (read before building the picker)
+
+Two pools, selected via the `pool` token in the username DSL:
+
+| Pool | What it is | Use for |
+|---|---|---|
+| `mbl` | **Production mobile modems** — real 4G/5G carrier IPs (ProxySmart), monitored quality. | Default. Highest, most consistent quality. |
+| `peer` | The **community SDK network** — real user devices sharing bandwidth. **Mixed IP types: mostly mobile + residential home/ISP** (it is NOT "residential only"). | Country breadth (90+ countries), home-ISP IP stability. |
+| `any` / `best` | Best available across both (modems first, peers as fallback). | "Just give me a working IP." |
+
+**Per-pool country stock is different.** A country may have modem stock but no peers, or peers but no modems. When you build a country picker, **filter the country list by the selected pool** — read the per-country `modem` and `peer` counts from `GET /v1/gateway/pool/availability` (`countries[CC].modem` / `.peer`) and only show countries with stock in the chosen pool. `<PoolStockGrid>` and `<PoolSessionSpawner>` model this; if you roll your own, do the same so users never pick a dead country.
+
+**Quality bar.** Peers are throughput-graded; only those clearing the live floor (`PEER_THROUGHPUT_FLOOR_KBPS`, ~500 KB/s) are routable. Plenty for scraping / API / anti-bot work — the value is the clean, in-country IP, not raw bandwidth. The `mbl` pool is the premium tier.
+
+---
+
 ## When to use this skill
 
 Use it for any of these intents:

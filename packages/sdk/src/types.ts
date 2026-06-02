@@ -37,8 +37,8 @@ export type Country = KnownCountry | (string & {});
  *   50% of the selection score when rotation is `sticky` or `hard`.
  *
  *   For workflows that need a TRULY immutable IP (cf_clearance, banking,
- *   mTLS bound to source IP), use the residential `peer` pool — residential
- *   ISPs hold IPs hours-to-days. See the wiki page "Sticky Sessions and
+ *   mTLS bound to source IP), use the `peer` pool (community SDK network) — real home/ISP
+ *   IPs hold for hours-to-days. See the wiki page "Sticky Sessions and
  *   Rotation" for the full Layer-1-vs-Layer-2 explanation.
  *
  * Behavior at the gateway level:
@@ -69,14 +69,24 @@ export type RotationMode =
   | 'sticky-strict' // like sticky, but the gateway weights IP-stability harder
                     // and applies a minimum-stability floor — lands you on the
                     // endpoint whose exit IP holds best. Pair with the `peer`
-                    // (residential) pool for a near-immutable IP. Requires a sid.
+                    // (community/residential) pool for a near-immutable IP. Requires a sid.
   | 'hard';         // pins like `sticky` (NOT a new IP per request). A true
                     // carrier-IP reset only happens via the /rotate action and
-                    // is unavailable for residential peers — at routing time
+                    // is unavailable for peers — at routing time
                     // `hard` is equivalent to `sticky`.
 
-/** Pool the customer's traffic will route through. `mbl` = ProxySmart mobile modems. `peer` = residential Android peers. */
-export type Pool = 'mbl' | 'peer';
+/**
+ * Pool the customer's traffic routes through.
+ * - `mbl`  — Production ProxySmart **mobile modems** (real 4G/5G carrier IPs, monitored quality).
+ * - `peer` — The **community SDK network**: real devices sharing bandwidth. Mixed IP
+ *            types — mostly **mobile + residential home/ISP** (NOT "residential only").
+ * - `any`  — Best available across both pools (mobile modems first, peers as fallback).
+ * - `best` — Alias of `any`.
+ *
+ * Country availability differs per pool — a country may have modem stock but no
+ * peers, or vice-versa. Filter your country picker by the selected pool.
+ */
+export type Pool = 'mbl' | 'peer' | 'any' | 'best';
 
 /** Network protocol for the proxy URL. HTTP port 7000, SOCKS5 port 7001. */
 export type Protocol = 'http' | 'socks5';
@@ -361,7 +371,7 @@ export interface ActiveSession {
    * Use `isSynthesizedSid` to filter them out of customer-facing UIs.
    */
   sessionId: string;
-  /** Pool the session is routed through. `mbl` = ProxySmart mobile modems, `peer` = residential. */
+  /** Pool the session is routed through. `mbl` = mobile modems; `peer` = community SDK network (mobile + residential). */
   pool: Pool;
   /** ISO country code (lowercase). */
   country: string;
