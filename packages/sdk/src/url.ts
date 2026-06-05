@@ -77,6 +77,8 @@ export function buildProxyUrl(
   const {
     country,
     carrier,
+    isp,
+    asn,
     city,
     sid,
     rotation,
@@ -88,6 +90,13 @@ export function buildProxyUrl(
   const tokens: string[] = [pool];
   if (country) tokens.push(country);
   if (carrier) tokens.push('carrier', carrier);
+  // Hard carrier targeting (peer pool). `isp` is a slugified prefix match
+  // against the endpoint's ISP name; `asn` is an exact AS-number match. Both
+  // are honored by the gateway selector — use these (not the soft `carrier`)
+  // when you need to pin a specific carrier, e.g. `isp: 'tmobile'` or
+  // `asn: 21928`. Live per-carrier stock: `client.pool.getCarrierStock(cc)`.
+  if (isp) tokens.push('isp', isp);
+  if (asn) tokens.push('asn', String(asn));
   if (city) tokens.push('city', city);
   if (sid) tokens.push('sid', sid);
   if (rotation) tokens.push('rot', rotation);

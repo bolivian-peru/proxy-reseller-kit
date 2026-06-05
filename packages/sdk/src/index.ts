@@ -32,6 +32,8 @@ export type {
   ActiveSessionsResponse,
   BuildProxyUrlOpts,
   PoolStock,
+  CarrierStock,
+  CarrierStockEntry,
   Incident,
   ClientConfig,
 } from './types';

@@ -289,8 +289,19 @@ export interface TopUpPoolAccessKeyInput {
 export interface BuildProxyUrlOpts {
   /** ISO country code. If omitted, any country in the pool is eligible. */
   country?: Country;
-  /** Carrier name (e.g. `"att"`, `"tmobile"`). Must be supported for the country. */
+  /** Carrier name (e.g. `"att"`, `"tmobile"`). Soft preference, mostly for modems. */
   carrier?: string;
+  /**
+   * ISP slug — HARD prefix match against the endpoint's ISP name (peer pool).
+   * Use for residential carrier targeting, e.g. `"tmobile"`, `"comcast"`.
+   * Live per-carrier stock: {@link PoolApi.getCarrierStock}.
+   */
+  isp?: string;
+  /**
+   * Numeric ASN — HARD exact match (peer pool). The most precise carrier
+   * filter, e.g. `21928` (T-Mobile). Pairs with {@link PoolApi.getCarrierStock}.
+   */
+  asn?: number;
   /** City name (e.g. `"nyc"`, `"berlin"`). Carrier-level precision recommended over city. */
   city?: string;
   /** Session ID — same sid → same endpoint (with `rotation: 'sticky'`). Keep stable per workflow. */
@@ -346,6 +357,38 @@ export interface PoolStock {
   };
   /** ISO 8601 timestamp when the snapshot was taken (cached server-side ~30s). */
   generatedAt: string;
+}
+
+/** One carrier/ASN bucket of routable peer stock (counts only — never IPs). */
+export interface CarrierStockEntry {
+  /** Numeric ASN, or `null` if the AS number is unknown. Pass to {@link BuildProxyUrlOpts.asn}. */
+  asn: number | null;
+  /** Carrier/ISP display name, e.g. `"T-Mobile"`. Slugify for {@link BuildProxyUrlOpts.isp}. */
+  name: string;
+  /** Access type of this carrier's endpoints. */
+  ipType: 'mobile' | 'residential' | 'datacenter' | string;
+  /** Routable endpoints available right now for this carrier in the country. */
+  count: number;
+}
+
+/**
+ * Live routable PEER stock by carrier/ASN for one country. Returned by
+ * {@link PoolApi.getCarrierStock}. Counts only — never exit IPs.
+ *
+ * @since 0.8.0
+ */
+export interface CarrierStock {
+  pool: 'peer';
+  /** ISO 8601 timestamp when the snapshot was taken (cached server-side ~30s). */
+  updatedAt: string;
+  /** ISO 2-letter country this stock is for. */
+  country: string;
+  /** Total routable peers in the country across all carriers. */
+  total: number;
+  /** Routable peers whose ASN could not be named (bucketed out of `carriers`). */
+  other: number;
+  /** Named carriers, sorted by `count` desc. */
+  carriers: CarrierStockEntry[];
 }
 
 /**

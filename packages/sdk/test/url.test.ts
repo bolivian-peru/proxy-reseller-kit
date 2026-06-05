@@ -39,6 +39,21 @@ describe('buildProxyUrl', () => {
     expect(url).toContain('-mbl-us-carrier-att-city-nyc');
   });
 
+  it('appends a hard ASN filter (peer carrier targeting)', () => {
+    const url = buildProxyUrl(USER, KEY, { pool: 'peer', country: 'us', asn: 21928 });
+    expect(url).toContain('psx_abc123-peer-us-asn-21928');
+  });
+
+  it('appends a hard ISP slug filter', () => {
+    const url = buildProxyUrl(USER, KEY, { pool: 'peer', country: 'us', isp: 'tmobile' });
+    expect(url).toContain('-peer-us-isp-tmobile');
+  });
+
+  it('omits the asn token when asn is 0 or undefined', () => {
+    expect(buildProxyUrl(USER, KEY, { country: 'us' })).not.toContain('-asn-');
+    expect(buildProxyUrl(USER, KEY, { country: 'us', asn: 0 })).not.toContain('-asn-');
+  });
+
   it('URL-encodes user-supplied sid with special characters', () => {
     const url = buildProxyUrl(USER, KEY, { sid: 'user@example.com' });
     expect(url).toContain('psx_abc123-mbl-sid-user%40example.com');

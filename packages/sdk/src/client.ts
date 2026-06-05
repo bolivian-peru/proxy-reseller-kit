@@ -7,6 +7,7 @@ import type {
   PoolAccessKeyAuditEvent,
   AuditQueryOpts,
   PoolStock,
+  CarrierStock,
   Incident,
   BuildProxyUrlOpts,
   RetryConfig,
@@ -549,6 +550,34 @@ export class PoolApi {
       );
     }
     return raw as PoolStock;
+  }
+
+  /**
+   * Live routable PEER stock by carrier/ASN for a country (counts only — no
+   * exit IPs). Powers a carrier/ASN selector: pair an entry's `asn` with
+   * {@link buildProxyUrl}'s `asn` option to route to that carrier. Cached 30s.
+   *
+   * Runtime-validates the response envelope, same as {@link getStock}.
+   *
+   * @param country ISO 2-letter code, e.g. `'us'`.
+   */
+  async getCarrierStock(country: string): Promise<CarrierStock> {
+    const raw = await this.client.request<unknown>(
+      `/gateway/pool/stock/carriers?country=${encodeURIComponent(country)}`,
+    );
+    if (
+      !raw ||
+      typeof raw !== 'object' ||
+      !('carriers' in raw) ||
+      !Array.isArray((raw as { carriers?: unknown }).carriers)
+    ) {
+      throw new ProxiesError(
+        'CarrierStock response shape unexpected — possible upstream change. ' +
+          'Got: ' +
+          JSON.stringify(raw).slice(0, 200),
+      );
+    }
+    return raw as CarrierStock;
   }
 
   /** Active incidents affecting the gateway, if any. Cached 60s. */
