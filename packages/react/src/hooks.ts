@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MeResponse, PoolStock, Incident } from './types';
+import type { MeResponse, PoolStock, CarrierStock, Incident } from './types';
 
 interface FetchState<T> {
   data: T | null;
@@ -52,6 +52,26 @@ export function usePoolStock(
   options: { refreshIntervalMs?: number } = {},
 ): HookResult<PoolStock> {
   return usePolling<PoolStock>(`${apiRoute}/stock`, options.refreshIntervalMs ?? 30_000);
+}
+
+/**
+ * Fetches live routable PEER stock by carrier/ASN for a country (counts only).
+ * Re-fetches when `country` changes. Proxies to
+ * `/v1/gateway/pool/stock/carriers`. Drives a carrier/ASN selector — pair an
+ * entry's `asn` with `buildProxyString({ asn })`.
+ *
+ * @param apiRoute Base path, e.g. `/api/pool`.
+ * @param country  ISO 2-letter code, e.g. `'us'`.
+ */
+export function usePoolCarrierStock(
+  apiRoute: string,
+  country: string,
+  options: { refreshIntervalMs?: number } = {},
+): HookResult<CarrierStock> {
+  return usePolling<CarrierStock>(
+    `${apiRoute}/stock/carriers?country=${encodeURIComponent(country)}`,
+    options.refreshIntervalMs ?? 30_000,
+  );
 }
 
 /** Fetches active gateway incidents. Poll every 60s by default. */

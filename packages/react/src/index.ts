@@ -34,6 +34,7 @@ export type { PoolStockGridProps } from './PoolStockGrid';
 export {
   usePoolKey,
   usePoolStock,
+  usePoolCarrierStock,
   useIncidents,
   useCopyToClipboard,
 } from './hooks';

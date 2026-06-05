@@ -238,6 +238,7 @@ The list endpoint also returns `isExpired: boolean` computed server-side
 | Method | Returns | Description |
 |---|---|---|
 | `getStock()` | `PoolStock` | Live endpoint count per country |
+| `getCarrierStock(country)` | `CarrierStock` | Live routable **peer** stock by carrier/ASN for one country (counts only, no exit IPs). Pair an entry's `asn` with `buildProxyUrl({ asn })` to route to that carrier. |
 | `getIncidents()` | `Incident[]` | Active pool incidents |
 
 ### `proxies.buildProxyUrl(pakKey, opts?)`
@@ -257,13 +258,36 @@ import { buildProxyUrl } from '@proxies-sx/pool-sdk';
 | Field | Type | Example |
 |---|---|---|
 | `country` | `'us' \| 'de' \| 'pl' \| 'fr' \| 'es' \| 'gb'` | `'us'` |
-| `carrier` | `string` | `'att'`, `'tmobile'`, `'vodafone'` |
+| `carrier` | `string` | `'att'`, `'tmobile'` — soft preference, mostly for modems |
+| `isp` | `string` | `'tmobile'`, `'comcast'` — **hard** ISP prefix match (peer pool). Residential carrier targeting. |
+| `asn` | `number` | `21928` (T-Mobile) — **hard** exact ASN match (peer pool). Most precise; pair with `getCarrierStock()`. |
 | `city` | `string` | `'nyc'`, `'berlin'` |
 | `sid` | `string` | `'customer-123'` (same sid + `rotation: 'sticky'` → returns to the same modem) |
 | `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto30' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'sticky-strict' \| 'hard'` | `'sticky'` pins one modem AND the gateway smart-picks the most IP-stable one. `'sticky-strict'` weights stability harder + applies a min-stability floor — pair with `pool: 'peer'` for a near-immutable IP. `'hard'` **pins like sticky** (NOT a new IP per request). `'sticky'`/`'sticky-strict'`/`'auto*'` need a `sid` to persist. See [wiki: Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation). |
 | `pool` | `'mbl' \| 'peer'` | `'mbl'` (mobile modems) or `'peer'` (residential peers) |
 | `protocol` | `'http' \| 'socks5'` | `'http'` (port 7000) or `'socks5'` (port 7001) |
 | `host` | `string` | Override gateway host, e.g. `'edge-eu.proxies.sx'` |
+
+#### Carrier / ASN targeting (peer pool)
+
+Show your customers which carriers are live, then route to a specific one. The
+gateway honors `-asn-<n>` (exact) and `-isp-<slug>` (prefix) for the peer pool.
+
+```ts
+// 1. What's available right now?
+const stock = await proxies.pool.getCarrierStock('us');
+// → { country: 'US', total: 88, other: 27, carriers: [
+//     { asn: 7922, name: 'Comcast', ipType: 'residential', count: 13 },
+//     { asn: 21928, name: 'T-Mobile', ipType: 'mobile', count: 3 }, … ] }
+
+// 2. Route to a chosen carrier (pair the entry's asn):
+const url = proxies.buildProxyUrl(pakKey, { pool: 'peer', country: 'us', asn: 21928 });
+// → "http://psx_abc123-peer-us-asn-21928:pak_…@gw.proxies.sx:7000"
+//   (or use isp: 'tmobile' for a name-prefix match)
+```
+
+> Counts are real-time routable supply — small pools are normal for residential
+> ASNs. If a carrier shows `0`, route customers to the modem (`mbl`) pool instead.
 
 ---
 

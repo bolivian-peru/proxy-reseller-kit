@@ -5,6 +5,7 @@ import {
   type JSX,
   type ReactNode,
   useCallback,
+  useEffect,
   useMemo,
   useState,
 } from 'react';
@@ -13,6 +14,7 @@ import type {
   Pool,
   Protocol,
   RotationMode,
+  CarrierStockEntry,
   Branding,
   PoolPortalClassNames,
 } from './types';
@@ -51,6 +53,14 @@ export interface PoolSessionSpawnerProps {
   proxyPassword: string;
   /** Available countries the user can choose. Defaults to the current Pool Gateway list. */
   countries?: readonly Country[];
+  /**
+   * Live carrier/ASN stock for the selected country (peer pool), e.g. from
+   * `usePoolCarrierStock(apiRoute, country).data?.carriers`. When provided and
+   * the pool is `peer`, a Carrier select appears and the chosen ASN is routed
+   * as a hard `-asn-` filter. Counts only — never IPs.
+   * @since 0.8.0
+   */
+  carrierStock?: CarrierStockEntry[];
   /** Default country selected on mount. */
   defaultCountry?: Country;
   /** Default pool selected on mount. */
@@ -166,9 +176,12 @@ export function buildProxyString(opts: {
   gatewayHost?: string;
   /** Optional session TTL override in seconds (60–86400). @since 0.4.2 */
   ttlSeconds?: number;
+  /** Hard ASN filter (peer pool) — exact match, e.g. 21928 (T-Mobile). @since 0.8.0 */
+  asn?: number;
 }): string {
   const port = opts.protocol === 'http' ? 7000 : 7001;
   const tokens = [opts.pool, opts.country];
+  if (opts.asn) tokens.push('asn', String(opts.asn));
   // Always inject a sid when spawning a multi-row table. 'same' shares one;
   // 'unique' and 'none' both give per-row sids — the only difference is that
   // 'none' callers don't want long-lived stickiness, but the URLs must still be
@@ -236,6 +249,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
     proxyUsername,
     proxyPassword,
     countries = DEFAULT_COUNTRIES,
+    carrierStock = [],
     defaultCountry = countries[0]!,
     defaultPool = 'mbl',
     defaultProtocol = 'http',
@@ -255,6 +269,14 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
   const [count, setCount] = useState(5);
   const [country, setCountry] = useState<Country>(defaultCountry);
   const [pool, setPool] = useState<Pool>(defaultPool);
+  // Carrier/ASN selection — peer pool only. 0 = any carrier. Reset when the
+  // scope (country/pool) changes, since a carrier in one country doesn't apply
+  // to another. Live stock is supplied by the host via the `carrierStock` prop
+  // (see the `usePoolCarrierStock` hook).
+  const [carrierAsn, setCarrierAsn] = useState<number>(0);
+  useEffect(() => {
+    setCarrierAsn(0);
+  }, [country, pool]);
   const [protocol, setProtocol] = useState<Protocol>(defaultProtocol);
   const [rotation, setRotation] = useState<RotationMode>(defaultRotation);
   const [sessionType, setSessionType] = useState<SessionType>(defaultSessionType);
@@ -283,6 +305,8 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
           proxyUsername, proxyPassword, pool, country, protocol, rotation,
           sessionType, sessionPrefix, index: i, gatewayHost,
           ttlSeconds,
+          // Carrier/ASN is a peer-pool-only hard filter.
+          asn: pool === 'peer' && carrierAsn ? carrierAsn : undefined,
         }),
       );
     }
@@ -292,7 +316,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
       count, country, pool, protocol, rotation, sessionType, sessionPrefix,
       generatedAt: Date.now(),
     });
-  }, [proxyUsername, proxyPassword, count, country, pool, protocol, rotation, sessionType, sessionPrefix, gatewayHost, onSpawn]);
+  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, protocol, rotation, sessionType, sessionPrefix, gatewayHost, ttlSeconds, onSpawn]);
 
   const handleCopyOne = useCallback((url: string, idx: number) => {
     void navigator.clipboard?.writeText(url);
@@ -368,6 +392,28 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             <option value="any">Any — best available</option>
           </select>
         </label>
+
+        {/* Carrier / ASN — peer pool only; live stock supplied by the host via
+            the `carrierStock` prop (see `usePoolCarrierStock`). */}
+        {pool === 'peer' && carrierStock.length > 0 && (
+          <label className="psx-spawner-row">
+            <span>Carrier / ASN</span>
+            <select
+              value={String(carrierAsn)}
+              onChange={(e) => setCarrierAsn(Number(e.target.value) || 0)}
+              className={cn('psx-select', classNames.select)}
+            >
+              <option value="0">Any carrier</option>
+              {carrierStock
+                .filter((c) => c.asn != null)
+                .map((c) => (
+                  <option key={c.asn!} value={String(c.asn)}>
+                    {c.name} ({c.ipType}) — {c.count}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
 
         {/* Protocol */}
         <label className="psx-spawner-row">

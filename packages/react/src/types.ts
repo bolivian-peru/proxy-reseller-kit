@@ -4,10 +4,21 @@ import type {
   Protocol,
   Pool,
   PoolStock,
+  CarrierStock,
+  CarrierStockEntry,
   Incident,
 } from '@proxies-sx/pool-sdk';
 
-export type { Country, RotationMode, Protocol, Pool, PoolStock, Incident };
+export type {
+  Country,
+  RotationMode,
+  Protocol,
+  Pool,
+  PoolStock,
+  CarrierStock,
+  CarrierStockEntry,
+  Incident,
+};
 
 /**
  * Shape returned by the host app's `/api/pool/me` endpoint. Represents the

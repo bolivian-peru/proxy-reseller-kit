@@ -175,6 +175,23 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
     }
   };
 
+  const handleCarrierStock = async (req: Request): Promise<Response> => {
+    const country = new URL(req.url).searchParams.get('country') ?? '';
+    if (!country) {
+      return json({ error: 'country_required' }, { status: 400 });
+    }
+    try {
+      const stock = await proxies.pool.getCarrierStock(country);
+      return json(stock, { headers: { 'Cache-Control': 'public, max-age=30' } });
+    } catch (err) {
+      const apiErr = err as ProxiesApiError;
+      return json(
+        { error: 'upstream_error' },
+        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502 },
+      );
+    }
+  };
+
   const handleIncidents = async (): Promise<Response> => {
     try {
       const incidents = await proxies.pool.getIncidents();
@@ -299,6 +316,7 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
   const GET = async (req: Request): Promise<Response> => {
     const p = pathOf(req);
     if (p.endsWith('/me')) return handleMe(req);
+    if (p.includes('/stock/carriers')) return handleCarrierStock(req);
     if (p.endsWith('/stock')) return handleStock();
     if (p.endsWith('/incidents')) return handleIncidents();
     if (p.endsWith('/my-sessions')) return handleListSessions(req);
