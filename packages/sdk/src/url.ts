@@ -31,9 +31,20 @@ export const SOCKS5_PORT = 7001;
  *
  * **IP-stability contract.** Sticky pins the *modem*, not the IP — mobile
  * carrier CGNAT may still re-NAT the exit IP. For an IP that holds across a
- * whole workflow (cf_clearance, banking 2FA), use `rotation: 'sticky-strict'`
- * with `pool: 'peer'` (the community SDK network — real home/ISP IPs hold for
- * hours), or a dedicated modem.
+ * whole workflow (cf_clearance, banking 2FA), prefer `pool: 'mbl'` with
+ * `rotation: 'sticky-strict'` (reliable production modems — the recommended
+ * default). The residential `peer` pool holds an IP longer but is community-tier
+ * so reliability varies; a dedicated modem is the strongest option.
+ *
+ * **Reliability / auto-failover (gateway-side, automatic).** Your customers do
+ * not need to handle dead exits. The gateway runs connect-phase auto-failover:
+ * if the modem it picks has dropped, that modem is demoted and a healthy one is
+ * retried *before any response is returned* — this is what prevents the
+ * occasional `503 / temporarily unavailable`. The `failover` token only controls
+ * how wide the replacement may be (`samecountry` default … `strict` disables
+ * substitution). SOCKS5 (port 7001) additionally falls back to a modem's HTTP
+ * CONNECT path (port 7000) if its SOCKS service is briefly down, so both ports
+ * are equally reliable — choose with `protocol: 'http' | 'socks5'`.
  *
  * @example
  * ```ts

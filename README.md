@@ -84,6 +84,8 @@ The reseller kit exposes the pool toggle in `<PoolSessionSpawner>` and `<PoolDoc
 
 **Which pool for sticky-IP workflows?** Sticky pins the **modem**, not the IP — mobile carriers can rotate egress IPs via CGNAT even on a held modem (the gateway smart-picks the most IP-stable modem available, but the carrier always has the final say). For workflows that need a TRULY immutable IP (cf_clearance, banking, mTLS bound to source IP), use `-peer-` — residential ISPs hold IPs hours-to-days. Full Layer-1-vs-Layer-2 explanation in the wiki: [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
+**Reliability — auto-failover is built in (nothing for you or your customers to handle).** The gateway runs connect-phase auto-failover: if the modem it selects has dropped, that modem is demoted from the pool and a healthy one is retried *before any response is returned* — this is what prevents the occasional `503 / temporarily unavailable`. Your customer controls how wide the replacement may be with the `-failover-` token (`samecountry` default, `samecarrier`, `samenode`, `any`, or `strict` to disable substitution and fail clean). SOCKS5 (`:7001`) additionally falls back to a modem's HTTP CONNECT path (`:7000`) if its SOCKS service is briefly down, so **both ports are equally reliable** — pick whichever your customer's tooling prefers.
+
 ---
 
 ## Two-sided dashboard pattern (recommended for SaaS resellers)
