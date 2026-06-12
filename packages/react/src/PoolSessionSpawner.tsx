@@ -164,7 +164,7 @@ function randomPrefix(): string {
  * @public
  */
 /**
- * Slugify a free-text value (carrier name, city) into a DSL-safe token.
+ * Slugify a free-text value (carrier name) into a DSL-safe token.
  * The gateway lowercases the whole username, splits on `-`, then per token keeps
  * only `[a-z0-9_]` (max 64). So the value must contain no `-`, spaces, or
  * punctuation. Multi-word values collapse to a single token (e.g.
@@ -191,8 +191,6 @@ export function buildProxyString(opts: {
   asn?: number;
   /** Soft carrier-name match (mbl / any pool) — e.g. "T-Mobile US". @since 0.9.0 */
   carrierName?: string;
-  /** Soft city match (all pools) — e.g. "New York". @since 0.9.0 */
-  city?: string;
 }): string {
   const port = opts.protocol === 'http' ? 7000 : 7001;
   const tokens = [opts.pool, opts.country];
@@ -201,7 +199,6 @@ export function buildProxyString(opts: {
   // Never emit -asn- on mbl — it can filter modem stock to zero.
   if (opts.asn) tokens.push('asn', String(opts.asn));
   else if (opts.carrierName) tokens.push('carrier', slugifyDsl(opts.carrierName));
-  if (opts.city) tokens.push('city', slugifyDsl(opts.city));
   // Always inject a sid when spawning a multi-row table. 'same' shares one;
   // 'unique' and 'none' both give per-row sids — the only difference is that
   // 'none' callers don't want long-lived stickiness, but the URLs must still be
@@ -294,11 +291,8 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
   // to another. Live stock is supplied by the host via the `carrierStock` prop
   // (see the `usePoolCarrierStock` hook).
   const [carrierAsn, setCarrierAsn] = useState<number>(0);
-  // Optional soft city match (all pools). Reset on country change.
-  const [city, setCity] = useState<string>('');
   useEffect(() => {
     setCarrierAsn(0);
-    setCity('');
   }, [country, pool]);
   const [protocol, setProtocol] = useState<Protocol>(defaultProtocol);
   const [rotation, setRotation] = useState<RotationMode>(defaultRotation);
@@ -334,7 +328,6 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             pool !== 'peer' && carrierAsn
               ? carrierStock.find((c) => c.asn === carrierAsn)?.name
               : undefined,
-          city: city.trim() || undefined,
         }),
       );
     }
@@ -344,7 +337,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
       count, country, pool, protocol, rotation, sessionType, sessionPrefix,
       generatedAt: Date.now(),
     });
-  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, city, carrierStock, protocol, rotation, sessionType, sessionPrefix, gatewayHost, ttlSeconds, onSpawn]);
+  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, carrierStock, protocol, rotation, sessionType, sessionPrefix, gatewayHost, ttlSeconds, onSpawn]);
 
   const handleCopyOne = useCallback((url: string, idx: number) => {
     void navigator.clipboard?.writeText(url);
@@ -445,19 +438,6 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             </select>
           </label>
         )}
-
-        {/* City (optional) — soft `-city-<slug>` match, all pools. */}
-        <label className="psx-spawner-row">
-          <span>City (optional)</span>
-          <input
-            type="text"
-            value={city}
-            maxLength={64}
-            placeholder="e.g. new york — blank for any city"
-            onChange={(e) => setCity(e.target.value)}
-            className={cn('psx-input', classNames.input)}
-          />
-        </label>
 
         {/* Protocol */}
         <label className="psx-spawner-row">
