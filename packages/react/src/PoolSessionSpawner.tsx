@@ -163,6 +163,17 @@ function randomPrefix(): string {
  *
  * @public
  */
+/**
+ * Slugify a free-text value (carrier name, city) into a DSL-safe token.
+ * The gateway lowercases the whole username, splits on `-`, then per token keeps
+ * only `[a-z0-9_]` (max 64). So the value must contain no `-`, spaces, or
+ * punctuation. Multi-word values collapse to a single token (e.g.
+ * "New York" -> "newyork", "T-Mobile US" -> "tmobileus").
+ */
+export function slugifyDsl(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 64);
+}
+
 export function buildProxyString(opts: {
   proxyUsername: string;
   proxyPassword: string;
@@ -178,10 +189,19 @@ export function buildProxyString(opts: {
   ttlSeconds?: number;
   /** Hard ASN filter (peer pool) — exact match, e.g. 21928 (T-Mobile). @since 0.8.0 */
   asn?: number;
+  /** Soft carrier-name match (mbl / any pool) — e.g. "T-Mobile US". @since 0.9.0 */
+  carrierName?: string;
+  /** Soft city match (all pools) — e.g. "New York". @since 0.9.0 */
+  city?: string;
 }): string {
   const port = opts.protocol === 'http' ? 7000 : 7001;
   const tokens = [opts.pool, opts.country];
+  // Carrier/ISP targeting differs by pool: the peer pool pins by exact ASN
+  // (`-asn-<n>`); the mbl/any pool matches by carrier name (`-carrier-<slug>`).
+  // Never emit -asn- on mbl — it can filter modem stock to zero.
   if (opts.asn) tokens.push('asn', String(opts.asn));
+  else if (opts.carrierName) tokens.push('carrier', slugifyDsl(opts.carrierName));
+  if (opts.city) tokens.push('city', slugifyDsl(opts.city));
   // Always inject a sid when spawning a multi-row table. 'same' shares one;
   // 'unique' and 'none' both give per-row sids — the only difference is that
   // 'none' callers don't want long-lived stickiness, but the URLs must still be
@@ -274,8 +294,11 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
   // to another. Live stock is supplied by the host via the `carrierStock` prop
   // (see the `usePoolCarrierStock` hook).
   const [carrierAsn, setCarrierAsn] = useState<number>(0);
+  // Optional soft city match (all pools). Reset on country change.
+  const [city, setCity] = useState<string>('');
   useEffect(() => {
     setCarrierAsn(0);
+    setCity('');
   }, [country, pool]);
   const [protocol, setProtocol] = useState<Protocol>(defaultProtocol);
   const [rotation, setRotation] = useState<RotationMode>(defaultRotation);
@@ -305,8 +328,13 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
           proxyUsername, proxyPassword, pool, country, protocol, rotation,
           sessionType, sessionPrefix, index: i, gatewayHost,
           ttlSeconds,
-          // Carrier/ASN is a peer-pool-only hard filter.
+          // peer pool pins by exact ASN; mbl/any matches by carrier name.
           asn: pool === 'peer' && carrierAsn ? carrierAsn : undefined,
+          carrierName:
+            pool !== 'peer' && carrierAsn
+              ? carrierStock.find((c) => c.asn === carrierAsn)?.name
+              : undefined,
+          city: city.trim() || undefined,
         }),
       );
     }
@@ -316,7 +344,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
       count, country, pool, protocol, rotation, sessionType, sessionPrefix,
       generatedAt: Date.now(),
     });
-  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, protocol, rotation, sessionType, sessionPrefix, gatewayHost, ttlSeconds, onSpawn]);
+  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, city, carrierStock, protocol, rotation, sessionType, sessionPrefix, gatewayHost, ttlSeconds, onSpawn]);
 
   const handleCopyOne = useCallback((url: string, idx: number) => {
     void navigator.clipboard?.writeText(url);
@@ -393,11 +421,14 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
           </select>
         </label>
 
-        {/* Carrier / ASN — peer pool only; live stock supplied by the host via
-            the `carrierStock` prop (see `usePoolCarrierStock`). */}
-        {pool === 'peer' && carrierStock.length > 0 && (
+        {/* Carrier / ISP — shown for ANY pool that has live carrier stock.
+            peer pool routes the choice as a hard `-asn-<n>` filter; mbl / any
+            route it as a soft `-carrier-<name>` match. Live stock supplied by
+            the host via the `carrierStock` prop (see `usePoolCarrierStock`).
+            Counts only — never IPs. */}
+        {carrierStock.length > 0 && (
           <label className="psx-spawner-row">
-            <span>Carrier / ASN</span>
+            <span>Carrier / ISP</span>
             <select
               value={String(carrierAsn)}
               onChange={(e) => setCarrierAsn(Number(e.target.value) || 0)}
@@ -414,6 +445,19 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             </select>
           </label>
         )}
+
+        {/* City (optional) — soft `-city-<slug>` match, all pools. */}
+        <label className="psx-spawner-row">
+          <span>City (optional)</span>
+          <input
+            type="text"
+            value={city}
+            maxLength={64}
+            placeholder="e.g. new york — blank for any city"
+            onChange={(e) => setCity(e.target.value)}
+            className={cn('psx-input', classNames.input)}
+          />
+        </label>
 
         {/* Protocol */}
         <label className="psx-spawner-row">
