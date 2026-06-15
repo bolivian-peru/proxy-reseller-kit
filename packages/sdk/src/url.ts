@@ -18,11 +18,16 @@ export const SOCKS5_PORT = 7001;
  * username DSL — see
  * {@link https://client.proxies.sx/pool-proxy | the public docs}.
  *
- * **`sid` rule (sticky session id):** must be **8–64 characters**, lowercase
- * letters / digits / underscore (`[a-z0-9_]`), and not a predictable value
- * (plain sequential numbers and prefixes like `test`/`demo`/`admin`/`user` are
- * rejected). Use your customer's stable id, e.g. `cust_8f3a21bd`. Shorter or
- * predictable sids are rejected by the gateway with `E_USERNAME_PARSE`.
+ * **`sid` rule (sticky session id):** lowercase letters / digits / underscore
+ * only (`[a-z0-9_]`), **1–64 characters**, and it MUST NOT contain a hyphen —
+ * the gateway lowercases the username and splits it on `-`, so a hyphen in your
+ * sid is mis-tokenized into the wrong session. `buildProxyUrl` validates this
+ * and throws {@link ProxiesConfigError} at build time rather than letting you
+ * ship a URL that fails at runtime with an opaque CONNECT 400. Use your
+ * customer's stable id, e.g. `cust_8f3a21bd`; prefer ≥8 chars of entropy so two
+ * different customers never collide on the same session. (The gateway parser is
+ * self-healing: it will further sanitize anything that slips through — but the
+ * point of the sid is a stable identifier, so don't rely on silent rewriting.)
  *
  * **Stickiness needs a sid.** `sticky` / `sticky-strict` / `auto*` only persist
  * across connections when you pass a stable `sid` — it is the session's "port
@@ -73,6 +78,25 @@ export const SOCKS5_PORT = 7001;
  * @param opts          Optional tokens — country, rotation, etc.
  * @returns A complete proxy URL suitable for `curl --proxy`, Python `requests`, etc.
  */
+/**
+ * Validate a sticky-session id against the gateway's token grammar.
+ *
+ * The gateway lowercases the proxy username and splits it on `-`, so a sid may
+ * only contain `[a-z0-9_]` and must be 1–64 chars. Anything else (uppercase,
+ * spaces, a hyphen, punctuation) is silently mangled or mis-tokenized
+ * server-side — producing the wrong session, or a CONNECT 400. Surface that at
+ * build time with a precise message instead of at runtime.
+ */
+function validateSid(sid: string): void {
+  if (!/^[a-z0-9_]{1,64}$/.test(sid)) {
+    throw new ProxiesConfigError(
+      `buildProxyUrl: invalid sid ${JSON.stringify(sid)} — a session id must be 1–64 ` +
+        `characters of lowercase letters, digits, or underscores ([a-z0-9_]) and cannot ` +
+        `contain a hyphen. Use a stable per-customer id such as "cust_8f3a21bd".`,
+    );
+  }
+}
+
 export function buildProxyUrl(
   proxyUsername: string,
   pakKey: string,
@@ -109,7 +133,10 @@ export function buildProxyUrl(
   if (isp) tokens.push('isp', isp);
   if (asn) tokens.push('asn', String(asn));
   if (city) tokens.push('city', city);
-  if (sid) tokens.push('sid', sid);
+  if (sid) {
+    validateSid(sid);
+    tokens.push('sid', sid);
+  }
   if (rotation) tokens.push('rot', rotation);
 
   const user = `${proxyUsername}-${tokens.join('-')}`;

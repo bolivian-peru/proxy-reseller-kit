@@ -54,11 +54,21 @@ describe('buildProxyUrl', () => {
     expect(buildProxyUrl(USER, KEY, { country: 'us', asn: 0 })).not.toContain('-asn-');
   });
 
-  it('URL-encodes user-supplied sid with special characters', () => {
-    const url = buildProxyUrl(USER, KEY, { sid: 'user@example.com' });
-    expect(url).toContain('psx_abc123-mbl-sid-user%40example.com');
-    // Must remain a parseable URL
-    expect(() => new URL(url)).not.toThrow();
+  it('rejects an invalid sid at build time (fail fast, not a runtime CONNECT 400)', () => {
+    // The gateway lowercases the username and splits it on '-', so a sid with a
+    // hyphen / uppercase / punctuation / >64 chars never forms a valid session.
+    // Surface it here instead of letting the URL die mid-request.
+    expect(() => buildProxyUrl(USER, KEY, { sid: 'user@example.com' })).toThrow(ProxiesConfigError);
+    expect(() => buildProxyUrl(USER, KEY, { sid: 'has-hyphen' })).toThrow(ProxiesConfigError);
+    expect(() => buildProxyUrl(USER, KEY, { sid: 'UpperCase' })).toThrow(ProxiesConfigError);
+    expect(() => buildProxyUrl(USER, KEY, { sid: 'x'.repeat(65) })).toThrow(ProxiesConfigError);
+  });
+
+  it('accepts short / underscore sids (Atheris -sid- regression fix)', () => {
+    // `t1` previously built a URL that 400'd at CONNECT because the old gateway
+    // enforced an 8-char minimum. Both SDK and self-healing gateway now accept it.
+    expect(buildProxyUrl(USER, KEY, { sid: 't1' })).toContain('-sid-t1');
+    expect(buildProxyUrl(USER, KEY, { sid: 'cust_8f3a21bd' })).toContain('-sid-cust_8f3a21bd');
   });
 
   it('URL-encodes pak_ with special characters (defensive)', () => {
