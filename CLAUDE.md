@@ -175,12 +175,12 @@ npm publish --access public
 
 **Auto-suspend on cap**: when a `pak_`'s `trafficUsedMB / 1024 >= trafficCapGB`, the platform flips `enabled = false` automatically and records `auto_suspended_cap_exceeded`. The SDK's `topUp()` extends the cap but does NOT auto re-enable — callers must explicitly `update(id, { enabled: true })` to bring a suspended key back online. This is by design: a leaked key that auto-recovered would defeat the suspend.
 
-**New endpoints not yet in SDK** (good first-issue):
-- `POST /pool-keys/:id/reveal` — audit-logged unmask. Returns same shape as `get()`. Add as `client.poolKeys.reveal(id)`.
-- `GET /pool-keys/audit?action=&before=&limit=` — forensic log across all keys. Add as `client.poolKeys.audit({ action?, before?, limit? })`.
-- `GET /pool-keys/:id/audit?before=&limit=` — same scoped to one key. Add as `client.poolKeys.auditForKey(id, { before?, limit? })`.
+**Reveal + audit endpoints (shipped in the SDK since 0.5.x):**
+- `client.poolKeys.reveal(id)` — audit-logged unmask (`POST /pool-keys/:id/reveal`). Returns same shape as `get()`.
+- `client.poolKeys.audit({ action?, before?, limit? })` — forensic log across all keys (`GET /pool-keys/audit`).
+- `client.poolKeys.auditForKey(id, { before?, limit? })` — same scoped to one key (`GET /pool-keys/:id/audit`).
 
-Adding these is a 0.5.0 minor bump. Reference: see `customer-proxies-sx-main/src/lib/api.ts` `poolKeysApi` for the response shape and `customer-proxies-sx-main/src/pages/PoolKeys.tsx` for end-to-end UX.
+All three are typed in `src/types.ts` (`PoolAccessKeyAuditEvent`, `AuditQueryOpts`) with TSDoc examples in `src/client.ts`.
 
 ## Documentation map (keep these in sync when behavior changes)
 

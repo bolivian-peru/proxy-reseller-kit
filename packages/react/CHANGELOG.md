@@ -1,5 +1,20 @@
 # Changelog — `@proxies-sx/pool-portal-react`
 
+All notable changes to this package are documented here.
+
+## 0.9.0 — Carrier/ASN targeting UI (Jul 2026, on npm)
+
+- **Carrier/ASN selector** in `<PoolSessionSpawner>` — pick a carrier (or exact ASN)
+  per spawn; emits `-carrier-` / `-asn-` username tokens via pool-sdk 0.8.x.
+- **`usePoolCarrierStock(apiRoute, country)`** hook + `GET <route>/stock/carriers`
+  server route: per-carrier endpoint counts for one country (30s poll).
+- Removed the non-functional city control from the spawner.
+- `defaultTtlSecondsForRotation` now re-exported from the package root (was only
+  importable from the spawner module despite being documented).
+- Depends on `@proxies-sx/pool-sdk ^0.8.1` (client-side sid validation).
+- Published to npm — first registry release since 0.5.1; 0.6.x–0.8.0 below shipped
+  only as GitHub tarballs.
+
 ## 0.8.0
 
 - **Pool model clarified.** `peer` is the **community SDK network** (mixed mobile + residential
@@ -9,15 +24,11 @@
   filter the country picker by the selected pool (`countries[CC].modem` / `.peer`).
 - Throughput-floor note (`PEER_THROUGHPUT_FLOOR_KBPS` ~500 KB/s) added to the guide.
 
+## 0.7.0 — sticky-strict rotation mode
 
-All notable changes to this package are documented here.
-
-> **npm registry latest: `0.5.1`.** The current **`0.6.1`** build is distributed
-> as a GitHub release tarball ([v0.6.1](https://github.com/bolivian-peru/proxy-reseller-kit/releases/tag/v0.6.1))
-> until it is published to npm. Installing it pulls `pool-sdk@0.6.0` automatically:
-> ```bash
-> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.1/proxies-sx-pool-portal-react-0.6.1.tgz
-> ```
+- `sticky-strict` added to the `<PoolSessionSpawner>` rotation picker and
+  `RotationMode` type (gateway #305); `hard` semantics corrected in copy
+  (`hard` pins like `sticky` — NOT "new IP per request").
 
 ## 0.6.2 — Sticky-rotation copy reflects smart-selection (May 2026)
 

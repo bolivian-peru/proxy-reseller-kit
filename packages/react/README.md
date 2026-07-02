@@ -177,11 +177,11 @@ Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation
 
 ### `<ActiveSessionsTable>` — live session manager (v0.4.0+)
 
-> ⚠️ **Do NOT mount this in a multi-tenant customer dashboard on 0.5.x.** The
-> `/my-sessions` routes it polls are **not scoped per-customer** on the published
-> SDK (see "Session routes — multi-tenant security" below). It is safe only in a
-> **single-tenant / admin** context (one operator viewing all sessions). For
-> customer-facing dashboards, leave it out until you upgrade to 0.6.x.
+> ⚠️ **Multi-tenant note.** Since 0.6.0 the `/my-sessions` routes this table polls
+> are scoped per-customer (the auto-handlers thread the caller's `pakId` via
+> `getUserKeyId`), so it is safe in customer dashboards. On the legacy 0.5.x SDK
+> those routes returned ALL account sessions - if you are pinned to 0.5.x, mount
+> this only in a single-tenant/admin context, or upgrade.
 
 ```tsx
 <ActiveSessionsTable
@@ -221,16 +221,19 @@ Live online endpoint counts per country for both the `mbl` mobile-modem pool and
 ### Server handlers (v0.4.0+)
 
 `createPoolApiHandlers()` exports three methods. `GET` (`/me`, `/stock`,
-`/incidents`, `/my-sessions`) and `POST` (`/regenerate`) and `DELETE`
-(`/my-sessions`):
+`/stock/carriers`, `/incidents`, `/my-sessions`) and `POST` (`/regenerate`) and
+`DELETE` (`/my-sessions`):
 
 | Method | Path | Action | Scoped to caller? |
 |---|---|---|---|
 | `GET` | `<route>/me` | Current user's `pak_` + usage | ✅ via `getUserKeyId` |
+| `GET` | `<route>/stock` | Live per-country endpoint counts | n/a (public stock data) |
+| `GET` | `<route>/stock/carriers` | Per-carrier stock for a country (v0.9.0) | n/a (public stock data) |
+| `GET` | `<route>/incidents` | Status-page incidents | n/a |
 | `POST` | `<route>/regenerate` | Rotate current user's key | ✅ via `getUserKeyId` |
-| `GET` | `<route>/my-sessions` | List sessions | ⚠️ **NO on 0.5.x** — returns all account sessions |
-| `DELETE` | `<route>/my-sessions/<sessionKey>` | Close one | ⚠️ **NO on 0.5.x** — any key under the account |
-| `DELETE` | `<route>/my-sessions` | Close all | ⚠️ **NO on 0.5.x** — every account session |
+| `GET` | `<route>/my-sessions` | List sessions | ✅ since 0.6.0 via `getUserKeyId` → `pakId` (⚠️ 0.5.x returned all account sessions) |
+| `DELETE` | `<route>/my-sessions/<sessionKey>` | Close one | ✅ since 0.6.0 (⚠️ 0.5.x: any key under the account) |
+| `DELETE` | `<route>/my-sessions` | Close all | ✅ since 0.6.0 (⚠️ 0.5.x: every account session) |
 
 `export const { GET, POST, DELETE } = createPoolApiHandlers({...})`.
 
@@ -296,6 +299,22 @@ function MyDashboard() {
 ```
 
 All hooks return `{ data, loading, error, refetch }`. `usePoolStock` and `useIncidents` poll every 30s/60s respectively; override with `{ refreshIntervalMs }`.
+
+**`usePoolCarrierStock(apiRoute, country, { refreshIntervalMs? })`** (v0.9.0) - per-carrier
+endpoint counts for one country, backed by `GET <route>/stock/carriers?country=<cc>`.
+Polls every 30s. Use it to populate a carrier picker next to `<PoolSessionSpawner>`'s
+carrier/ASN controls.
+
+### `<PakQuickstart>` - one-key onboarding card (v0.6.0+)
+
+Shows a customer THEIR key with a copy-ready proxy string, country dropdown, and an
+optional usage meter. Props: `pak` (required), `secret?` (omit to render a
+`<YOUR_PASSWORD>` placeholder - safest default), `secretDisplay?: 'masked' | 'plain'`,
+`defaultCountry?`, `gatewayHost?`, plus cap/used GB for the meter.
+
+```tsx
+<PakQuickstart pak={me.data.pakKey} defaultCountry="us" />
+```
 
 ---
 

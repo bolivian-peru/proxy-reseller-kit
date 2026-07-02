@@ -12,7 +12,11 @@
 export { PoolPortal } from './PoolPortal';
 export type { PoolPortalProps } from './PoolPortal';
 
-export { PoolSessionSpawner, buildProxyString } from './PoolSessionSpawner';
+export {
+  PoolSessionSpawner,
+  buildProxyString,
+  defaultTtlSecondsForRotation,
+} from './PoolSessionSpawner';
 export type {
   PoolSessionSpawnerProps,
   SessionType,

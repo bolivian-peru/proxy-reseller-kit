@@ -62,7 +62,8 @@ export type RotationMode =
   | 'auto5'         // new modem every 5 min
   | 'auto10'        // new modem every 10 min (default)
   | 'auto20'        // new modem every 20 min
-  | 'auto30'        // new modem every 30 min
+  | 'auto30'        // legacy alias: the gateway snaps this to auto20 (valid
+                    // intervals are 5/10/20/60 min) — prefer auto20 or auto60
   | 'auto60'        // new modem every 60 min
   | 'ondemand'      // reuse while connected; no timer
   | 'sticky'        // pin one modem; gateway smart-picks the most IP-stable

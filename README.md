@@ -206,21 +206,21 @@ Stripe storefront, on a different rail.
 
 ## Quickstart
 
-> **📦 Current version: 0.7.0 — install from the GitHub release.**
-> The npm registry currently serves the older `0.5.x`. The current **0.7.0**
-> build (adds the `sticky-strict` rotation mode + corrects `hard` semantics —
-> `hard` pins like sticky, NOT "new IP per request" — and teaches the `-sid-`
-> requirement, on top of 0.6.x per-customer session scoping + white-label) is
-> distributed as self-contained release tarballs. Installing the React package
-> pulls the SDK automatically:
+> **📦 Current versions on npm: `@proxies-sx/pool-sdk` 0.8.1 + `@proxies-sx/pool-portal-react` 0.9.0.**
+> Plain `npm install` now gets the latest — the GitHub-release-tarball era (0.6.x–0.8.0,
+> when npm lagged at 0.5.x) is over. Installing the React package pulls the SDK
+> automatically:
 > ```bash
 > # Full kit (React components + SDK):
-> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.7.0/proxies-sx-pool-portal-react-0.7.0.tgz
+> npm i @proxies-sx/pool-portal-react
 > # SDK only:
-> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.7.0/proxies-sx-pool-sdk-0.7.0.tgz
+> npm i @proxies-sx/pool-sdk
 > ```
-> The plain `npm install @proxies-sx/...` commands below install `0.5.x` until
-> 0.7.0 is published to npm. See [Releases](https://github.com/bolivian-peru/proxy-reseller-kit/releases/tag/v0.7.0).
+> Highlights since 0.5.x: per-customer session scoping (`sessions.list({ pakId })`),
+> `sticky-strict` rotation + corrected `hard` semantics (`hard` pins like sticky, NOT
+> "new IP per request"), carrier/ASN targeting (`asn`/`isp` + `pool.getCarrierStock()`),
+> client-side `sid` validation in `buildProxyUrl`, and the `<PakQuickstart>` +
+> `usePoolCarrierStock` React additions. Full history: each package's CHANGELOG.md.
 
 ### Deploy a full storefront in 10 minutes
 

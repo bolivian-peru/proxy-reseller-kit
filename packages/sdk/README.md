@@ -153,16 +153,14 @@ await proxies.sessions.close('gw:session:psx_xxx:bot07');
 ```
 
 > ⚠️ **Multi-tenant security (read before building a customer-facing sessions UI).**
-> On the published **0.5.x** SDK these three methods take **no arguments** and
-> `ActiveSession` has **no `pakKeyId`** — there is no per-customer filter. If you
-> expose them to end-customers through `@proxies-sx/pool-portal-react`'s
-> auto-handlers, **any signed-in customer can list/close/wipe other customers'
-> sessions.** Until 0.6.x ships, do **not** expose these routes to customers —
-> lock them down at your route layer (return empty for the list, 403 for closes).
-> See the React package's "Session routes — multi-tenant security" section and
-> `RESELLER-UPDATE-PROMPT` for drop-in code. Per-customer scoping
-> (`list({ pakId })`, `close(key, { pakId })`, `ActiveSession.pakKeyId`) lands in
-> **0.6.0** — confirm with `npm view @proxies-sx/pool-sdk version` before relying on it.
+> Since **0.6.0** these methods support per-customer scoping — `sessions.list({ pakId })`,
+> `sessions.close(key, { pakId })`, `sessions.closeAll({ pakId })` — and `ActiveSession`
+> carries `pakKeyId`. **Always pass the customer's `pakId`** when exposing these routes
+> to end-customers (the `@proxies-sx/pool-portal-react` auto-handlers >= 0.6.0 thread it
+> automatically via `getUserKeyId`). The legacy **0.5.x** SDK had no per-customer filter:
+> exposing its session routes let any signed-in customer list/close other customers'
+> sessions. If you are still on 0.5.x, upgrade (`npm i @proxies-sx/pool-sdk@latest`)
+> rather than exposing those routes.
 
 `ActiveSession` carries `country`, `pool`, `currentIp`, `bytesIn/Out`,
 `requestCount`, `ttl`, `expiresAt`, `rotation`, `proxyUrl`, `socks5Url`,
@@ -263,7 +261,7 @@ import { buildProxyUrl } from '@proxies-sx/pool-sdk';
 | `asn` | `number` | `21928` (T-Mobile) — **hard** exact ASN match (peer pool). Most precise; pair with `getCarrierStock()`. |
 | `city` | `string` | `'nyc'`, `'berlin'` |
 | `sid` | `string` | `'customer-123'` (same sid + `rotation: 'sticky'` → returns to the same modem) |
-| `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto30' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'sticky-strict' \| 'hard'` | `'sticky'` pins one modem AND the gateway smart-picks the most IP-stable one. `'sticky-strict'` weights stability harder + applies a min-stability floor — pair with `pool: 'peer'` for a near-immutable IP. `'hard'` **pins like sticky** (NOT a new IP per request). `'sticky'`/`'sticky-strict'`/`'auto*'` need a `sid` to persist. See [wiki: Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation). |
+| `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto30' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'sticky-strict' \| 'hard'` | `'auto30'` is a legacy alias - the gateway snaps it to `auto20` (valid intervals: 5/10/20/60 min). `'sticky'` pins one modem AND the gateway smart-picks the most IP-stable one. `'sticky-strict'` weights stability harder + applies a min-stability floor — pair with `pool: 'peer'` for a near-immutable IP. `'hard'` **pins like sticky** (NOT a new IP per request). `'sticky'`/`'sticky-strict'`/`'auto*'` need a `sid` to persist. See [wiki: Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation). |
 | `pool` | `'mbl' \| 'peer'` | `'mbl'` (mobile modems) or `'peer'` (residential peers) |
 | `protocol` | `'http' \| 'socks5'` | `'http'` (port 7000) or `'socks5'` (port 7001) |
 | `host` | `string` | Override gateway host, e.g. `'edge-eu.proxies.sx'` |

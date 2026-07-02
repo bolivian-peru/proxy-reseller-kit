@@ -1,7 +1,24 @@
 # Changelog — `@proxies-sx/pool-sdk`
 
-## 0.8.0
+All notable changes to this package are documented here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
+semver from 0.3.0 onwards (the public surface is everything exported from
+`dist/index.d.ts`).
 
+## 0.8.1 — Client-side sid validation (Jul 2026, on npm)
+
+- **`buildProxyUrl` validates `sid` at build time** (`^[a-z0-9_]{1,64}$`) and throws
+  `ProxiesConfigError` on violation — fail fast in your code instead of a runtime
+  CONNECT error at the gateway. Short sids like `t1` are valid (the gateway's old
+  8-char minimum was removed server-side; this closes the Atheris `-sid-t1` class
+  of bugs from both ends).
+- Published to npm — first registry release since 0.5.1; 0.6.x–0.8.0 below shipped
+  only as GitHub tarballs.
+
+## 0.8.0 — Carrier/ASN targeting + pool model
+
+- **Carrier/ASN targeting.** `buildProxyUrl` gains `asn` / `isp` options;
+  `pool.getCarrierStock()` fetches per-carrier availability.
 - **Pool model clarified.** `peer` is the **community SDK network** (mixed mobile + residential
   home/ISP IPs) — no longer mislabeled "residential only". Added `any`/`best` to the `Pool` type
   and the `<PoolSessionSpawner>` pool picker.
@@ -9,18 +26,11 @@
   filter the country picker by the selected pool (`countries[CC].modem` / `.peer`).
 - Throughput-floor note (`PEER_THROUGHPUT_FLOOR_KBPS` ~500 KB/s) added to the guide.
 
+## 0.7.0 — sticky-strict rotation mode
 
-All notable changes to this package are documented here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
-semver from 0.3.0 onwards (the public surface is everything exported from
-`dist/index.d.ts`).
-
-> **npm registry latest: `0.5.1`.** The current **`0.6.0`** build is distributed
-> as a GitHub release tarball ([v0.6.1](https://github.com/bolivian-peru/proxy-reseller-kit/releases/tag/v0.6.1))
-> until it is published to npm:
-> ```bash
-> npm i https://github.com/bolivian-peru/proxy-reseller-kit/releases/download/v0.6.1/proxies-sx-pool-sdk-0.6.0.tgz
-> ```
+- **`sticky-strict`** added to `RotationMode`: strict pinning that fails over only
+  within the same node instead of re-picking (gateway #305). Also corrected `hard`
+  semantics in TSDoc: `hard` pins like `sticky` — it is NOT "new IP per request".
 
 ## 0.6.1 — Sticky semantics docs (sticky smart-selection, May 2026)
 

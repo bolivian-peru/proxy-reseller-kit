@@ -51,7 +51,7 @@
     "prepublishOnly": "pnpm build && pnpm test && pnpm typecheck"
   },
   "dependencies": {
-    "@proxies-sx/pool-sdk": "^0.6.0"
+    "@proxies-sx/pool-sdk": "^0.8.1"
   },
   "peerDependencies": {
     "react": ">=18.0.0",
