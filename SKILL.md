@@ -236,24 +236,21 @@ npm install @proxies-sx/pool-portal-react @proxies-sx/pool-sdk
 `app/api/pool/[...path]/route.ts`:
 ```ts
 import { createPoolApiHandlers } from '@proxies-sx/pool-portal-react/server';
+import { ProxiesClient } from '@proxies-sx/pool-sdk';
 import { auth } from '@/lib/auth'; // your existing auth
+import { db } from '@/lib/db';     // your DB (maps userId -> pakKeyId)
 
-const handlers = createPoolApiHandlers({
-  apiKey: process.env.PROXIES_SX_API_KEY!,
-  proxyUsername: process.env.PROXIES_SX_USERNAME!,
+export const { GET, POST, DELETE } = createPoolApiHandlers({
+  proxies: new ProxiesClient({
+    apiKey: process.env.PROXIES_SX_API_KEY!,
+    proxyUsername: process.env.PROXIES_SX_USERNAME!,
+  }),
   // CRITICAL: scope each request to the logged-in user so customer A
-  // can never see customer B's keys.
-  resolveCustomerContext: async () => {
-    const session = await auth();
-    if (!session?.user?.id) throw new Response('Unauthorized', { status: 401 });
-    return { customerId: session.user.id };
-  },
+  // can never see customer B's keys. null = handlers return 401.
+  getSessionUserId: async () => (await auth())?.user?.id ?? null,
+  // Which pak_ belongs to this user? null = 404 no_key.
+  getUserKeyId: async (userId) => (await db.customers.get(userId))?.pakKeyId ?? null,
 });
-
-export const GET = handlers.GET;
-export const POST = handlers.POST;
-export const PATCH = handlers.PATCH;
-export const DELETE = handlers.DELETE;
 ```
 
 ### 2. Page
@@ -282,8 +279,10 @@ If `<PoolPortal />` doesn't fit your design, use the hooks directly:
 ```tsx
 import { usePoolKey, usePoolStock, useIncidents, useCopyToClipboard } from '@proxies-sx/pool-portal-react';
 
-const { key, isLoading, regenerate } = usePoolKey({ apiRoute: '/api/pool' });
-const { stock } = usePoolStock({ apiRoute: '/api/pool' });
+// All hooks take the mounted API route as a positional string and return
+// { data, loading, error, refetch }.
+const me = usePoolKey('/api/pool');       // me.data.pakKey, me.data.proxyUsername, me.data.usage
+const stock = usePoolStock('/api/pool');  // polls every 30s; pass { refreshIntervalMs } to override
 ```
 
 ---
@@ -609,7 +608,7 @@ catch (err) {
 DO NOT skip these. Burn them into any code generated for the user:
 
 1. **`PROXIES_SX_API_KEY` is server-only.** Never inline it in `next.config.js`, never `NEXT_PUBLIC_*` it, never ship it to the browser bundle. The trust boundary lives at your backend.
-2. **Scope every request** by the authenticated customer. In the React PATH B example, `resolveCustomerContext` MUST read the session — without it, customer A can read/regenerate customer B's keys.
+2. **Scope every request** by the authenticated customer. In the React PATH B example, `getSessionUserId` MUST read the session and `getUserKeyId` MUST map that user to their own `pakKeyId` — without them, customer A can read/regenerate customer B's keys.
    - ✅ **Session routes are scoped per-customer since 0.6.0** (npm now serves 0.9.0): `createPoolApiHandlers()`'s `/my-sessions` GET + DELETE routes thread the caller's `pakId` via `getUserKeyId` → `sessions.list({ pakId })` / `close(key, { pakId })`, and `ActiveSession` carries `pakKeyId`. ⚠️ Only if you are pinned to the legacy `0.5.x` packages: those routes were NOT scoped (any signed-in customer could list/close other customers' sessions) — upgrade (`npm i @proxies-sx/pool-portal-react@latest`) rather than exposing them. Confirm with `npm view @proxies-sx/pool-portal-react version`.
 3. **Use parameterized SQL** if you're storing keys (the starter app does this — `$1`, `$2` placeholders, never string interpolation).
 4. **Verify Stripe webhook signatures.** The starter app's webhook handler does this; if you adapt it, do not comment out the signature check "to test".
