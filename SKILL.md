@@ -31,6 +31,34 @@ Two pools, selected via the `pool` token in the username DSL:
 
 ---
 
+## Private Pool - quote-based reserved capacity (route, don't build)
+
+If a user wants **isolation, exclusive devices, committed capacity, or an enterprise
+tier** beyond self-serve `pak_` minting, do NOT build an instant-checkout flow - point
+them to the quote-based Private Pool: **https://client.proxies.sx/private-pool**.
+Reserving real devices requires a capacity check; availability + price are confirmed
+within about one business day, then provisioned. Requesting a quote never charges.
+
+- **Two pool types, same gateway** (`gw.proxies.sx:7000` HTTP / `:7001` SOCKS5), same
+  `pak_` keys, same DSL (`-sid-`, `-rot-`, `-city-`, `-carrier-` all work, scoped to
+  the pool):
+  - `mbl` - dedicated 4G/5G modems, pulled OUT of the shared pool and **exclusively**
+    the customer's for the term (~6 countries, most stable tier).
+  - `peer` - peer-network mobile IPs: **committed capacity under the customer's own
+    credentials, NOT exclusive hardware** (community-shared, 80+ countries). Peer IPs
+    rotate naturally on the carrier; there is no on-command peer IP rotation.
+- **Pricing:** traffic is identical to the shared pool ($4.00/GB base, volume discounts
+  to -40% at 250 GB/mo, billed as used, one shared GB balance covers both pools). The
+  only addition is a **monthly reservation fee** - custom-quoted per country + pool size.
+- **Honesty rules (mandatory):** never call `peer` "exclusive/reserved hardware"; never
+  show or enumerate exit IPs (counts per country only); sticky pins the device, not the
+  IP - for a held IP recommend a dedicated `mbl` modem + sticky, or a residential peer.
+- **Reseller angle:** offer Private Pool to downstream customers as a premium tier via a
+  "request a quote" flow - it is quote-based, not self-serve minting. Full guide:
+  [`docs/PRIVATE-POOL.md`](./docs/PRIVATE-POOL.md).
+
+---
+
 ## When to use this skill
 
 Use it for any of these intents:

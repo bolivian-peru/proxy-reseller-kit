@@ -25,6 +25,7 @@ Long-form docs that don't belong inline with code live in the **[wiki](https://g
 - [Integration Paths](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Integration-Paths) — A/B/C/D decision tree
 - [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation) ⭐ — what "sticky" actually guarantees on mobile carriers
 - [Pak Key Lifecycle](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Pak-Key-Lifecycle) — mint, top-up, rotate, revoke
+- [Private Pool](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Private-Pool) — reserve dedicated modem or committed peer capacity (quote-based)
 - [x402 and Wallet Setup](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup) — accept USDC from AI agents
 - [Troubleshooting](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Troubleshooting) — flat error catalog
 - [Glossary](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Glossary) — every term defined
@@ -85,6 +86,46 @@ The reseller kit exposes the pool toggle in `<PoolSessionSpawner>` and `<PoolDoc
 **Which pool for sticky-IP workflows?** Sticky pins the **modem**, not the IP — mobile carriers can rotate egress IPs via CGNAT even on a held modem (the gateway smart-picks the most IP-stable modem available, but the carrier always has the final say). For workflows that need a TRULY immutable IP (cf_clearance, banking, mTLS bound to source IP), use `-peer-` — residential ISPs hold IPs hours-to-days. Full Layer-1-vs-Layer-2 explanation in the wiki: [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
 **Reliability — auto-failover is built in (nothing for you or your customers to handle).** The gateway runs connect-phase auto-failover: if the modem it selects has dropped, that modem is demoted from the pool and a healthy one is retried *before any response is returned* — this is what prevents the occasional `503 / temporarily unavailable`. Your customer controls how wide the replacement may be with the `-failover-` token (`samecountry` default, `samecarrier`, `samenode`, `any`, or `strict` to disable substitution and fail clean). SOCKS5 (`:7001`) additionally falls back to a modem's HTTP CONNECT path (`:7000`) if its SOCKS service is briefly down, so **both ports are equally reliable** — pick whichever your customer's tooling prefers.
+
+---
+
+## Private Pool - reserve dedicated capacity
+
+The shared pool is first-come, first-served. **Private Pool** reserves a private
+allocation of devices on the same gateway (`gw.proxies.sx:7000` HTTP / `:7001`
+SOCKS5) for isolation and predictable capacity: either **dedicated `-mbl-` modems**
+pulled out of the shared pool and exclusively yours for the term, or **committed
+`-peer-` capacity** - a guaranteed share of the community network under your own
+credentials (not exclusive hardware; peers stay community-shared by nature). Same
+`pak_` keys, same username DSL (`-sid-`, `-rot-`, `-city-`, `-carrier-`), just
+scoped to your allocation - switching the pool token is the whole integration.
+
+Traffic pricing is identical to the shared pool: $4.00/GB with the standard monthly
+volume tiers (-10% from 25 GB, -20% from 50 GB, -30% from 100 GB, -40% from 250 GB),
+billed only as used from the same GB balance that covers both pools. The only
+addition is a **monthly reservation fee**, quoted per country and pool size. Private
+Pool is quote-based, not instant checkout - reserving real devices needs a capacity
+check - so you configure and request at
+[client.proxies.sx/private-pool](https://client.proxies.sx/private-pool);
+availability and price are confirmed within about one business day, then the
+allocation is provisioned. Requesting never charges anything.
+
+| | `-mbl-` private | `-peer-` private |
+|---|---|---|
+| What you reserve | Dedicated 4G/5G modems, removed from the shared pool - exclusively yours for the term | Committed capacity on the peer network - guaranteed, not exclusive |
+| Coverage | ~6 countries | 80+ countries |
+| IP behavior | Most stable; `-sid-` sticky pins the modem (the carrier may still re-issue the IP) | IPs rotate naturally on the carrier - a feature for rotation use-cases; no on-command rotation |
+| Best for | Held sessions, consistent throughput, full isolation | Wide coverage, high-volume rotating workloads |
+
+For resellers, Private Pool is the natural **premium / enterprise tier**: since it is
+quote-based rather than self-serve pak minting, surface it as a "request a quote" /
+"contact us" flow and relay the request - a good fit for customers who outgrow the
+shared pool or need committed capacity in specific countries. Proxies.sx also builds
+custom data-collection software, scrapers, and automation pipelines on top of a
+private pool as customers scale. As everywhere on the platform, exit IPs are never
+listed - availability is reported as device counts per country only. Details:
+[`docs/PRIVATE-POOL.md`](./docs/PRIVATE-POOL.md) and the
+[wiki](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Private-Pool).
 
 ---
 
