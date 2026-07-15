@@ -110,6 +110,16 @@ check - so you configure and request at
 availability and price are confirmed within about one business day, then the
 allocation is provisioned. Requesting never charges anything.
 
+**Programmatic quality tier (v0.9.0+).** For a modem-only allocation you can
+self-provision without a capacity reservation, mint a `pak_` key with
+`qualityTier: 'safe'` — the gateway then routes that key across production
+ProxySmart modems only (rewriting any `-peer-`/`-any-` request back to `-mbl-`).
+Pair it with the `<PrivatePoolPanel>` React component to ship a branded Private
+Pool dashboard in one drop-in. See
+[`@proxies-sx/pool-sdk`](./packages/sdk/README.md#private-pool--quality-tier-v090)
+and [`@proxies-sx/pool-portal-react`](./packages/react/README.md). Full
+device-exclusivity + committed peer capacity still go through the quote flow below.
+
 | | `-mbl-` private | `-peer-` private |
 |---|---|---|
 | What you reserve | Dedicated 4G/5G modems, removed from the shared pool - exclusively yours for the term | Committed capacity on the peer network - guaranteed, not exclusive |

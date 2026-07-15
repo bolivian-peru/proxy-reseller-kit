@@ -87,16 +87,39 @@ on top — it causes thundering herd. To disable, pass `retry: false`.
 
 | Method | Returns | Description |
 |---|---|---|
-| `create({ label, trafficCapGB?, expiresAt?, idempotencyKey? })` | `PoolAccessKey` | Mint a new key |
+| `create({ label, trafficCapGB?, qualityTier?, expiresAt?, idempotencyKey? })` | `PoolAccessKey` | Mint a new key |
 | `list()` | `PoolAccessKey[]` | List all your keys with usage |
 | `get(keyId)` | `PoolAccessKey` | Fetch a single key by id |
-| `update(keyId, { label?, enabled?, trafficCapGB?, expiresAt? })` | `PoolAccessKey` | Change any field |
+| `update(keyId, { label?, enabled?, trafficCapGB?, qualityTier?, expiresAt? })` | `PoolAccessKey` | Change any field |
 | `topUp(keyId, { addTrafficGB?, extendDays?, idempotencyKey? })` | `PoolAccessKey` | Atomically extend cap and/or expiry — use this for top-up flows |
 | `regenerate(keyId, { idempotencyKey? }?)` | `PoolAccessKey` | Rotate the secret value (invalidates old). Returns full record from 0.3.0+ |
 | `reveal(keyId)` (v0.5.0+) | `PoolAccessKey` | Audit-logged unmask. Records a `reveal` event server-side. Use in customer-facing dashboards instead of displaying `key` from `list()` |
 | `audit({ action?, before?, limit? }?)` (v0.5.0+) | `PoolAccessKeyAuditEvent[]` | Forensic log across ALL of your keys (90-day TTL). Filter by action, paginate via `before` |
 | `auditForKey(keyId, { before?, limit? }?)` (v0.5.0+) | `PoolAccessKeyAuditEvent[]` | Forensic log for a single key |
 | `delete(keyId)` | `void` | Permanently delete |
+
+#### Private Pool — quality tier (v0.9.0+)
+
+Mint a key with a `qualityTier` to control which devices its traffic routes across:
+
+| `qualityTier` | Routes across | Use for |
+|---|---|---|
+| `'standard'` (default) | Production modems **+** verified peer devices, modem-preferred with automatic mbl→peer failover | General Pool Gateway access |
+| `'safe'` | **Only** production ProxySmart modems we own (a dedicated, modem-grade allocation) — the gateway rewrites any `-peer-`/`-any-` request on the key back to `-mbl-` | Selling a customer an isolated, higher-SLA **Private Pool** |
+
+```ts
+// A dedicated, modem-only Private Pool key:
+const key = await proxies.poolKeys.create({
+  label: `private:${customerId}`,
+  qualityTier: 'safe',      // ProxySmart modems only
+  trafficCapGB: 100,
+});
+
+// Switch an existing key between tiers any time:
+await proxies.poolKeys.update(key.id, { qualityTier: 'standard' });
+```
+
+The exported `PoolQualityTier` type (`'safe' | 'standard'`) is available for your own signatures. Omitting `qualityTier` keeps the default `'standard'` — zero change for existing keys.
 
 #### Auto-suspend on cap exceeded (server-side, v0.5.0+)
 

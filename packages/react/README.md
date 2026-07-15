@@ -218,6 +218,33 @@ Four collapsible sections: how-it-works flow (5-step request lifecycle), usernam
 
 Live online endpoint counts per country for both the `mbl` mobile-modem pool and the `peer` community network. **Country stock differs per pool** — a country may have modems but no peers (or vice-versa); filter your picker by the selected pool. Auto-polls `/api/pool/stock` every 30 s (matches server-side cache TTL). Health pills: green ≥ 5 endpoints, amber < 5.
 
+### `<PrivatePoolPanel>` — branded Private Pool layout (v0.10.0+)
+
+A drop-in layout for selling a **Private Pool** product: a header (pool name +
+quality-tier badge + optional usage bar) over the same `<PoolSessionSpawner>`
+customers already use.
+
+```tsx
+import { PrivatePoolPanel } from '@proxies-sx/pool-portal-react';
+
+<PrivatePoolPanel
+  pak={customer.pak}          // the pak_ key, minted server-side with qualityTier
+  qualityTier="safe"          // 'safe' → "Dedicated modems"; 'standard' → "Modems + peer · auto-failover"
+  label="Acme Private Pool"
+  usedGB={customer.usedGB}    // pass with capGB to render a usage bar
+  capGB={100}
+  deviceCount={20}            // optional subtitle
+  apiRoute="/api/pool"
+  countries={['us', 'gb', 'fr', 'nl', 'pl', 'ge']}
+/>
+```
+
+Mint the key **server-side** (the reseller API key must never reach the browser)
+with `proxies.poolKeys.create({ qualityTier: 'safe', trafficCapGB: 100, … })` —
+see the SDK README's "Private Pool — quality tier" section — then pass `key.key`
+as `pak`. `'safe'` gives a dedicated, modem-only allocation; `'standard'` routes
+across modems + verified peers with automatic failover.
+
 ### Server handlers (v0.4.0+)
 
 `createPoolApiHandlers()` exports three methods. `GET` (`/me`, `/stock`,
