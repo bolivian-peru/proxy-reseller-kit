@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here.
 
+## 0.10.0 — Private Pool panel (Jul 2026)
+
+- **`<PrivatePoolPanel>`** — a drop-in Private Pool management layout: a header
+  (pool name + quality-tier badge + optional usage bar) over the same
+  `<PoolSessionSpawner>` customers already use, so a reseller can offer a branded
+  Private Pool product with one component. Pass the `pak_` key (minted server-side
+  with `qualityTier: 'safe'`) as `pak`, plus optional `label` / `usedGB` / `capGB`
+  / `deviceCount`. Now exported from the package root.
+- Depends on `@proxies-sx/pool-sdk ^0.9.0` (adds `qualityTier` + `PoolQualityTier`).
+
 ## 0.9.0 — Carrier/ASN targeting UI (Jul 2026, on npm)
 
 - **Carrier/ASN selector** in `<PoolSessionSpawner>` — pick a carrier (or exact ASN)

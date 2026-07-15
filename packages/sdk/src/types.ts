@@ -136,11 +136,26 @@ export interface PoolAccessKey {
 }
 
 /** Input to {@link PoolKeysApi.create}. */
+/**
+ * Quality tier — the **Private Pool** primitive.
+ * - `'standard'` (default): routes across production modems **and** peer devices,
+ *   modem-preferred, with automatic mbl→peer failover. The general Pool Gateway tier.
+ * - `'safe'`: routes ONLY production ProxySmart modems — a dedicated, modem-grade
+ *   allocation. Pass this to sell a customer an isolated, higher-SLA **Private Pool**.
+ *   The gateway rewrites any `-peer-`/`-any-` request on a safe key back to `-mbl-`.
+ */
+export type PoolQualityTier = 'safe' | 'standard';
+
 export interface CreatePoolAccessKeyInput {
   /** Human label. Must be non-empty. Shown in your admin; never sent to the gateway. */
   label: string;
   /** Traffic cap in GB. Pass `null` for unbounded. */
   trafficCapGB?: number | null;
+  /**
+   * Quality tier — pass `'safe'` to mint a modem-only **Private Pool** key, or
+   * omit / `'standard'` for the general modems+peer tier. See {@link PoolQualityTier}.
+   */
+  qualityTier?: PoolQualityTier;
   /**
    * Optional expiry. Accepts ISO 8601 string or `Date`. The platform validates
    * it must be in the future (use `enabled: false` to disable a key, or
@@ -244,6 +259,8 @@ export interface UpdatePoolAccessKeyInput {
   label?: string;
   enabled?: boolean;
   trafficCapGB?: number | null;
+  /** Switch a key between the modem-only Private Pool tier and the general tier. See {@link PoolQualityTier}. */
+  qualityTier?: PoolQualityTier;
   /**
    * Pass an ISO/Date in the future to set or extend, `null` to remove an
    * existing expiry, or omit to leave unchanged.

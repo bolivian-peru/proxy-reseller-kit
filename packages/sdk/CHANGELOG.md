@@ -5,6 +5,16 @@ All notable changes to this package are documented here. The format is based on
 semver from 0.3.0 onwards (the public surface is everything exported from
 `dist/index.d.ts`).
 
+## 0.9.0 — Private Pool quality tier (Jul 2026)
+
+- **`qualityTier` on `poolKeys.create` / `poolKeys.update`** — mint or switch a key
+  between `'safe'` (dedicated ProxySmart modems only — the Private Pool primitive,
+  gateway rewrites any `-peer-`/`-any-` request back to `-mbl-`) and `'standard'`
+  (default; modems + verified peers, modem-preferred with auto-failover). The
+  backend already accepted this on `/reseller/pool-keys`; the SDK now types it so
+  TypeScript callers can pass it without a cast.
+- New exported type **`PoolQualityTier`** (`'safe' | 'standard'`).
+
 ## 0.8.1 — Client-side sid validation (Jul 2026, on npm)
 
 - **`buildProxyUrl` validates `sid` at build time** (`^[a-z0-9_]{1,64}$`) and throws

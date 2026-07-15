@@ -35,6 +35,9 @@ export type { PakQuickstartProps } from './PakQuickstart';
 export { PoolStockGrid } from './PoolStockGrid';
 export type { PoolStockGridProps } from './PoolStockGrid';
 
+export { PrivatePoolPanel } from './PrivatePoolPanel';
+export type { PrivatePoolPanelProps } from './PrivatePoolPanel';
+
 export {
   usePoolKey,
   usePoolStock,

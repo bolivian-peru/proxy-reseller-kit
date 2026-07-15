@@ -20,6 +20,7 @@ export type {
   RotationMode,
   Pool,
   Protocol,
+  PoolQualityTier,
   PoolAccessKey,
   CreatePoolAccessKeyInput,
   UpdatePoolAccessKeyInput,
