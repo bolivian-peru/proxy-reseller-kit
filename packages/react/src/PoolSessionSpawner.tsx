@@ -38,6 +38,16 @@ import type {
 export type SessionType = 'unique' | 'same' | 'none';
 
 /**
+ * Failover scope — when the selected exit is unavailable (or drops on connect),
+ * where the gateway re-picks a replacement. Emitted as the `-failover-<v>`
+ * username token. `samecountry` is the gateway default, so it is only emitted
+ * when overridden. Mirrors `client.proxies.sx/pool-proxy`.
+ *
+ * @public
+ */
+export type FailoverPolicy = 'any' | 'samecountry' | 'samecarrier' | 'samenode' | 'strict';
+
+/**
  * Props for {@link PoolSessionSpawner}.
  *
  * @public
@@ -71,13 +81,15 @@ export interface PoolSessionSpawnerProps {
   defaultRotation?: RotationMode;
   /** Default sid mode selected on mount. */
   defaultSessionType?: SessionType;
+  /** Default failover scope selected on mount. Default `samecountry`. @since 0.10.0 */
+  defaultFailover?: FailoverPolicy;
   /** Maximum number of URLs the spawner can generate at once. Default 100. */
   maxCount?: number;
   /**
    * Show the "Session TTL override" advanced field. When the user sets a
    * value, it appends `-ttl-<seconds>` to the username DSL — gateway
-   * accepts 60–86400 (1 min – 24 h) and clamps to [60, 86400] server-side.
-   * Default true (reseller dashboards usually want it visible).
+   * accepts 60–2,592,000 (1 min – 30 days) and clamps to [60, 2592000]
+   * server-side. Default true (reseller dashboards usually want it visible).
    * @since 0.4.2
    */
   showTtlControl?: boolean;
@@ -113,6 +125,7 @@ export interface SpawnMeta {
   protocol: Protocol;
   rotation: RotationMode;
   sessionType: SessionType;
+  failover: FailoverPolicy;
   /** Random prefix used to make sids unique-per-generation. */
   sessionPrefix: string;
   generatedAt: number;
@@ -120,28 +133,39 @@ export interface SpawnMeta {
 
 /* ── Constants ────────────────────────────────────────────────────────── */
 
-const DEFAULT_COUNTRIES: readonly Country[] = ['us', 'de', 'gb', 'es', 'fr', 'pl'];
+const DEFAULT_COUNTRIES: readonly Country[] = ['us', 'gb', 'fr', 'nl', 'pl', 'ge'];
 
 const COUNTRY_LABELS: Record<string, { name: string; flag: string }> = {
   us: { name: 'United States', flag: '\u{1F1FA}\u{1F1F8}' },
-  de: { name: 'Germany', flag: '\u{1F1E9}\u{1F1EA}' },
   gb: { name: 'United Kingdom', flag: '\u{1F1EC}\u{1F1E7}' },
-  es: { name: 'Spain', flag: '\u{1F1EA}\u{1F1F8}' },
   fr: { name: 'France', flag: '\u{1F1EB}\u{1F1F7}' },
+  nl: { name: 'Netherlands', flag: '\u{1F1F3}\u{1F1F1}' },
   pl: { name: 'Poland', flag: '\u{1F1F5}\u{1F1F1}' },
+  ge: { name: 'Georgia', flag: '\u{1F1EC}\u{1F1EA}' },
 };
 
 const ROTATION_OPTS: { value: RotationMode; label: string }[] = [
   { value: 'none', label: 'Default (10 min)' },
+  { value: 'auto5', label: '5 minutes' },
   { value: 'auto10', label: '10 minutes' },
+  { value: 'auto20', label: '20 minutes' },
+  { value: 'auto60', label: '60 minutes' },
   // Sticky pins the modem AND the gateway smart-picks the most IP-stable
-  // modem in the country (carrier-CGNAT-aware selection, May 2026).
+  // modem in the country (carrier-CGNAT-aware selection, May 2026). For a
+  // near-immutable IP, pair with the peer pool — home/ISP IPs hold for hours.
   { value: 'sticky', label: 'Sticky (pin to most IP-stable modem)' },
-  // Strict additionally applies a min-stability floor; best on the peer pool
-  // (community SDK network), where home/ISP IPs hold for hours.
-  { value: 'sticky-strict', label: 'Sticky-strict (best IP hold — pair with the peer pool)' },
   // `hard` pins like sticky at routing time — NOT a new modem per request.
   { value: 'hard', label: 'Hard (pins like sticky)' },
+];
+
+// Failover scope options + honest one-liners. Mirrors the failover picker on
+// client.proxies.sx/pool-proxy. `samecountry` is the gateway default.
+const FAILOVER_OPTS: { value: FailoverPolicy; label: string }[] = [
+  { value: 'samecountry', label: 'Same country (recommended)' },
+  { value: 'samecarrier', label: 'Same carrier' },
+  { value: 'samenode', label: 'Same relay node' },
+  { value: 'any', label: 'Any available' },
+  { value: 'strict', label: 'No failover (fail clean)' },
 ];
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -159,7 +183,7 @@ function randomPrefix(): string {
  * intact.
  *
  * `ttlSeconds` (when supplied) appends `-ttl-N` to the username — the
- * gateway accepts 60–86400 and clamps out-of-range values server-side.
+ * gateway accepts 60–2,592,000 and clamps out-of-range values server-side.
  *
  * @public
  */
@@ -185,12 +209,17 @@ export function buildProxyString(opts: {
   sessionPrefix: string;
   index: number;
   gatewayHost?: string;
-  /** Optional session TTL override in seconds (60–86400). @since 0.4.2 */
+  /** Optional session TTL override in seconds (60–2,592,000). @since 0.4.2 */
   ttlSeconds?: number;
   /** Hard ASN filter (peer pool) — exact match, e.g. 21928 (T-Mobile). @since 0.8.0 */
   asn?: number;
   /** Soft carrier-name match (mbl / any pool) — e.g. "T-Mobile US". @since 0.9.0 */
   carrierName?: string;
+  /**
+   * Failover scope. Emits `-failover-<v>` only when overriding the gateway
+   * default (`samecountry`). @since 0.10.0
+   */
+  failover?: FailoverPolicy;
 }): string {
   const port = opts.protocol === 'http' ? 7000 : 7001;
   const tokens = [opts.pool, opts.country];
@@ -209,7 +238,11 @@ export function buildProxyString(opts: {
   if (opts.rotation !== 'none' && opts.rotation !== 'auto10') {
     tokens.push('rot', opts.rotation);
   }
-  if (opts.ttlSeconds && opts.ttlSeconds >= 60 && opts.ttlSeconds <= 86_400) {
+  // samecountry is the gateway default — only emit -failover- when overriding.
+  if (opts.failover && opts.failover !== 'samecountry') {
+    tokens.push('failover', opts.failover);
+  }
+  if (opts.ttlSeconds && opts.ttlSeconds >= 60 && opts.ttlSeconds <= 2_592_000) {
     tokens.push('ttl', String(opts.ttlSeconds));
   }
   const username = `${opts.proxyUsername}-${tokens.join('-')}`;
@@ -272,6 +305,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
     defaultProtocol = 'http',
     defaultRotation = 'none',
     defaultSessionType = 'unique',
+    defaultFailover = 'samecountry',
     maxCount = 100,
     showTtlControl = true,
     gatewayHost,
@@ -296,18 +330,19 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
   }, [country, pool]);
   const [protocol, setProtocol] = useState<Protocol>(defaultProtocol);
   const [rotation, setRotation] = useState<RotationMode>(defaultRotation);
+  const [failover, setFailover] = useState<FailoverPolicy>(defaultFailover);
   const [sessionType, setSessionType] = useState<SessionType>(defaultSessionType);
   const [sessionPrefix] = useState(() => randomPrefix());
   const [generated, setGenerated] = useState<string[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   // TTL override. Empty string = use default-for-rotation. The gateway
-  // clamps to [60, 86400] regardless of what we send.
+  // clamps to [60, 2592000] regardless of what we send.
   const [ttlSecondsRaw, setTtlSecondsRaw] = useState<string>('');
   const ttlSeconds = useMemo(() => {
     if (!ttlSecondsRaw.trim()) return undefined;
     const n = Number(ttlSecondsRaw);
     if (!Number.isFinite(n)) return undefined;
-    return Math.max(60, Math.min(86_400, Math.round(n)));
+    return Math.max(60, Math.min(2_592_000, Math.round(n)));
   }, [ttlSecondsRaw]);
   const effectiveTtl = ttlSeconds ?? defaultTtlSecondsForRotation(rotation);
 
@@ -321,7 +356,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
         buildProxyString({
           proxyUsername, proxyPassword, pool, country, protocol, rotation,
           sessionType, sessionPrefix, index: i, gatewayHost,
-          ttlSeconds,
+          ttlSeconds, failover,
           // peer pool pins by exact ASN; mbl/any matches by carrier name.
           asn: pool === 'peer' && carrierAsn ? carrierAsn : undefined,
           carrierName:
@@ -334,10 +369,10 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
     setGenerated(urls);
     void navigator.clipboard?.writeText(urls.join('\n'));
     onSpawn?.(urls, {
-      count, country, pool, protocol, rotation, sessionType, sessionPrefix,
+      count, country, pool, protocol, rotation, sessionType, failover, sessionPrefix,
       generatedAt: Date.now(),
     });
-  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, carrierStock, protocol, rotation, sessionType, sessionPrefix, gatewayHost, ttlSeconds, onSpawn]);
+  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, carrierStock, protocol, rotation, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, onSpawn]);
 
   const handleCopyOne = useCallback((url: string, idx: number) => {
     void navigator.clipboard?.writeText(url);
@@ -462,6 +497,21 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
           >
             {ROTATION_OPTS.map((r) => (
               <option key={r.value} value={r.value}>{r.label}</option>
+            ))}
+          </select>
+        </label>
+
+        {/* Failover — where the gateway re-picks when the exit drops. Mirrors
+            the failover control on client.proxies.sx/pool-proxy. */}
+        <label className="psx-spawner-row">
+          <span>Failover</span>
+          <select
+            value={failover}
+            onChange={(e) => setFailover(e.target.value as FailoverPolicy)}
+            className={cn('psx-select', classNames.select)}
+          >
+            {FAILOVER_OPTS.map((f) => (
+              <option key={f.value} value={f.value}>{f.label}</option>
             ))}
           </select>
         </label>

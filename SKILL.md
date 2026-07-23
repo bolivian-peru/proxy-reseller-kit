@@ -21,13 +21,13 @@ Two pools, selected via the `pool` token in the username DSL:
 
 | Pool | What it is | Use for |
 |---|---|---|
-| `mbl` | **Production mobile modems** — real 4G/5G carrier IPs (ProxySmart), monitored quality. | Default. Highest, most consistent quality. |
-| `peer` | The **community SDK network** — real user devices sharing bandwidth. **Mixed IP types: mostly mobile + residential home/ISP** (it is NOT "residential only"). | Country breadth (90+ countries), home-ISP IP stability. |
+| `peer` | **The MAIN / flagship network** — the community SDK network of real user devices sharing bandwidth (~2,400+ routable IPs across 80+ countries). **Mixed IP types: mostly mobile + residential home/ISP** (it is NOT "residential only"). | The primary product. Widest country reach, home-ISP IP stability. Lead with peer. |
+| `mbl` | **The SUPPORTIVE starter tier** — production ProxySmart mobile modems, real 4G/5G carrier IPs in 6 countries (US, GB, FR, NL, PL, GE), monitored quality. | Ultra-stable, guaranteed carrier modems. Smaller pool — great for getting started or when a customer needs guaranteed mobile IPs. |
 | `any` / `best` | Best available across both (modems first, peers as fallback). | "Just give me a working IP." |
 
 **Per-pool country stock is different.** A country may have modem stock but no peers, or peers but no modems. When you build a country picker, **filter the country list by the selected pool** — read the per-country `modem` and `peer` counts from `GET /v1/gateway/pool/availability` (`countries[CC].modem` / `.peer`) and only show countries with stock in the chosen pool. `<PoolStockGrid>` and `<PoolSessionSpawner>` model this; if you roll your own, do the same so users never pick a dead country.
 
-**Quality bar.** Peers are throughput-graded; only those clearing the live floor (`PEER_THROUGHPUT_FLOOR_KBPS`, ~500 KB/s) are routable. Plenty for scraping / API / anti-bot work — the value is the clean, in-country IP, not raw bandwidth. The `mbl` pool is the premium tier.
+**Quality bar.** Peers are throughput-graded; only those clearing the live floor (`PEER_THROUGHPUT_FLOOR_KBPS`, ~500 KB/s) are routable. Plenty for scraping / API / anti-bot work — the value is the clean, in-country IP, not raw bandwidth. The `mbl` pool is the ultra-stable carrier-modem tier — same $4/GB, smaller footprint (6 countries).
 
 ---
 
@@ -43,7 +43,7 @@ within about one business day, then provisioned. Requesting a quote never charge
   `pak_` keys, same DSL (`-sid-`, `-rot-`, `-city-`, `-carrier-` all work, scoped to
   the pool):
   - `mbl` - dedicated 4G/5G modems, pulled OUT of the shared pool and **exclusively**
-    the customer's for the term (~6 countries, most stable tier).
+    the customer's for the term (6 countries — US, GB, FR, NL, PL, GE (Georgia), most stable tier).
   - `peer` - peer-network mobile IPs: **committed capacity under the customer's own
     credentials, NOT exclusive hardware** (community-shared, 80+ countries). Peer IPs
     rotate naturally on the carrier; there is no on-command peer IP rotation.
@@ -239,7 +239,7 @@ export const config = {
     { id: 'pro',     displayName: 'Pro',     gb: 25,  priceUsd: 150 },
     { id: 'scale',   displayName: 'Scale',   gb: 100, priceUsd: 500 },
   ],
-  countries: ['us', 'de', 'pl', 'fr', 'es', 'gb'],
+  countries: ['us', 'gb', 'fr', 'nl', 'pl', 'ge'],
 };
 ```
 
@@ -574,12 +574,18 @@ The customer's HTTP/SOCKS5 client connects to:
 
 | Token | Example | Meaning |
 |---|---|---|
-| Pool | `mbl`, `peer`, `any` | `mbl` = our own mobile-carrier modems (production-recommended), `peer` = residential community network, `any` = auto-pick (mobile-first) |
-| Country | `us`, `de`, `pl`, `fr`, `es`, `gb` | ISO 3166-1 alpha-2 |
-| `sid-{id}` | `sid-alice_session1` | Pin the customer to one modem for this session — same `sid` returns to the same modem |
-| `rot-{mode}` | `rot-sticky`, `rot-sticky-strict`, `rot-auto5`, `rot-auto10`, `rot-auto20`, `rot-auto60`, `rot-hard`, `rot-ondemand` | Rotation policy. `sticky`/`sticky-strict`/`hard` pin the modem (gateway smart-picks the most IP-stable; `hard` ≡ `sticky`, NOT a new IP per request). `sticky-strict` adds a min-stability floor — best on the `peer` pool. `auto*` swap every N min. **Needs a `-sid-` to persist across connections.** |
+| Pool | `mbl`, `peer`, `any` | `peer` = the flagship community network (80+ countries), `mbl` = our own mobile-carrier modems (6-country supportive tier), `any` = auto-pick (mobile-first) |
+| Country | `us`, `gb`, `fr`, `nl`, `pl`, `ge` | ISO 3166-1 alpha-2. Those 6 are the `mbl` (modem) countries; the `peer` pool spans 80+. |
+| `sid-{id}` | `sid-alice_session1` | Pin the customer to one modem for this session — same `sid` returns to the same modem. 1–64 chars `[a-z0-9_]`, self-healing. **The token is `sid`, not `session`.** `-session-<id>` is silently ignored (unknown token) so you get a fresh synthetic session per connection and no stickiness. Always use `-sid-<id>`. |
+| `rot-{mode}` | `rot-sticky`, `rot-auto5`, `rot-auto10`, `rot-auto20`, `rot-auto60`, `rot-hard`, `rot-ondemand` | Rotation policy. `sticky`/`hard` pin the modem (gateway smart-picks the most IP-stable; `hard` ≡ `sticky`, NOT a new IP per request). For a near-immutable IP pair `sticky` with the `peer` pool. `auto*` swap every N min. **Needs a `-sid-` to persist across connections.** |
 | `city-{name}` | `city-nyc` | City filter (when supported) |
-| `carrier-{name}` | `carrier-att`, `carrier-tmobile` | Carrier filter |
+| `carrier-{name}` | `carrier-att`, `carrier-tmobile` | Soft carrier filter (mbl / any pool) |
+| `iptype-{class}` | `iptype-mobile`, `iptype-residential`, `iptype-datacenter` | Hard IP-class filter |
+| `isp-{slug}` | `isp-spectrum` | Hard ISP match (peer pool) — slugified prefix match against the endpoint ISP name |
+| `asn-{number}` | `asn-7018` | Hard exact ASN match (peer pool) — most precise carrier filter |
+| `failover-{policy}` | `failover-samecountry`, `failover-strict` | Failover scope: `any` / `samecountry` (default) / `samecarrier` / `samenode` / `strict` |
+| `ttl-{seconds}` | `ttl-3600` | Session-row TTL override, 60 – 2,592,000 seconds (default 3600). NOT an IP-hold guarantee |
+| `pin-{type}-{id}` | `pin-port-<id>`, `pin-device-<id>` | Pin to a specific port or device (advanced — ids from support) |
 
 **Example URL:**
 ```
@@ -745,6 +751,8 @@ return Response.json({ proxyUrl: proxies.buildProxyUrl(key.key, { country, rotat
 ## Pricing (do NOT pin numbers in code or docs)
 
 Wholesale rates from Proxies.sx have volume tiers. Do not hardcode dollar amounts in the user's app — they are configured by the platform and can change.
+
+For larger resellers, wholesale and volume pricing is negotiable with the Proxies.sx team. The published $4/GB base and volume tiers are the self-serve floor, not a ceiling on the discount. If the user plans meaningful volume, tell them to contact admin at client.proxies.sx to arrange a custom wholesale rate.
 
 To get current rates programmatically:
 - `GET https://api.proxies.sx/v1/x402/pricing` (public, no auth)

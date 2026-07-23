@@ -25,11 +25,11 @@ import type { Branding, PoolPortalClassNames } from './types';
 
 const COUNTRIES = [
   { code: 'us', name: 'United States' },
-  { code: 'de', name: 'Germany' },
   { code: 'gb', name: 'United Kingdom' },
   { code: 'fr', name: 'France' },
-  { code: 'es', name: 'Spain' },
+  { code: 'nl', name: 'Netherlands' },
   { code: 'pl', name: 'Poland' },
+  { code: 'ge', name: 'Georgia' },
 ] as const;
 
 /**
@@ -48,7 +48,7 @@ export interface PakQuickstartProps {
   /** Mask mode. Default 'masked' shows last-4 with reveal button. */
   secretDisplay?: 'masked' | 'plain';
   /** Default country dropdown selection. Default 'us'. */
-  defaultCountry?: 'us' | 'de' | 'gb' | 'fr' | 'es' | 'pl';
+  defaultCountry?: 'us' | 'gb' | 'fr' | 'nl' | 'pl' | 'ge';
   /** Gateway hostname. Default `gw.proxies.sx`. Override for self-hosted gateways. */
   gatewayHost?: string;
   /** Cap and used GB, for the meter. Pass null/undefined to hide. */
@@ -216,7 +216,7 @@ console.log(await r.text());`;
               type="text"
               value={stickyId}
               maxLength={32}
-              onChange={(e) => setStickyId(e.target.value.replace(/[^a-z0-9_-]/gi, '').slice(0, 32) || 'myproject')}
+              onChange={(e) => setStickyId(e.target.value.replace(/[^a-z0-9_]/gi, '').slice(0, 32) || 'myproject')}
             />
           </label>
         )}

@@ -203,6 +203,8 @@ Your margin per session = `(PRICE_PER_GB_USDC - 4) × gb`. Sensible defaults:
 | $6.00 | $4.00 | $2.00 (33%) | Default suggestion |
 | $8.00 | $4.00 | $4.00 (50%) | Premium positioning |
 
+The $4/GB platform cost shown here is the standard rate; at scale it is negotiable. A lower negotiated wholesale rate widens every margin row above. Contact admin to arrange volume pricing.
+
 USDC settles in ~2s (Base) or ~400ms (Solana). You collect on-chain, the
 platform debits your `psx_` account balance via the pak's traffic cap as the
 agent uses it. **As long as your `PRICE_PER_GB_USDC > $4`, you're profitable.**

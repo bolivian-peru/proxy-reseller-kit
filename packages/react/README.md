@@ -95,10 +95,11 @@ The component is strictly UI — it knows nothing about `api.proxies.sx`. Your A
 | Prop | Type | Default | Description |
 |---|---|---|---|
 | `apiRoute` | `string` | `"/api/pool"` | Base path of your mounted handlers |
-| `countries` | `Country[]` | `['us','de','pl','fr','es','gb']` | Countries the dropdown offers |
+| `countries` | `Country[]` | `['us','gb','fr','nl','pl','ge']` | Countries the dropdown offers |
 | `defaultCountry` | `Country` | first in `countries` | |
 | `defaultProtocol` | `'http' \| 'socks5'` | `'http'` | |
 | `defaultRotation` | `RotationMode` | `'none'` | |
+| `defaultFailover` | `FailoverPolicy` | `'samecountry'` | Failover scope when the exit drops; emits `-failover-<v>` (samecountry omitted). |
 | `showStock` | `boolean` | `true` | Show the live-endpoints indicator |
 | `showIncidents` | `boolean` | `true` | Show an incident banner when active |
 | `showUsage` | `boolean` | `true` | Show the usage bar |
@@ -153,7 +154,7 @@ Compose with `<PoolPortal>` for full reseller-dashboard parity with `client.prox
 <PoolSessionSpawner
   proxyUsername={me.proxyUsername}
   proxyPassword={me.pakKey}
-  countries={['us', 'de', 'gb', 'es', 'fr', 'pl']}
+  countries={['us', 'gb', 'fr', 'nl', 'pl', 'ge']}
   defaultPool="mbl"
   defaultRotation="sticky"           // gateway smart-picks the most IP-stable modem
   defaultSessionType="unique"        // unique-per-row sids → different modems per row
@@ -161,7 +162,7 @@ Compose with `<PoolPortal>` for full reseller-dashboard parity with `client.prox
 />
 ```
 
-Count slider (1–100), country / pool / protocol / rotation / sid-mode controls, "Generate" → N proxy URLs, per-row Copy + bulk Copy-all + Download .txt. The `showTtlControl` prop (v0.4.2 default true) exposes a "Session TTL override" field that appends `-ttl-<seconds>` to the username DSL (range 60-2592000 = 1 min to 30 days).
+Count slider (1–100), country / pool / protocol / rotation / failover / sid-mode controls, "Generate" → N proxy URLs, per-row Copy + bulk Copy-all + Download .txt. The `showTtlControl` prop (v0.4.2 default true) exposes a "Session TTL override" field that appends `-ttl-<seconds>` to the username DSL (range 60-2592000 = 1 min to 30 days).
 
 Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation)` helpers for hand-rolled UIs.
 
@@ -210,7 +211,7 @@ Four collapsible sections: how-it-works flow (5-step request lifecycle), usernam
 ```tsx
 <PoolStockGrid
   apiRoute="/api/pool"
-  countries={['us', 'de', 'gb', 'es', 'fr', 'pl']}
+  countries={['us', 'gb', 'fr', 'nl', 'pl', 'ge']}
   variant="grid"               // or 'compact' for one-line-per-country
   refreshIntervalMs={30_000}
 />

@@ -11,9 +11,12 @@
  * For the live list, call {@link ProxiesClient.pool.getStock}.
  */
 export type KnownCountry =
-  | 'us' | 'de' | 'pl' | 'fr' | 'es' | 'gb'
-  // Additional codes seen in live `getStock()` snapshots (peer pool):
-  | 'ch' | 'pa' | 'am';
+  // mbl (production ProxySmart modem) countries — the supportive starter tier:
+  | 'us' | 'gb' | 'fr' | 'nl' | 'pl' | 'ge'
+  // Additional codes seen in live `getStock()` snapshots. peer — the flagship
+  // network — spans ~80+ countries; these are a sampling (incl. de / es, which
+  // are peer-only: they have NO mbl stock):
+  | 'de' | 'es' | 'ch' | 'pa' | 'am';
 
 /**
  * ISO 2-letter country code. Lowercase. Validated server-side against the
@@ -55,22 +58,19 @@ export type Country = KnownCountry | (string & {});
  *   different modem. Useful for parallel workers that each want their own
  *   stable modem.
  *
- * Tokens emitted: `-rot-{mode}`. `none` emits no token.
+ * Tokens emitted: `-rot-{mode}`. `none` and `auto10` (the gateway default)
+ * emit no token.
  */
 export type RotationMode =
   | 'none'          // no -rot- token; gateway uses default
   | 'auto5'         // new modem every 5 min
   | 'auto10'        // new modem every 10 min (default)
   | 'auto20'        // new modem every 20 min
-  | 'auto30'        // legacy alias: the gateway snaps this to auto20 (valid
-                    // intervals are 5/10/20/60 min) — prefer auto20 or auto60
   | 'auto60'        // new modem every 60 min
   | 'ondemand'      // reuse while connected; no timer
-  | 'sticky'        // pin one modem; gateway smart-picks the most IP-stable
-  | 'sticky-strict' // like sticky, but the gateway weights IP-stability harder
-                    // and applies a minimum-stability floor — lands you on the
-                    // endpoint whose exit IP holds best. Pair with the `peer`
-                    // (community/residential) pool for a near-immutable IP. Requires a sid.
+  | 'sticky'        // pin one modem; gateway smart-picks the most IP-stable.
+                    // Needs a sid to persist. Pair with the `peer`
+                    // (community/residential) pool for a near-immutable IP.
   | 'hard';         // pins like `sticky` (NOT a new IP per request). A true
                     // carrier-IP reset only happens via the /rotate action and
                     // is unavailable for peers — at routing time
@@ -322,6 +322,29 @@ export interface BuildProxyUrlOpts {
   asn?: number;
   /** City name (e.g. `"nyc"`, `"berlin"`). Carrier-level precision recommended over city. */
   city?: string;
+  /**
+   * Hard IP-type class filter. Restricts selection to `mobile`
+   * (carrier modems + mobile peers), `residential` (home/ISP peers), or
+   * `datacenter` (hosting IPs). Emits `-iptype-<v>`. Omit for any class.
+   */
+  ipType?: 'mobile' | 'residential' | 'datacenter';
+  /**
+   * Failover scope when the chosen endpoint is unavailable. `samecountry`
+   * (the gateway default) is omitted from the URL; any other value emits
+   * `-failover-<v>`. `strict` disables substitution.
+   */
+  failover?: 'any' | 'samecountry' | 'samecarrier' | 'samenode' | 'strict';
+  /**
+   * Session-row TTL in seconds. Clamped to 60..2,592,000 (1 min – 30 days)
+   * before emitting `-ttl-<n>`. This is the session-row lifetime, NOT an
+   * IP-hold guarantee — carrier CGNAT may re-NAT the exit IP within the TTL.
+   */
+  ttl?: number;
+  /**
+   * Pin to a specific port or device. Emits `-pin-<type>-<id>` (the gateway
+   * consumes the next two parts). Advanced — device/port ids come from support.
+   */
+  pin?: { type: 'port' | 'device'; id: string };
   /** Session ID — same sid → same endpoint (with `rotation: 'sticky'`). Keep stable per workflow. */
   sid?: string;
   /** Rotation policy. See {@link RotationMode}. */
@@ -342,10 +365,10 @@ export interface BuildProxyUrlOpts {
  * ```json
  * {
  *   "pools": {
- *     "mbl":  { "us": 73, "de": 19, "fr": 18, "es": 25, "gb": 22, ... },
+ *     "mbl":  { "us": 73, "gb": 22, "fr": 18, "nl": 15, "pl": 12, "ge": 9 },
  *     "peer": { "us": 0,  "ch": 1, ... }
  *   },
- *   "totals":     { "mbl": 159, "peer": 1, "all": 160 },
+ *   "totals":     { "mbl": 149, "peer": 1, "all": 150 },
  *   "generatedAt": "2026-05-01T09:34:32.449Z"
  * }
  * ```
@@ -490,6 +513,19 @@ export interface Incident {
   startedAt: string;
   resolvedAt?: string;
   affects: string[];
+}
+
+/**
+ * Raw envelope returned by `GET /v1/gateway/incidents`.
+ *
+ * The live endpoint wraps the list in an object — it does NOT return a bare
+ * array. {@link PoolApi.getIncidents} unwraps this to `incidents` so callers
+ * still get an `Incident[]`.
+ */
+export interface IncidentsResponse {
+  incidents: Incident[];
+  /** ISO 8601 timestamp when the snapshot was generated (cached server-side ~60s). */
+  generatedAt: string;
 }
 
 /**

@@ -106,7 +106,7 @@ export const config = {
     { id: 'pro',     displayName: 'Pro',     gb: 25,  priceUsd: 150 },
     { id: 'scale',   displayName: 'Scale',   gb: 100, priceUsd: 500 },
   ],
-  countries: ['us', 'de', 'pl', 'fr', 'es', 'gb'],
+  countries: ['us', 'gb', 'fr', 'nl', 'pl', 'ge'],
   primaryCta: 'Get started',
   legal: { tosUrl: '/terms', privacyUrl: '/privacy' },
 };

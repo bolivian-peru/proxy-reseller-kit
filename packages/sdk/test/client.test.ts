@@ -454,10 +454,10 @@ describe('ProxiesClient', () => {
   it('pool.getStock() returns the live { pools, totals, generatedAt } shape', async () => {
     const live = {
       pools: {
-        mbl: { us: 73, de: 19, fr: 18, es: 25, gb: 22 },
+        mbl: { us: 73, gb: 22, fr: 18, nl: 15, pl: 12, ge: 9 },
         peer: { us: 0, ch: 1 },
       },
-      totals: { mbl: 157, peer: 1, all: 158 },
+      totals: { mbl: 149, peer: 1, all: 150 },
       generatedAt: '2026-05-01T09:34:32.449Z',
     };
     const fetchMock = mockFetch(200, live);
@@ -469,7 +469,7 @@ describe('ProxiesClient', () => {
     const stock = await client.pool.getStock();
     expect(stock.pools.mbl.us).toBe(73);
     expect(stock.pools.peer.ch).toBe(1);
-    expect(stock.totals.all).toBe(158);
+    expect(stock.totals.all).toBe(150);
     expect(stock.generatedAt).toBe('2026-05-01T09:34:32.449Z');
   });
 
@@ -485,5 +485,33 @@ describe('ProxiesClient', () => {
       fetch: fetchMock as unknown as typeof fetch,
     });
     await expect(client.pool.getStock()).rejects.toThrow(/PoolStock response shape unexpected/);
+  });
+
+  it('pool.getIncidents() unwraps the { incidents, generatedAt } envelope to Incident[]', async () => {
+    const fetchMock = mockFetch(200, {
+      incidents: [
+        { id: 'inc_1', severity: 'minor', title: 'Elevated latency in PL', startedAt: '2026-07-23T00:00:00Z', affects: ['pl'] },
+      ],
+      generatedAt: '2026-07-23T00:01:00Z',
+    });
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: false,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const incidents = await client.pool.getIncidents();
+    expect(Array.isArray(incidents)).toBe(true);
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]!.id).toBe('inc_1');
+  });
+
+  it('pool.getIncidents() returns [] when the envelope carries no incidents', async () => {
+    const fetchMock = mockFetch(200, { incidents: [], generatedAt: '2026-07-23T00:01:00Z' });
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: false,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    expect(await client.pool.getIncidents()).toEqual([]);
   });
 });

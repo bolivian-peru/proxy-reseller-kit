@@ -240,7 +240,7 @@ export default function PoolPage({ me }: { me: MeResponse }) {
         </div>
         <aside>
           <h2>Live country stock</h2>
-          <PoolStockGrid apiRoute="/api/pool" countries={['us','de','gb','es','fr','pl']} />
+          <PoolStockGrid apiRoute="/api/pool" countries={['us','gb','fr','nl','pl','ge']} />
         </aside>
       </section>
 
@@ -256,7 +256,7 @@ export default function PoolPage({ me }: { me: MeResponse }) {
         <PoolSessionSpawner
           proxyUsername={me.proxyUsername}
           proxyPassword={me.pakKey}
-          countries={['us','de','gb','es','fr','pl']}
+          countries={['us','gb','fr','nl','pl','ge']}
           defaultPool="mbl"
           defaultRotation="sticky"
           defaultSessionType="unique"

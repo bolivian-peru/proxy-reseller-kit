@@ -83,7 +83,7 @@ describe('buildProxyUrl', () => {
     expect(url).toContain('@edge-eu.proxies.sx:7000');
   });
 
-  it.each(['none', 'auto10', 'auto30', 'sticky', 'sticky-strict', 'hard'] as const)(
+  it.each(['auto5', 'auto20', 'auto60', 'ondemand', 'sticky', 'hard'] as const)(
     'accepts rotation mode %s',
     (rotation) => {
       const url = buildProxyUrl(USER, KEY, { rotation });
@@ -91,14 +91,40 @@ describe('buildProxyUrl', () => {
     },
   );
 
-  it('emits -rot-sticky-strict for the strict-sticky mode (gateway parses rot=sticky + strict)', () => {
-    const url = buildProxyUrl(USER, KEY, {
-      country: 'us',
-      pool: 'peer',
-      sid: 'alice_session1',
-      rotation: 'sticky-strict',
-    });
-    expect(url).toContain('-peer-us-sid-alice_session1-rot-sticky-strict');
+  it("skips the rot token for 'none' and 'auto10' (the gateway default)", () => {
+    // A literal -rot-none / -rot-auto10 is a token the gateway doesn't
+    // recognize — mirror PoolSessionSpawner's skip logic and emit nothing.
+    expect(buildProxyUrl(USER, KEY, { rotation: 'none' })).not.toContain('-rot-');
+    expect(buildProxyUrl(USER, KEY, { rotation: 'auto10' })).not.toContain('-rot-');
+  });
+
+  it('emits -failover only when overriding the samecountry default', () => {
+    expect(buildProxyUrl(USER, KEY, { failover: 'samecountry' })).not.toContain('-failover-');
+    expect(buildProxyUrl(USER, KEY, { country: 'us', failover: 'strict' })).toContain(
+      '-failover-strict',
+    );
+  });
+
+  it('emits -ttl clamped to the gateway range [60, 2592000]', () => {
+    expect(buildProxyUrl(USER, KEY, { ttl: 3600 })).toContain('-ttl-3600');
+    // Below floor clamps up to 60, above ceiling clamps down to 2592000.
+    expect(buildProxyUrl(USER, KEY, { ttl: 5 })).toContain('-ttl-60');
+    expect(buildProxyUrl(USER, KEY, { ttl: 9_999_999 })).toContain('-ttl-2592000');
+  });
+
+  it('emits -iptype for the hard IP-class filter', () => {
+    expect(buildProxyUrl(USER, KEY, { country: 'us', ipType: 'residential' })).toContain(
+      '-iptype-residential',
+    );
+  });
+
+  it('emits -pin-<type>-<id> for a device/port pin', () => {
+    expect(buildProxyUrl(USER, KEY, { pin: { type: 'device', id: 'abc123' } })).toContain(
+      '-pin-device-abc123',
+    );
+    expect(buildProxyUrl(USER, KEY, { pin: { type: 'port', id: 'p42' } })).toContain(
+      '-pin-port-p42',
+    );
   });
 
   it('throws ProxiesConfigError on missing proxyUsername', () => {

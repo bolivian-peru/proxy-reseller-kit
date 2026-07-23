@@ -20,7 +20,7 @@ const STOCK_FIXTURE = {
   updatedAt: '2026-04-24T12:00:00Z',
   countries: [
     { country: 'us', mbl: { online: 32, total: 34 }, peer: { online: 12, total: 15 } },
-    { country: 'de', mbl: { online: 18, total: 20 }, peer: { online: 4, total: 8 } },
+    { country: 'gb', mbl: { online: 18, total: 20 }, peer: { online: 4, total: 8 } },
   ],
 };
 
@@ -69,11 +69,11 @@ describe('<PoolPortal>', () => {
       expect(screen.getByLabelText(/country/i)).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByLabelText(/country/i), { target: { value: 'de' } });
+    fireEvent.change(screen.getByLabelText(/country/i), { target: { value: 'gb' } });
     fireEvent.change(screen.getByLabelText(/rotation/i), { target: { value: 'sticky' } });
 
     await waitFor(() => {
-      const url = screen.getByText(/psx_abc123-mbl-de-rot-sticky/);
+      const url = screen.getByText(/psx_abc123-mbl-gb-rot-sticky/);
       expect(url).toBeInTheDocument();
     });
   });

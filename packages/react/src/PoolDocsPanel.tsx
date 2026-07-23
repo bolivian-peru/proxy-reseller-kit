@@ -178,7 +178,7 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
         routing per-request. The full username has the shape:
       </p>
       <pre className="psx-docs-code-block">
-        {'<account>-<pool>-<country>[-sid-<id>][-rot-<mode>][-carrier-<name>][-city-<name>]'}
+        {'<account>-<pool>-<country>[-sid-<id>][-rot-<mode>][-carrier-<name>][-city-<name>][-iptype-<class>][-isp-<slug>][-asn-<n>][-failover-<policy>][-ttl-<seconds>][-pin-<type>-<id>]'}
       </pre>
 
       <h4 className="psx-docs-h4">Required</h4>
@@ -190,16 +190,18 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
               Pool type + target country. Always required.
               <br />
               <span className="psx-docs-muted">
-                Available: <code>us</code>, <code>de</code>, <code>gb</code>,
-                <code> es</code>, <code>fr</code>, <code>pl</code>
+                mbl (production modems) countries: <code>us</code>,
+                <code> gb</code>, <code>fr</code>, <code>nl</code>,
+                <code> pl</code>, <code>ge</code>
               </span>
             </td>
           </tr>
           <tr>
             <td><code>-peer-{'{country}'}</code></td>
             <td>
-              Use the residential peer pool instead of mobile. Same country
-              codes. Available stock varies; check <code>/stock</code>.
+              Use the peer network (the flagship pool — mobile + residential
+              across 80+ countries) instead of mobile modems. Available stock
+              varies; check <code>/stock</code>.
             </td>
           </tr>
         </tbody>
@@ -215,8 +217,15 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
               device & IP.
               <br />
               <span className="psx-docs-muted">
-                8–64 alphanumeric chars. Different ids → different IPs. Omit for
-                a fresh device per connection (5-min TTL).
+                1–64 chars, <code>[a-z0-9_]</code>, self-healing. Different ids →
+                different IPs. Omit for a fresh device per connection (5-min TTL).
+              </span>
+              <br />
+              <span className="psx-docs-muted">
+                The token is <code>sid</code>, not <code>session</code>.{' '}
+                <code>-session-{'<id>'}</code> is silently ignored (unknown
+                token) so you get a fresh synthetic session per connection and no
+                stickiness. Always use <code>-sid-{'<id>'}</code>.
               </span>
             </td>
           </tr>
@@ -239,6 +248,33 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
             <td>City-level targeting where available. Falls back to country if no city match.</td>
           </tr>
           <tr>
+            <td><code>-iptype-{'{class}'}</code></td>
+            <td>
+              Hard IP-class filter: <code>mobile</code> / <code>residential</code> /{' '}
+              <code>datacenter</code>. Restricts selection to that device class.
+            </td>
+          </tr>
+          <tr>
+            <td><code>-isp-{'{slug}'}</code></td>
+            <td>
+              Hard ISP match (peer pool) — slugified prefix match against the
+              endpoint's ISP name, e.g. <code>-isp-spectrum</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>-asn-{'{number}'}</code></td>
+            <td>
+              Hard exact ASN match (peer pool) — the most precise carrier filter,
+              e.g. <code>-asn-7018</code>. Live stock: <code>/stock/carriers</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>-pin-port-{'{id}'}</code></td>
+            <td>
+              Pin to a specific port (advanced — contact support for port ids).
+            </td>
+          </tr>
+          <tr>
             <td><code>-pin-device-{'{id}'}</code></td>
             <td>
               Pin to a specific modem (advanced — contact support for device ids).
@@ -255,7 +291,7 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
           </tr>
           <tr>
             <td><code>-ttl-{'{seconds}'}</code></td>
-            <td>Session TTL override. 60 – 86 400 seconds. Default 3600 (1 h).</td>
+            <td>Session TTL override. 60 – 2 592 000 seconds. Default 3600 (1 h).</td>
           </tr>
         </tbody>
       </table>

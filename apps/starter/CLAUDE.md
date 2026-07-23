@@ -44,7 +44,7 @@ Edit `src/config.ts`. The value flows to the landing page, layout header, emails
 Edit the `pricing` array in `src/config.ts`. Each tier needs `id`, `displayName`, `gb`, `priceUsd`. The `id` is stored in Stripe metadata and in the `purchases` table, so don't rename existing ids after launch — add new ones instead.
 
 ### Add a new country to the dashboard
-Add the ISO code to `config.countries` in `src/config.ts`. Must be a valid `Country` from `@proxies-sx/pool-sdk` (currently: `'us' | 'de' | 'pl' | 'fr' | 'es' | 'gb'`).
+Add the ISO code to `config.countries` in `src/config.ts`. Must be a valid `Country` from `@proxies-sx/pool-sdk` (the mbl tier covers `'us' | 'gb' | 'fr' | 'nl' | 'pl' | 'ge'`; the peer network spans 80+).
 
 ### Change the DB schema
 Edit `db/schema.sql`. Every statement must use `IF NOT EXISTS` / `ON CONFLICT` — the migration runner is idempotent and re-runs the whole file. If you need to drop or alter, add the ALTER/DROP statement with `IF EXISTS` guards.

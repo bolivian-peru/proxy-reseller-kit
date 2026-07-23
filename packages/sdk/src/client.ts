@@ -9,6 +9,7 @@ import type {
   PoolStock,
   CarrierStock,
   Incident,
+  IncidentsResponse,
   BuildProxyUrlOpts,
   RetryConfig,
   ActiveSession,
@@ -580,9 +581,15 @@ export class PoolApi {
     return raw as CarrierStock;
   }
 
-  /** Active incidents affecting the gateway, if any. Cached 60s. */
-  getIncidents(): Promise<Incident[]> {
-    return this.client.request<Incident[]>('/gateway/incidents');
+  /**
+   * Active incidents affecting the gateway, if any. Cached 60s.
+   *
+   * The live endpoint returns `{ incidents, generatedAt }` — this method
+   * unwraps the envelope so you always get a plain `Incident[]`.
+   */
+  async getIncidents(): Promise<Incident[]> {
+    const res = await this.client.request<IncidentsResponse>('/gateway/incidents');
+    return res.incidents ?? [];
   }
 }
 

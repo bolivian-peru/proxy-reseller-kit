@@ -10,6 +10,11 @@ All notable changes to this package are documented here.
   Private Pool product with one component. Pass the `pak_` key (minted server-side
   with `qualityTier: 'safe'`) as `pak`, plus optional `label` / `usedGB` / `capGB`
   / `deviceCount`. Now exported from the package root.
+- **Failover control on `<PoolSessionSpawner>`** — a failover-scope selector
+  (`samecountry` | `samecarrier` | `samenode` | `any` | `strict`) matching
+  `client.proxies.sx/pool-proxy`. Emits the `-failover-<v>` token (the default
+  `samecountry` is omitted). Adds the `defaultFailover` prop, the exported
+  `FailoverPolicy` type, and `failover` in `SpawnMeta`.
 - Depends on `@proxies-sx/pool-sdk ^0.9.0` (adds `qualityTier` + `PoolQualityTier`).
 
 ## 0.9.0 — Carrier/ASN targeting UI (Jul 2026, on npm)
@@ -34,11 +39,11 @@ All notable changes to this package are documented here.
   filter the country picker by the selected pool (`countries[CC].modem` / `.peer`).
 - Throughput-floor note (`PEER_THROUGHPUT_FLOOR_KBPS` ~500 KB/s) added to the guide.
 
-## 0.7.0 — sticky-strict rotation mode
+## 0.7.0 — rotation-mode copy corrections
 
-- `sticky-strict` added to the `<PoolSessionSpawner>` rotation picker and
-  `RotationMode` type (gateway #305); `hard` semantics corrected in copy
-  (`hard` pins like `sticky` — NOT "new IP per request").
+- `<PoolSessionSpawner>` rotation picker + `RotationMode` copy corrected:
+  `hard` pins like `sticky` — NOT "new IP per request" (at routing time
+  `hard` ≡ `sticky`).
 
 ## 0.6.2 — Sticky-rotation copy reflects smart-selection (May 2026)
 
