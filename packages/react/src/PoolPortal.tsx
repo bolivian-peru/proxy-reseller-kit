@@ -21,12 +21,12 @@ import {
   usePoolStock,
 } from './hooks';
 
-const DEFAULT_COUNTRIES: Country[] = ['us', 'de', 'pl', 'fr', 'es', 'gb'];
+const DEFAULT_COUNTRIES: Country[] = ['us', 'gb', 'fr', 'nl', 'pl', 'ge'];
 
 const ROTATION_OPTIONS: Array<{ value: RotationMode; label: string; hint: string }> = [
   { value: 'none', label: 'Per-request', hint: 'Fresh IP each request' },
   { value: 'auto10', label: 'Every 10 min', hint: 'Auto-rotate' },
-  { value: 'auto30', label: 'Every 30 min', hint: 'Auto-rotate' },
+  { value: 'auto20', label: 'Every 20 min', hint: 'Auto-rotate' },
   { value: 'sticky', label: 'Sticky session', hint: 'Same endpoint while active' },
 ];
 

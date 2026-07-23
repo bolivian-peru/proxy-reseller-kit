@@ -36,11 +36,10 @@ semver from 0.3.0 onwards (the public surface is everything exported from
   filter the country picker by the selected pool (`countries[CC].modem` / `.peer`).
 - Throughput-floor note (`PEER_THROUGHPUT_FLOOR_KBPS` ~500 KB/s) added to the guide.
 
-## 0.7.0 — sticky-strict rotation mode
+## 0.7.0 — rotation-mode copy corrections
 
-- **`sticky-strict`** added to `RotationMode`: strict pinning that fails over only
-  within the same node instead of re-picking (gateway #305). Also corrected `hard`
-  semantics in TSDoc: `hard` pins like `sticky` — it is NOT "new IP per request".
+- Corrected `hard` semantics in TSDoc: `hard` pins like `sticky` — it is NOT
+  "new IP per request". At routing time `hard` ≡ `sticky`.
 
 ## 0.6.1 — Sticky semantics docs (sticky smart-selection, May 2026)
 
@@ -336,7 +335,7 @@ write retries.
   (was: `{ id, key }`). The original two fields are still present, so
   call sites destructuring `{ id, key }` continue to work.
 - **`RotationMode` JSDoc** rewritten with concrete gateway-level behavior
-  for `none` / `auto10` / `auto30` / `sticky` / `hard`.
+  for `none` / `auto10` / `auto20` / `sticky` / `hard`.
 
 ### Backwards compatibility
 

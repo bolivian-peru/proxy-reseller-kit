@@ -49,7 +49,7 @@ export const config = {
   ] satisfies PricingTier[],
 
   /** Countries the dashboard offers in the dropdown. Must be supported by the pool. */
-  countries: ['us', 'de', 'pl', 'fr', 'es', 'gb'] satisfies Country[],
+  countries: ['us', 'gb', 'fr', 'nl', 'pl', 'ge'] satisfies Country[],
 
   /** Default landing page CTA label. */
   primaryCta: 'Get started',

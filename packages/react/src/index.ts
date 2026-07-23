@@ -20,6 +20,7 @@ export {
 export type {
   PoolSessionSpawnerProps,
   SessionType,
+  FailoverPolicy,
   SpawnMeta,
 } from './PoolSessionSpawner';
 

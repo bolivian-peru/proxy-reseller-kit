@@ -5,7 +5,7 @@
 
 > Typed TypeScript/JavaScript client for the **[Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy)** reseller API. Mint Pool Access Keys, build proxy URLs, and ship a branded reseller business in an hour instead of a month.
 
-Wholesale pricing with volume tiers — current rates in your [client.proxies.sx](https://client.proxies.sx) dashboard or via [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing). You set your resale price. One API call mints a per-customer sub-key with its own traffic cap.
+Wholesale pricing with volume tiers — current rates in your [client.proxies.sx](https://client.proxies.sx) dashboard or via [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing). You set your resale price. One API call mints a per-customer sub-key with its own traffic cap. Wholesale pricing has automatic volume tiers, and high-volume resellers can negotiate custom rates with admin.
 
 ---
 
@@ -278,14 +278,14 @@ import { buildProxyUrl } from '@proxies-sx/pool-sdk';
 
 | Field | Type | Example |
 |---|---|---|
-| `country` | `'us' \| 'de' \| 'pl' \| 'fr' \| 'es' \| 'gb'` | `'us'` |
+| `country` | `'us' \| 'gb' \| 'fr' \| 'nl' \| 'pl' \| 'ge'` (mbl set; peer spans 80+ countries) | `'us'` |
 | `carrier` | `string` | `'att'`, `'tmobile'` — soft preference, mostly for modems |
 | `isp` | `string` | `'tmobile'`, `'comcast'` — **hard** ISP prefix match (peer pool). Residential carrier targeting. |
 | `asn` | `number` | `21928` (T-Mobile) — **hard** exact ASN match (peer pool). Most precise; pair with `getCarrierStock()`. |
 | `city` | `string` | `'nyc'`, `'berlin'` |
 | `sid` | `string` | `'customer-123'` (same sid + `rotation: 'sticky'` → returns to the same modem) |
-| `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto30' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'sticky-strict' \| 'hard'` | `'auto30'` is a legacy alias - the gateway snaps it to `auto20` (valid intervals: 5/10/20/60 min). `'sticky'` pins one modem AND the gateway smart-picks the most IP-stable one. `'sticky-strict'` weights stability harder + applies a min-stability floor — pair with `pool: 'peer'` for a near-immutable IP. `'hard'` **pins like sticky** (NOT a new IP per request). `'sticky'`/`'sticky-strict'`/`'auto*'` need a `sid` to persist. See [wiki: Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation). |
-| `pool` | `'mbl' \| 'peer'` | `'mbl'` (mobile modems) or `'peer'` (residential peers) |
+| `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'hard'` | `'sticky'` pins one modem AND the gateway smart-picks the most IP-stable one — pair with `pool: 'peer'` for a near-immutable IP. `'hard'` **pins like sticky** (NOT a new IP per request; at routing time `hard` ≡ `sticky`). `'sticky'`/`'auto*'` need a `sid` to persist. The token is `sid`, not `session` — `-session-<id>` is silently ignored (unknown token), so always use `-sid-<id>`. See [wiki: Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation). |
+| `pool` | `'mbl' \| 'peer'` | `'mbl'` (carrier modems) or `'peer'` (community network, mixed mobile + residential) |
 | `protocol` | `'http' \| 'socks5'` | `'http'` (port 7000) or `'socks5'` (port 7001) |
 | `host` | `string` | Override gateway host, e.g. `'edge-eu.proxies.sx'` |
 
@@ -475,10 +475,9 @@ http://psx_RESELLER_USERNAME-mbl-us-sid-alice_session1-rot-sticky:pak_CUSTOMER_K
 ```
 
 Token format inside the username (separated by `-`):
-- `mbl` / `peer` — pool type (mobile modems vs residential peers)
-- `us` / `de` / `pl` / `fr` / `es` / `gb` — country code
-- `sid-<id>` — sticky session id (same `sid` = same exit IP for the session)
-- `rot-sticky` / `rot-sticky-strict` / `rot-auto5` / `rot-auto10` / `rot-auto20` / `rot-auto60` / `rot-ondemand` / `rot-hard` — rotation mode. `sticky`/`sticky-strict`/`hard` pin the modem (gateway smart-picks the most IP-stable; `hard` ≡ `sticky`, NOT a new IP per request); `sticky-strict` adds a stability floor (best with `peer`); `auto*` swap every N min. Needs `-sid-` to persist.
+- `mbl` / `peer` — pool type (mobile modems vs the flagship peer network). mbl countries: `us` / `gb` / `fr` / `nl` / `pl` / `ge`; peer spans 80+.
+- `sid-<id>` — sticky session id (same `sid` = same exit IP for the session). The token is `sid`, not `session` — `-session-<id>` is silently ignored (unknown token), so always use `-sid-<id>`.
+- `rot-sticky` / `rot-auto5` / `rot-auto10` / `rot-auto20` / `rot-auto60` / `rot-ondemand` / `rot-hard` — rotation mode. `sticky`/`hard` pin the modem (gateway smart-picks the most IP-stable; `hard` ≡ `sticky`, NOT a new IP per request); `auto*` swap every N min. Needs `-sid-` to persist.
 - `city-<name>` / `carrier-<name>` — optional filters
 
 ### Examples in other languages

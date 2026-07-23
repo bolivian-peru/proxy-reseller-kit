@@ -35,7 +35,7 @@ reserved and how exclusive it can be.
 | | `-mbl-` private (Modem pool) | `-peer-` private (Peer network) |
 |---|---|---|
 | What you reserve | Dedicated 4G/5G mobile modems, **pulled out of the shared pool and exclusively yours** for the term | **Committed capacity** on the peer network - a guaranteed share under your own credentials (community-shared devices, so not locked hardware) |
-| Coverage | ~6 countries (the curated modem fleet) | 80+ countries |
+| Coverage | 6 countries (US, GB, FR, NL, PL, GE) — the curated modem fleet | 80+ countries |
 | IP behaviour | Most stable exit behaviour; `-sid-` sticky pins the modem (the carrier may still re-issue the IP) | IPs rotate naturally on the carrier - great when you *want* rotation; no on-command rotation |
 | Best for | Held sessions, consistent throughput, full isolation | Wide country reach, high-volume rotating workloads |
 | Exclusivity | Full - no other customer routes through your modems | Committed, not exclusive - peers stay part of the shared community network |
@@ -70,6 +70,8 @@ pool never charges anything.
 > Live pricing is always authoritative at [client.proxies.sx](https://client.proxies.sx)
 > and [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing).
 > The tiers above mirror the shared-pool volume discounts.
+
+For enterprise volumes, both the reservation fee and the per-GB wholesale rate are negotiable. Request a quote and we will price the whole allocation, traffic included, for your committed volume.
 
 ---
 

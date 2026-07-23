@@ -12,7 +12,7 @@
 
 ## The product this depends on
 
-Upstream service: **Proxies.sx Pool Gateway** at `gw.proxies.sx:7000` (HTTP) and `:7001` (SOCKS5). Real mobile + residential proxies in 6 countries (DE, PL, US, FR, ES, GB). Wholesale pricing has volume tiers — live rates in `client.proxies.sx` dashboard. Don't hardcode prices anywhere.
+Upstream service: **Proxies.sx Pool Gateway** at `gw.proxies.sx:7000` (HTTP) and `:7001` (SOCKS5). The **peer** network is the flagship pool — real mobile + residential IPs across 80+ countries. The **mbl** (production ProxySmart modem) tier is the supportive starter tier: 6 countries — **US, GB, FR, NL, PL, GE (Georgia)**. Wholesale pricing has volume tiers — live rates in `client.proxies.sx` dashboard. Don't hardcode prices anywhere.
 
 Reseller API: `https://api.proxies.sx/v1/reseller/pool-keys`. Auth with an API key (`psx_*`) minted at `client.proxies.sx/account` with scope `customers:write`.
 

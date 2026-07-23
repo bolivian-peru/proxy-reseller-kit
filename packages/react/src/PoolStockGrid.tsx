@@ -46,7 +46,7 @@ export interface PoolStockGridProps {
  * ```tsx
  * <PoolStockGrid
  *   apiRoute="/api/pool"
- *   countries={['us', 'de', 'gb', 'es', 'fr', 'pl']}
+ *   countries={['us', 'gb', 'fr', 'nl', 'pl', 'ge']}
  *   refreshIntervalMs={30_000}
  * />
  * ```
@@ -176,14 +176,18 @@ export function PoolStockGrid(props: PoolStockGridProps): JSX.Element {
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
 const COUNTRY_FLAGS: Record<string, string> = {
-  us: '\u{1F1FA}\u{1F1F8}', de: '\u{1F1E9}\u{1F1EA}', gb: '\u{1F1EC}\u{1F1E7}',
-  es: '\u{1F1EA}\u{1F1F8}', fr: '\u{1F1EB}\u{1F1F7}', pl: '\u{1F1F5}\u{1F1F1}',
+  // mbl production countries
+  us: '\u{1F1FA}\u{1F1F8}', gb: '\u{1F1EC}\u{1F1E7}', fr: '\u{1F1EB}\u{1F1F7}',
+  nl: '\u{1F1F3}\u{1F1F1}', pl: '\u{1F1F5}\u{1F1F1}', ge: '\u{1F1EC}\u{1F1EA}',
+  // peer-only examples
+  de: '\u{1F1E9}\u{1F1EA}', es: '\u{1F1EA}\u{1F1F8}',
   ch: '\u{1F1E8}\u{1F1ED}', pa: '\u{1F1F5}\u{1F1E6}', am: '\u{1F1E6}\u{1F1F2}',
 };
 
 const COUNTRY_NAMES: Record<string, string> = {
-  us: 'United States', de: 'Germany', gb: 'United Kingdom',
-  es: 'Spain', fr: 'France', pl: 'Poland',
+  us: 'United States', gb: 'United Kingdom', fr: 'France',
+  nl: 'Netherlands', pl: 'Poland', ge: 'Georgia',
+  de: 'Germany', es: 'Spain',
   ch: 'Switzerland', pa: 'Panama', am: 'Armenia',
 };
 

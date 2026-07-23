@@ -54,6 +54,8 @@ Traditional proxy resale means buying modem hardware, juggling SIM plans, runnin
 
 The [Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy) takes care of the infrastructure — you get a single endpoint (`gw.proxies.sx:7000`), wholesale pricing with volume tiers, and a per-customer sub-key system (`pak_*`). Live pricing: see [client.proxies.sx](https://client.proxies.sx) or [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing).
 
+Wholesale rates carry automatic volume discounts down to $2.40/GB at 250 GB+, and for high-volume resellers, custom wholesale pricing is negotiable directly with admin.
+
 This repo takes care of the **software** — SDK, drop-in React component, full Next.js storefront, and a language-agnostic REST API. Zero paid dependencies beyond what you choose (SMTP provider, hosting).
 
 ---
@@ -268,7 +270,7 @@ Stripe storefront, on a different rail.
 > npm i @proxies-sx/pool-sdk
 > ```
 > Highlights since 0.5.x: per-customer session scoping (`sessions.list({ pakId })`),
-> `sticky-strict` rotation + corrected `hard` semantics (`hard` pins like sticky, NOT
+> corrected `hard` semantics (`hard` pins like sticky, NOT
 > "new IP per request"), carrier/ASN targeting (`asn`/`isp` + `pool.getCarrierStock()`),
 > client-side `sid` validation in `buildProxyUrl`, and the `<PakQuickstart>` +
 > `usePoolCarrierStock` React additions. Full history: each package's CHANGELOG.md.
@@ -440,7 +442,7 @@ export const config = {
     { id: 'pro',     displayName: 'Pro',     gb: 25,  priceUsd: 150 },
     { id: 'scale',   displayName: 'Scale',   gb: 100, priceUsd: 500 },
   ],
-  countries: ['us', 'de', 'pl', 'fr', 'es', 'gb'],
+  countries: ['us', 'gb', 'fr', 'nl', 'pl', 'ge'],
   primaryCta: 'Get started',
   legal: { tosUrl: '/terms', privacyUrl: '/privacy' },
 };
@@ -529,6 +531,8 @@ A: You need a Proxies.sx reseller API key to mint `pak_` sub-keys. Sign up at [c
 
 **Q: What's my cost structure?**
 A: You pay Proxies.sx wholesale (current rates + volume tiers in your [client.proxies.sx](https://client.proxies.sx) dashboard). You set your retail price. Typical markups on resold mobile proxies are 2–5×. Stripe takes 2.9% + 30¢ per transaction on top.
+
+Larger resellers can negotiate custom wholesale pricing. The published $4/GB base and volume tiers are the self-serve rates. If you are moving serious volume or want committed pricing, contact us to arrange a custom wholesale rate that beats the standard tiers.
 
 **Q: Can I fork and re-brand without attribution?**
 A: Yes — MIT license. Do whatever you want. No attribution required.
