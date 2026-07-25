@@ -282,6 +282,7 @@ import { buildProxyUrl } from '@proxies-sx/pool-sdk';
 | `carrier` | `string` | `'att'`, `'tmobile'` — soft preference, mostly for modems |
 | `isp` | `string` | `'tmobile'`, `'comcast'` — **hard** ISP prefix match (peer pool). Residential carrier targeting. |
 | `asn` | `number` | `21928` (T-Mobile) — **hard** exact ASN match (peer pool). Most precise; pair with `getCarrierStock()`. |
+| `ipType` | `'mobile' \| 'residential' \| 'datacenter'` | Hard IP-class filter, emits `-iptype-<v>`. `mbl` is mobile-only by construction, so this only matters for `pool: 'peer'` — use it to guarantee cellular-carrier exits vs home/ISP exits from the peer pool. Unclassified peers are excluded. |
 | `city` | `string` | `'nyc'`, `'berlin'` |
 | `sid` | `string` | `'customer-123'` (same sid + `rotation: 'sticky'` → returns to the same modem) |
 | `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'hard'` | `'sticky'` pins one modem AND the gateway smart-picks the most IP-stable one — pair with `pool: 'peer'` for a near-immutable IP. `'hard'` **pins like sticky** (NOT a new IP per request; at routing time `hard` ≡ `sticky`). `'sticky'`/`'auto*'` need a `sid` to persist. The token is `sid`, not `session` — `-session-<id>` is silently ignored (unknown token), so always use `-sid-<id>`. See [wiki: Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation). |

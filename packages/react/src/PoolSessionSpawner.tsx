@@ -220,6 +220,14 @@ export function buildProxyString(opts: {
    * default (`samecountry`). @since 0.10.0
    */
   failover?: FailoverPolicy;
+  /**
+   * Hard IP-class filter (peer/any pools). `mobile` = cellular-carrier exit
+   * IPs, `residential` = home/ISP IPs, `datacenter` = hosting IPs. Emits
+   * `-iptype-<v>`; the endpoint must be that verified class (unclassified
+   * peers are excluded). The mbl pool is mobile by construction, so this is
+   * only meaningful for peer/any. @since 0.11.0
+   */
+  ipType?: 'mobile' | 'residential' | 'datacenter';
 }): string {
   const port = opts.protocol === 'http' ? 7000 : 7001;
   const tokens = [opts.pool, opts.country];
@@ -228,6 +236,9 @@ export function buildProxyString(opts: {
   // Never emit -asn- on mbl — it can filter modem stock to zero.
   if (opts.asn) tokens.push('asn', String(opts.asn));
   else if (opts.carrierName) tokens.push('carrier', slugifyDsl(opts.carrierName));
+  // Hard IP-class filter. Meaningful for peer/any; a no-op on mbl (which is
+  // mobile by construction), so we only emit it when the pool isn't mbl.
+  if (opts.ipType && opts.pool !== 'mbl') tokens.push('iptype', opts.ipType);
   // Always inject a sid when spawning a multi-row table. 'same' shares one;
   // 'unique' and 'none' both give per-row sids — the only difference is that
   // 'none' callers don't want long-lived stickiness, but the URLs must still be
@@ -328,6 +339,12 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
   useEffect(() => {
     setCarrierAsn(0);
   }, [country, pool]);
+  // Hard IP-class filter — peer/any pools only ('' = any class). mbl is mobile
+  // by construction, so we reset the filter whenever mbl is selected.
+  const [ipType, setIpType] = useState<'' | 'mobile' | 'residential' | 'datacenter'>('');
+  useEffect(() => {
+    if (pool === 'mbl') setIpType('');
+  }, [pool]);
   const [protocol, setProtocol] = useState<Protocol>(defaultProtocol);
   const [rotation, setRotation] = useState<RotationMode>(defaultRotation);
   const [failover, setFailover] = useState<FailoverPolicy>(defaultFailover);
@@ -363,6 +380,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             pool !== 'peer' && carrierAsn
               ? carrierStock.find((c) => c.asn === carrierAsn)?.name
               : undefined,
+          ipType: ipType || undefined,
         }),
       );
     }
@@ -372,7 +390,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
       count, country, pool, protocol, rotation, sessionType, failover, sessionPrefix,
       generatedAt: Date.now(),
     });
-  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, carrierStock, protocol, rotation, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, onSpawn]);
+  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, carrierStock, protocol, rotation, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, ipType, onSpawn]);
 
   const handleCopyOne = useCallback((url: string, idx: number) => {
     void navigator.clipboard?.writeText(url);
@@ -448,6 +466,25 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             <option value="any">Any — best available</option>
           </select>
         </label>
+
+        {/* IP class — hard mobile/residential/datacenter filter for the peer-
+            backed pools. mbl is mobile by construction, so this only shows for
+            peer/any. Emits `-iptype-<v>`; unclassified peers are excluded. */}
+        {pool !== 'mbl' && (
+          <label className="psx-spawner-row">
+            <span>IP class</span>
+            <select
+              value={ipType}
+              onChange={(e) => setIpType(e.target.value as typeof ipType)}
+              className={cn('psx-select', classNames.select)}
+            >
+              <option value="">Any — mobile or residential</option>
+              <option value="mobile">Mobile only — cellular-carrier IPs</option>
+              <option value="residential">Residential only — home / ISP IPs</option>
+              <option value="datacenter">Datacenter only — hosting IPs</option>
+            </select>
+          </label>
+        )}
 
         {/* Carrier / ISP — shown for ANY pool that has live carrier stock.
             peer pool routes the choice as a hard `-asn-<n>` filter; mbl / any
