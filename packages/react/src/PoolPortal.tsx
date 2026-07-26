@@ -24,7 +24,10 @@ import {
 const DEFAULT_COUNTRIES: Country[] = ['us', 'gb', 'fr', 'nl', 'pl', 'ge'];
 
 const ROTATION_OPTIONS: Array<{ value: RotationMode; label: string; hint: string }> = [
-  { value: 'none', label: 'Per-request', hint: 'Fresh IP each request' },
+  // `none` sends no -rot- token, so the GATEWAY default applies: auto10.
+  // It was labelled "Per-request / Fresh IP each request", which is the
+  // opposite of what happens — one endpoint is held for up to 10 minutes.
+  { value: 'none', label: 'Default', hint: 'Rotates ~every 10 min' },
   { value: 'auto10', label: 'Every 10 min', hint: 'Auto-rotate' },
   { value: 'auto20', label: 'Every 20 min', hint: 'Auto-rotate' },
   { value: 'sticky', label: 'Sticky session', hint: 'Same endpoint while active' },
@@ -309,11 +312,15 @@ export function PoolPortal(props: PoolPortalProps): JSX.Element {
           </div>
 
           <div className="psx-field">
-            <label className="psx-label" htmlFor="psx-sid">Session ID (optional)</label>
+            {/* The placeholder used to be "my-session". validateSid() rejects a
+                hyphen outright — its own error says so — because the gateway
+                splits the username on `-`. The kit was suggesting the one value
+                it refuses to build. */}
+            <label className="psx-label" htmlFor="psx-sid">Session ID — required for sticky</label>
             <input
               id="psx-sid"
               type="text"
-              placeholder="my-session"
+              placeholder="cust_8f3a21bd"
               value={sid}
               onChange={(e) => setSid(e.target.value)}
               className={cx('psx-input', classNames?.input)}

@@ -46,11 +46,14 @@ export type Country = KnownCountry | (string & {});
  *
  * Behavior at the gateway level:
  *
- * - `none` — Default. The gateway picks an endpoint per session and
- *   reuses it for the session's TTL (1h default).
+ * - `none` — A CLIENT-SIDE sentinel meaning "send no `-rot-` token", NOT a
+ *   gateway mode. The gateway has no `none`; with no token it applies its own
+ *   default, which is `auto10` — soft rotation, a different endpoint roughly
+ *   every 10 minutes. It does NOT hold one endpoint for an hour, and it does
+ *   NOT give a fresh IP per request. If you want either of those, ask for them
+ *   explicitly: `sticky` to hold, `auto5` to turn over faster.
  * - `auto5` / `auto10` / `auto20` / `auto60` — Soft rotation: every N
- *   minutes the gateway swaps the modem. Score formula = load*0.8 + health*0.2
- *   (favor empty, healthy modems — diversity is the goal).
+ *   minutes the gateway swaps the modem, preferring empty and healthy ones.
  * - `ondemand` — No auto-rotate timer; reuse the chosen modem while connected.
  * - `sticky` — Pin to one modem for the session lifetime. Selector weights
  *   `ipStabilityScore` at 50% — picks the most IP-stable modem available.

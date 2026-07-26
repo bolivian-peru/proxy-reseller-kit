@@ -275,8 +275,14 @@ export function defaultTtlSecondsForRotation(rotation: RotationMode): number {
     case 'auto20': return 1200;
     case 'auto60': return 3600;
     case 'sticky': return 3600;
-    case 'hard': return 0;       // per-connection, no reuse
-    case 'none': return 3600;    // 1 h default at the gateway
+    // `hard` pins exactly like `sticky` at routing time — it is NOT
+    // per-connection and NOT a fresh IP per request. A real carrier-IP reset
+    // only happens via the explicit /rotate action.
+    case 'hard': return 3600;
+    // `none` emits no -rot- token, so the gateway applies auto10. The session
+    // ROW still lives for the gateway's 3600 s default; that is a row TTL, not
+    // a promise that the exit IP holds for an hour.
+    case 'none': return 3600;
     default: return 3600;
   }
 }
@@ -361,7 +367,6 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
     if (!Number.isFinite(n)) return undefined;
     return Math.max(60, Math.min(2_592_000, Math.round(n)));
   }, [ttlSecondsRaw]);
-  const effectiveTtl = ttlSeconds ?? defaultTtlSecondsForRotation(rotation);
 
   const rootStyle = useMemo<CSSProperties>(() => brandingToStyle(branding, style), [branding, style]);
 
