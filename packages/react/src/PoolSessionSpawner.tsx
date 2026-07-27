@@ -12,6 +12,7 @@ import {
 import type {
   Country,
   Pool,
+  PoolStock,
   Protocol,
   RotationMode,
   CarrierStockEntry,
@@ -64,6 +65,21 @@ export interface PoolSessionSpawnerProps {
   /** Available countries the user can choose. Defaults to the current Pool Gateway list. */
   countries?: readonly Country[];
   /**
+   * Live per-country stock, e.g. from `usePoolStock(apiRoute).data`. When
+   * provided, the country picker gains a **stock-depth signal**: each option
+   * carries its routable count and depth tier, and the selected country shows
+   * a coloured tier dot plus a warning when the pool is thin.
+   *
+   * This matters because a bare count is not decision-grade — "2" and "244"
+   * read identically as small grey numbers, so a customer picking a
+   * two-endpoint country gets no warning that there is nothing to fail over
+   * to. Counts only — never exit IPs.
+   *
+   * Omit it and the picker renders exactly as before.
+   * @since 0.12.0
+   */
+  stock?: PoolStock;
+  /**
    * Live carrier/ASN stock for the selected country (peer pool), e.g. from
    * `usePoolCarrierStock(apiRoute, country).data?.carriers`. When provided and
    * the pool is `peer`, a Carrier select appears and the chosen ASN is routed
@@ -86,10 +102,10 @@ export interface PoolSessionSpawnerProps {
   /** Maximum number of URLs the spawner can generate at once. Default 100. */
   maxCount?: number;
   /**
-   * Show the "Session TTL override" advanced field. When the user sets a
-   * value, it appends `-ttl-<seconds>` to the username DSL — gateway
-   * accepts 60–2,592,000 (1 min – 30 days) and clamps to [60, 2592000]
-   * server-side. Default true (reseller dashboards usually want it visible).
+   * Show the "Session lifetime" field (1 h / 8 h / 24 h / 7 d / 30 d presets).
+   * Anything above the gateway default appends `-ttl-<seconds>` to the
+   * username DSL — the gateway accepts 60–2,592,000 s and clamps server-side.
+   * Default true (reseller dashboards usually want it visible).
    * @since 0.4.2
    */
   showTtlControl?: boolean;
@@ -135,14 +151,33 @@ export interface SpawnMeta {
 
 const DEFAULT_COUNTRIES: readonly Country[] = ['us', 'gb', 'fr', 'nl', 'pl', 'ge'];
 
-const COUNTRY_LABELS: Record<string, { name: string; flag: string }> = {
-  us: { name: 'United States', flag: '\u{1F1FA}\u{1F1F8}' },
-  gb: { name: 'United Kingdom', flag: '\u{1F1EC}\u{1F1E7}' },
-  fr: { name: 'France', flag: '\u{1F1EB}\u{1F1F7}' },
-  nl: { name: 'Netherlands', flag: '\u{1F1F3}\u{1F1F1}' },
-  pl: { name: 'Poland', flag: '\u{1F1F5}\u{1F1F1}' },
-  ge: { name: 'Georgia', flag: '\u{1F1EC}\u{1F1EA}' },
-};
+// Country names/flags are DERIVED, not tabulated: the peer pool spans ~82
+// countries, so a hardcoded six-entry map left every other country a bare
+// 2-letter code. `Intl.DisplayNames` resolves them all in the browser and the
+// flag is a pure code-point transform of the ISO code.
+const REGION_NAMES = ((): Intl.DisplayNames | null => {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region' });
+  } catch {
+    return null;
+  }
+})();
+
+function countryName(code: Country): string {
+  const cc = String(code).toUpperCase();
+  if (!/^[A-Z]{2}$/.test(cc)) return cc;
+  try {
+    return REGION_NAMES?.of(cc) ?? cc;
+  } catch {
+    return cc;
+  }
+}
+
+function countryFlag(code: Country): string {
+  const cc = String(code).toUpperCase();
+  if (!/^[A-Z]{2}$/.test(cc)) return '\u{1F310}';
+  return String.fromCodePoint(...[...cc].map((ch) => 0x1f1e6 + ch.charCodeAt(0) - 65));
+}
 
 const ROTATION_OPTS: { value: RotationMode; label: string }[] = [
   { value: 'none', label: 'Default (10 min)' },
@@ -150,6 +185,10 @@ const ROTATION_OPTS: { value: RotationMode; label: string }[] = [
   { value: 'auto10', label: '10 minutes' },
   { value: 'auto20', label: '20 minutes' },
   { value: 'auto60', label: '60 minutes' },
+  // No rotation timer: the endpoint is kept while the connection lives and a
+  // NEW connection re-picks. The gateway has always accepted this token; the
+  // spawner just never offered it.
+  { value: 'ondemand', label: 'On demand (re-pick per connection)' },
   // Sticky pins the modem AND the gateway smart-picks the most IP-stable
   // modem in the country (carrier-CGNAT-aware selection, May 2026). For a
   // near-immutable IP, pair with the peer pool — home/ISP IPs hold for hours.
@@ -157,6 +196,22 @@ const ROTATION_OPTS: { value: RotationMode; label: string }[] = [
   // `hard` pins like sticky at routing time — NOT a new modem per request.
   { value: 'hard', label: 'Hard (pins like sticky)' },
 ];
+
+// Per-mode one-liner shown under the picker. These replace hover tooltips on
+// purpose: a `title` attribute is invisible on touch, which is where a good
+// share of a reseller's customers configure their proxies.
+const ROTATION_HINTS: Record<RotationMode, string> = {
+  none: 'No -rot- token is emitted, so the gateway default applies: a different endpoint about every 10 minutes.',
+  auto5: 'Re-picks a different endpoint every 5 minutes.',
+  auto10: 'Re-picks a different endpoint every 10 minutes (same as the gateway default).',
+  auto20: 'Re-picks a different endpoint every 20 minutes.',
+  auto60: 'Re-picks a different endpoint every 60 minutes.',
+  ondemand: 'No rotation timer — the endpoint is held for as long as the connection lives, and each NEW connection re-picks.',
+  sticky:
+    'Pins one endpoint for the session and prefers the most IP-stable one available. It pins the MODEM, not the IP — mobile carrier CGNAT can still re-NAT the exit. For an IP that holds for hours, use the peer pool (home / ISP IPs).',
+  hard:
+    'Pins exactly like sticky at routing time — NOT a fresh IP per request. A real carrier-IP reset only happens through the explicit rotate action, which peers do not support.',
+};
 
 // Failover scope options + honest one-liners. Mirrors the failover picker on
 // client.proxies.sx/pool-proxy. `samecountry` is the gateway default.
@@ -167,6 +222,97 @@ const FAILOVER_OPTS: { value: FailoverPolicy; label: string }[] = [
   { value: 'any', label: 'Any available' },
   { value: 'strict', label: 'No failover (fail clean)' },
 ];
+
+const FAILOVER_HINTS: Record<FailoverPolicy, string> = {
+  samecountry: 'If the exit drops, retry on another exit in the SAME country. Best for geo-locked work.',
+  samecarrier: 'Only fail over within the same carrier — tightest match, fewest fallbacks.',
+  samenode: 'Stay on the same relay node. Lowest latency on retry.',
+  any: 'Fail over to any available exit, even in another country. Maximum uptime, geo may change.',
+  strict:
+    'Never substitute — if the pinned exit is gone the request fails instead of silently moving. (This is the failover SCOPE named "strict"; it is not the sticky stability floor below.)',
+};
+
+// '' = no `-iptype-` token at all. The mbl pool is mobile by construction, so
+// this control is only rendered for peer / any.
+const IP_TYPE_HINTS: Record<string, string> = {
+  '': 'No class filter — routes on every verified and unclassified endpoint (the largest pool).',
+  mobile:
+    'Hard filter: only endpoints verified as cellular-carrier IPs. Mobile depth is thinner than residential — check the country count above before committing.',
+  residential:
+    'Hard filter: only home / ISP IPs. These hold an exit IP far longer than mobile does, so this is the pairing for sticky held-IP workflows.',
+  datacenter:
+    'Hard filter: only hosting IPs. Very few peers are datacenter, so expect thin stock in most countries.',
+};
+
+const SESSION_HINTS: Record<SessionType, string> = {
+  unique: 'Each row gets its own -sid-, so every URL is a separate gateway session on its own endpoint.',
+  same: 'All rows share one -sid-: they land on the SAME session and the same endpoint, so N consumers share one IP.',
+  none: 'Per-row throwaway -sid-s — N distinct short-lived sessions. Fan-out without keeping the IPs afterwards.',
+};
+
+/**
+ * Session-row TTL presets. The gateway accepts 60–2,592,000 s; 3600 is its
+ * default, so picking "1 hour" emits no token at all.
+ */
+const DEFAULT_TTL_SECONDS = 3600;
+
+const TTL_PRESETS: { value: number; label: string }[] = [
+  { value: DEFAULT_TTL_SECONDS, label: '1 hour (default)' },
+  { value: 28_800, label: '8 hours' },
+  { value: 86_400, label: '24 hours' },
+  { value: 604_800, label: '7 days' },
+  { value: 2_592_000, label: '30 days (max)' },
+];
+
+/* ── Stock depth ──────────────────────────────────────────────────────── */
+
+/**
+ * How much routable stock a country has for the selected pool.
+ *
+ * Thresholds differ per pool because the pools differ: 15 carrier modems is a
+ * genuinely well-stocked country, while 15 peers is thin — peers churn. Same
+ * bands as the `client.proxies.sx` country picker, so a reseller's customer
+ * sees the same verdict our own customers see.
+ *
+ * @public
+ */
+export type StockDepth = 'strong' | 'limited' | 'thin' | 'none';
+
+const DEPTH_LABELS: Record<StockDepth, string> = {
+  strong: 'Strong',
+  limited: 'Limited',
+  thin: 'Thin',
+  none: 'None',
+};
+
+export function stockDepthFor(routable: number, pool: Pool): StockDepth {
+  const n = Math.max(0, Math.floor(routable || 0));
+  if (n === 0) return 'none';
+  if (pool === 'mbl') {
+    if (n >= 15) return 'strong';
+    if (n >= 5) return 'limited';
+    return 'thin';
+  }
+  // peer / any / best
+  if (n >= 50) return 'strong';
+  if (n >= 10) return 'limited';
+  return 'thin';
+}
+
+/**
+ * Routable endpoints for one country in the selected pool, or `null` when the
+ * caller passed no stock (in which case the whole depth signal stays hidden
+ * rather than guessing).
+ */
+function routableCount(stock: PoolStock | undefined, country: Country, pool: Pool): number | null {
+  if (!stock?.pools) return null;
+  const cc = String(country).toLowerCase();
+  const mbl = stock.pools.mbl?.[cc] ?? 0;
+  const peer = stock.pools.peer?.[cc] ?? 0;
+  if (pool === 'mbl') return mbl;
+  if (pool === 'peer') return peer;
+  return mbl + peer;
+}
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
@@ -228,6 +374,14 @@ export function buildProxyString(opts: {
    * only meaningful for peer/any. @since 0.11.0
    */
   ipType?: 'mobile' | 'residential' | 'datacenter';
+  /**
+   * Strict stability floor for pinned sessions — the bare `strict` token
+   * (no value). The gateway only honors it when rotation is `sticky` or
+   * `hard`; there it excludes endpoints below an IP-stability score of 40 and
+   * weights stability at 0.7 of the selection score. Mirrors
+   * `BuildProxyUrlOpts.strict` in `@proxies-sx/pool-sdk`. @since 0.12.0
+   */
+  strict?: boolean;
 }): string {
   const port = opts.protocol === 'http' ? 7000 : 7001;
   const tokens = [opts.pool, opts.country];
@@ -248,6 +402,13 @@ export function buildProxyString(opts: {
   else tokens.push('sid', `${opts.sessionPrefix}${opts.index}`);
   if (opts.rotation !== 'none' && opts.rotation !== 'auto10') {
     tokens.push('rot', opts.rotation);
+  }
+  // Bare `strict` flag — no value, the parser consumes a single part. The
+  // gateway selector only reads it when the rotation is sticky or hard
+  // (`strictSticky = stickyMode and ARGV[16] == '1'`), so emitting it for a
+  // rotating mode is inert noise in the credential. Only emit where it acts.
+  if (opts.strict && (opts.rotation === 'sticky' || opts.rotation === 'hard')) {
+    tokens.push('strict');
   }
   // samecountry is the gateway default — only emit -failover- when overriding.
   if (opts.failover && opts.failover !== 'samecountry') {
@@ -274,6 +435,8 @@ export function defaultTtlSecondsForRotation(rotation: RotationMode): number {
     case 'auto10': return 600;
     case 'auto20': return 1200;
     case 'auto60': return 3600;
+    // No rotation timer at all, so the row simply lives for the gateway default.
+    case 'ondemand': return 3600;
     case 'sticky': return 3600;
     // `hard` pins exactly like `sticky` at routing time — it is NOT
     // per-connection and NOT a fresh IP per request. A real carrier-IP reset
@@ -317,6 +480,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
     proxyPassword,
     countries = DEFAULT_COUNTRIES,
     carrierStock = [],
+    stock,
     defaultCountry = countries[0]!,
     defaultPool = 'mbl',
     defaultProtocol = 'http',
@@ -353,22 +517,29 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
   }, [pool]);
   const [protocol, setProtocol] = useState<Protocol>(defaultProtocol);
   const [rotation, setRotation] = useState<RotationMode>(defaultRotation);
+  // Strict stability floor — only meaningful (and only emitted) for the
+  // pinning modes, so the control is hidden for the rotating ones. The choice
+  // is kept in state while hidden so flipping back to sticky restores it.
+  const [strict, setStrict] = useState(false);
   const [failover, setFailover] = useState<FailoverPolicy>(defaultFailover);
   const [sessionType, setSessionType] = useState<SessionType>(defaultSessionType);
   const [sessionPrefix] = useState(() => randomPrefix());
   const [generated, setGenerated] = useState<string[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  // TTL override. Empty string = use default-for-rotation. The gateway
-  // clamps to [60, 2592000] regardless of what we send.
-  const [ttlSecondsRaw, setTtlSecondsRaw] = useState<string>('');
-  const ttlSeconds = useMemo(() => {
-    if (!ttlSecondsRaw.trim()) return undefined;
-    const n = Number(ttlSecondsRaw);
-    if (!Number.isFinite(n)) return undefined;
-    return Math.max(60, Math.min(2_592_000, Math.round(n)));
-  }, [ttlSecondsRaw]);
+  // Session-row lifetime. 3600 s is the gateway's own default, so that preset
+  // emits no `-ttl-` token at all — same behaviour, cleaner credential.
+  const [ttlPreset, setTtlPreset] = useState<number>(DEFAULT_TTL_SECONDS);
+  const ttlSeconds = ttlPreset === DEFAULT_TTL_SECONDS ? undefined : ttlPreset;
+
+  const isPinned = rotation === 'sticky' || rotation === 'hard';
 
   const rootStyle = useMemo<CSSProperties>(() => brandingToStyle(branding, style), [branding, style]);
+
+  // Live stock-depth for the selected country + pool. `null` whenever the host
+  // passed no `stock` prop — the whole signal then stays hidden rather than
+  // asserting a depth we don't know.
+  const routable = routableCount(stock, country, pool);
+  const depth = routable === null ? null : stockDepthFor(routable, pool);
 
   const handleGenerate = useCallback(() => {
     if (!proxyUsername || !proxyPassword) return;
@@ -386,6 +557,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
               ? carrierStock.find((c) => c.asn === carrierAsn)?.name
               : undefined,
           ipType: ipType || undefined,
+          strict,
         }),
       );
     }
@@ -395,7 +567,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
       count, country, pool, protocol, rotation, sessionType, failover, sessionPrefix,
       generatedAt: Date.now(),
     });
-  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, carrierStock, protocol, rotation, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, ipType, onSpawn]);
+  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, carrierStock, protocol, rotation, strict, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, ipType, onSpawn]);
 
   const handleCopyOne = useCallback((url: string, idx: number) => {
     void navigator.clipboard?.writeText(url);
@@ -443,8 +615,11 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
           <span className="psx-spawner-hint">1–{maxCount}</span>
         </label>
 
-        {/* Country */}
-        <label className="psx-spawner-row">
+        {/* Country + stock depth. Options are left in the caller's order: a
+            select is scanned by name, so re-sorting it by depth would make a
+            known country hard to find. The depth verdict rides ON each option
+            instead, and the selected one is restated below in colour. */}
+        <label className="psx-spawner-row psx-spawner-row-wide">
           <span>Country</span>
           <select
             value={country}
@@ -452,10 +627,42 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             className={cn('psx-select', classNames.select)}
           >
             {countries.map((c) => {
-              const meta = COUNTRY_LABELS[c.toLowerCase()] ?? { name: c.toUpperCase(), flag: '🌐' };
-              return <option key={c} value={c}>{meta.flag} {meta.name}</option>;
+              const n = routableCount(stock, c, pool);
+              const label = `${countryFlag(c)} ${countryName(c)}`;
+              if (n === null) return <option key={c} value={c}>{label}</option>;
+              return (
+                <option key={c} value={c}>
+                  {label} · {n} routable · {DEPTH_LABELS[stockDepthFor(n, pool)]}
+                </option>
+              );
             })}
           </select>
+          {depth !== null && (
+            <>
+              <span className="psx-spawner-depth" data-depth={depth} aria-live="polite">
+                <span className="psx-spawner-depth-dot" aria-hidden="true" />
+                <span className="psx-spawner-depth-count">{routable}</span>
+                <span>routable in {countryName(country)} now · {DEPTH_LABELS[depth]}</span>
+              </span>
+              {depth === 'none' && (
+                <span className="psx-spawner-hint psx-spawner-hint-danger">
+                  No routable endpoints here right now. These URLs would come back
+                  502 <code>E_NO_STOCK_COUNTRY</code> — pick another country, or switch pool.
+                </span>
+              )}
+              {(depth === 'thin' || depth === 'limited') && (
+                <span className="psx-spawner-hint psx-spawner-hint-warn">
+                  Thin stock: the gateway may reuse the same few exits, and there is
+                  little to fail over to if one drops. A country marked Strong is steadier.
+                </span>
+              )}
+              <span className="psx-spawner-legend">
+                Stock depth for the selected pool — Strong: deep, failover has room ·
+                Limited: few spares · Thin: little to fall back on. Counts are live
+                routable endpoints, never IPs.
+              </span>
+            </>
+          )}
         </label>
 
         {/* Pool */}
@@ -488,6 +695,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
               <option value="residential">Residential only — home / ISP IPs</option>
               <option value="datacenter">Datacenter only — hosting IPs</option>
             </select>
+            <span className="psx-spawner-hint">{IP_TYPE_HINTS[ipType]}</span>
           </label>
         )}
 
@@ -541,7 +749,31 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
               <option key={r.value} value={r.value}>{r.label}</option>
             ))}
           </select>
+          <span className="psx-spawner-hint">{ROTATION_HINTS[rotation]}</span>
         </label>
+
+        {/* Strict stability floor — a bare `strict` token the gateway only
+            reads for the pinning modes, so it only exists as a control there.
+            Its own row (not nested in the rotation label) because one <label>
+            may only own one control. */}
+        {isPinned && (
+          <label className="psx-spawner-row psx-spawner-row-check">
+            <span className="psx-spawner-check">
+              <input
+                type="checkbox"
+                checked={strict}
+                onChange={(e) => setStrict(e.target.checked)}
+                className={cn('psx-checkbox', classNames.input)}
+              />
+              Strict stability floor
+            </span>
+            <span className="psx-spawner-hint">
+              Only pin to endpoints with a proven IP-stability score, and weight
+              stability above load when choosing. Fewer endpoints qualify, so
+              expect thinner stock — worth it when the IP has to hold.
+            </span>
+          </label>
+        )}
 
         {/* Failover — where the gateway re-picks when the exit drops. Mirrors
             the failover control on client.proxies.sx/pool-proxy. */}
@@ -556,6 +788,10 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
               <option key={f.value} value={f.value}>{f.label}</option>
             ))}
           </select>
+          <span className="psx-spawner-hint">
+            {FAILOVER_HINTS[failover]} Auto-failover is always on — this only sets
+            how wide the replacement may be.
+          </span>
         </label>
 
         {/* Session-id mode */}
@@ -570,7 +806,38 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             <option value="same">Same sid (all share one IP)</option>
             <option value="none">Throwaway per row (distinct URLs, short-lived)</option>
           </select>
+          <span className="psx-spawner-hint">
+            {SESSION_HINTS[sessionType]} Every generated URL carries a <code>-sid-</code>,
+            which is the token that makes sticky and auto-rotation persist across
+            connections.
+          </span>
         </label>
+
+        {/* Session lifetime (`-ttl-`). Presets only: the gateway clamps to
+            60–2,592,000 s anyway, and a free-text seconds box asks a customer
+            to do arithmetic to express "a week". */}
+        {showTtlControl && (
+          <label className="psx-spawner-row psx-spawner-row-wide">
+            <span>Session lifetime</span>
+            <select
+              value={String(ttlPreset)}
+              onChange={(e) => setTtlPreset(Number(e.target.value))}
+              className={cn('psx-select', classNames.select)}
+            >
+              {TTL_PRESETS.map((t) => (
+                <option key={t.value} value={String(t.value)}>{t.label}</option>
+              ))}
+            </select>
+            <span className="psx-spawner-hint">
+              How long the gateway keeps the session row alive after the last
+              request. Raise it to survive idle gaps — at the 1 hour default a
+              sticky session left overnight is gone by morning and comes back on a
+              different endpoint. It is a row lifetime, not a promise that the exit
+              IP holds. TTL is fixed for the life of a session id: changing it
+              affects NEW sids only, so generate again for it to take effect.
+            </span>
+          </label>
+        )}
 
         <button
           type="button"

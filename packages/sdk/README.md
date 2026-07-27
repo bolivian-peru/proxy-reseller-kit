@@ -276,19 +276,62 @@ import { buildProxyUrl } from '@proxies-sx/pool-sdk';
 
 **`opts`:**
 
-| Field | Type | Example |
+> **Complete token semantics — including what each filter does when nothing
+> matches — live in [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.md).**
+> Several tokens silently widen instead of erroring; the table below flags
+> which, but the DSL doc is the authority.
+
+| Field | Type | Notes |
 |---|---|---|
-| `country` | `'us' \| 'gb' \| 'fr' \| 'nl' \| 'pl' \| 'ge'` (mbl set; peer spans 80+ countries) | `'us'` |
-| `carrier` | `string` | `'att'`, `'tmobile'` — soft preference, mostly for modems |
-| `isp` | `string` | `'tmobile'`, `'comcast'` — **hard** ISP prefix match (peer pool). Residential carrier targeting. |
-| `asn` | `number` | `21928` (T-Mobile) — **hard** exact ASN match (peer pool). Most precise; pair with `getCarrierStock()`. |
-| `ipType` | `'mobile' \| 'residential' \| 'datacenter'` | Hard IP-class filter, emits `-iptype-<v>`. `mbl` is mobile-only by construction, so this only matters for `pool: 'peer'` — use it to guarantee cellular-carrier exits vs home/ISP exits from the peer pool. Unclassified peers are excluded. |
-| `city` | `string` | `'nyc'`, `'berlin'` |
-| `sid` | `string` | `'customer-123'` (same sid + `rotation: 'sticky'` → returns to the same modem) |
-| `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'hard'` | `'sticky'` pins one modem AND the gateway smart-picks the most IP-stable one — pair with `pool: 'peer'` for a near-immutable IP. `'hard'` **pins like sticky** (NOT a new IP per request; at routing time `hard` ≡ `sticky`). `'sticky'`/`'auto*'` need a `sid` to persist. The token is `sid`, not `session` — `-session-<id>` is silently ignored (unknown token), so always use `-sid-<id>`. See [wiki: Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation). |
-| `pool` | `'mbl' \| 'peer'` | `'mbl'` (carrier modems) or `'peer'` (community network, mixed mobile + residential) |
+| `pool` | `'mbl' \| 'peer' \| 'any' \| 'best'` | `'peer'` = the flagship network (~82–120 countries, mixed mobile + residential). `'mbl'` = our carrier modems, exactly 6 countries. |
+| `country` | `'us' \| 'gb' \| 'fr' \| 'nl' \| 'pl' \| 'ge'` and more | Those 6 are the **`mbl`** set; `peer` spans far more. **`'ge'` is Georgia** — Germany is `'de'`, which has no `mbl` stock (`mbl-de` always fails; use `pool: 'peer'`). |
+| `carrier` | `string` | `'att'`, `'tmobile'` — **soft.** If nothing matches, the gateway **retries without it and serves a different carrier as a `200`.** Set `failover: 'samecarrier'` or `'strict'` to make it binding. |
+| `isp` | `string` | `'tmobile'`, `'comcast'` — **hard** slugified match (peer pool). No match → `E_NO_STOCK_COUNTRY` 502. |
+| `asn` | `number` | `21928` (T-Mobile) — **hard** exact match. No match → 502. Most precise; pair with `getCarrierStock()`. |
+| `ipType` | `'mobile' \| 'residential' \| 'datacenter'` | **Hard** class filter, emits `-iptype-<v>`. `mbl` is mobile-only by construction, so this mainly matters for `pool: 'peer'`. Unclassified peers are excluded. No match → 502. |
+| `city` | `string` | `'nyc'`, `'berlin'` — **soft, ranking bonus only.** It never excludes anyone; no match silently yields any city in the country. Prefer `carrier`/`isp`/`asn` for real precision. |
+| `sid` | `string` | Session name, `[a-z0-9_]{1,64}`, **no hyphens** — validated at build time (throws `ProxiesConfigError`). **Required for `sticky`/`auto*` to persist across connections.** A sid *alone* is not sticky — with no `rotation` you still get the gateway default `auto10`. |
+| `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'hard'` | `'sticky'` pins the **device** and weights IP-stability. `'hard'` **pins like sticky** — NOT a new IP per request. **`'none'` emits no token, so the gateway default `auto10` applies (~10 min)** — it is not "no rotation". Needs a `sid` to persist. |
+| `strict` | `boolean` | Emits the bare `-strict` flag. Only active with `'sticky'`/`'hard'`: adds a hard IP-stability floor and heavier stability weighting. No-op for `auto*`/`ondemand`. |
+| `failover` | `'any' \| 'samecountry' \| 'samecarrier' \| 'samenode' \| 'strict'` | Substitution scope when the chosen endpoint is unavailable. `'samecountry'` is the gateway default and is omitted from the URL. `'strict'` disables substitution and fails clean. |
+| `ttl` | `number` (seconds) | Session-row lifetime, clamped 60 – 2,592,000. **Immutable for a live `sid`** — changing it does nothing until that row expires; use a new `sid`. Not an IP-hold guarantee. |
+| `pin` | `{ type: 'lease' \| 'device' \| 'port'; id: string }` | Pin one endpoint. Use `'lease'` for [Reserved IPs](../../docs/RESERVED-IPS.md) — it survives rotation; `'device'` bakes a mutable id into the credential. `id` is validated (`[a-z0-9_]{1,64}`) because the gateway does **not** sanitize it: a stray `-` truncates the token and the pin silently resolves to nothing. |
 | `protocol` | `'http' \| 'socks5'` | `'http'` (port 7000) or `'socks5'` (port 7001) |
 | `host` | `string` | Override gateway host, e.g. `'edge-eu.proxies.sx'` |
+
+**Sticky pins the DEVICE, not the IP.** Mobile carriers re-NAT held modems.
+For a held address, in increasing strength: `pool: 'peer'` + `rotation:
+'sticky'` → add `strict: true` → lease a
+[Reserved IP](../../docs/RESERVED-IPS.md). See
+[wiki: Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
+
+```ts
+// The strongest IP-hold this DSL can express
+const url = proxies.buildProxyUrl(pakKey, {
+  pool: 'peer',
+  country: 'us',
+  sid: 'cust_8f3a21bd',
+  rotation: 'sticky',
+  strict: true,
+});
+// → "http://psx_abc123-peer-us-sid-cust_8f3a21bd-rot-sticky-strict:pak_…@gw.proxies.sx:7000"
+
+// A Reserved IP — pinned by lease, survives rotation
+const reserved = proxies.buildProxyUrl(pakKey, {
+  pool: 'peer',
+  country: 'us',
+  sid: 'res01',
+  rotation: 'sticky',
+  pin: { type: 'lease', id: 'l23d4e83c5b' },
+});
+```
+
+**Prove it routes before shipping it** — a URL that compiles is not a URL that
+authenticates:
+
+```bash
+curl -x "http://<username>:<pak>@gw.proxies.sx:7000" https://api.ipify.org
+```
 
 #### Carrier / ASN targeting (peer pool)
 
@@ -365,10 +408,11 @@ export default async function DashboardPage() {
     proxyUsername: process.env.PROXIES_SX_USERNAME!,
   });
 
-  const key = await proxies.poolKeys.update(customer.pakKeyId, {}); // no-op fetch to get latest usage
+  const key = await proxies.poolKeys.get(customer.pakKeyId); // read — don't write to read
   const url = proxies.buildProxyUrl(customer.pakKey, {
+    pool: 'peer',
     country: 'us',
-    sid: customer.id,
+    sid: customer.id,   // required for stickiness to persist across connections
     rotation: 'sticky',
   });
 
@@ -469,17 +513,23 @@ curl -X POST https://api.proxies.sx/v1/reseller/pool-keys \
 # { "id": "...", "key": "pak_...", "label": "...", "trafficCapGB": 10, ... }
 ```
 
-**The proxy URL itself is plain HTTP Basic auth** — works with any HTTP/SOCKS5 client in any language. The username carries optional config tokens:
+**The proxy URL itself is plain HTTP Basic auth** — works with any HTTP/SOCKS5 client in any language. The username carries optional config tokens, and **the `pak_` is the password, never the username**:
 
 ```
-http://psx_RESELLER_USERNAME-mbl-us-sid-alice_session1-rot-sticky:pak_CUSTOMER_KEY@gw.proxies.sx:7000
+http://psx_RESELLER_USERNAME-peer-us-sid-alice_session1-rot-sticky:pak_CUSTOMER_KEY@gw.proxies.sx:7000
+       └──────────────── username ────────────────────────────────┘ └── password ──┘
 ```
 
-Token format inside the username (separated by `-`):
-- `mbl` / `peer` — pool type (mobile modems vs the flagship peer network). mbl countries: `us` / `gb` / `fr` / `nl` / `pl` / `ge`; peer spans 80+.
-- `sid-<id>` — sticky session id (same `sid` = same exit IP for the session). The token is `sid`, not `session` — `-session-<id>` is silently ignored (unknown token), so always use `-sid-<id>`.
-- `rot-sticky` / `rot-auto5` / `rot-auto10` / `rot-auto20` / `rot-auto60` / `rot-ondemand` / `rot-hard` — rotation mode. `sticky`/`hard` pin the modem (gateway smart-picks the most IP-stable; `hard` ≡ `sticky`, NOT a new IP per request); `auto*` swap every N min. Needs `-sid-` to persist.
-- `city-<name>` / `carrier-<name>` — optional filters
+Token summary (separated by `-`) — **full reference, including what each filter
+does when nothing matches, in [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.md)**:
+
+- `peer` / `mbl` / `any` — pool. `peer` is the flagship network (~82–120 countries); `mbl` is our carrier-modem tier, exactly `us` `gb` `fr` `nl` `pl` `ge`. **`ge` is Georgia**; Germany is `de` and has no `mbl` stock.
+- `sid-<id>` — session name, `[a-z0-9_]{1,64}`, no hyphens. **Required for stickiness to persist across connections**, but not sufficient on its own. The token is `sid`, not `session` — `-session-<id>` is silently skipped.
+- `rot-sticky` / `rot-auto5|10|20|60` / `rot-ondemand` / `rot-hard` — `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, NOT a new IP per request); `auto*` re-pick every N min. **Omit the token and the gateway default `auto10` applies** — omitting is not "no rotation".
+- `strict` — bare flag; hardens `sticky`/`hard` with an IP-stability floor.
+- `iptype-<class>` / `isp-<slug>` / `asn-<n>` — **hard** filters; no match returns 502.
+- `carrier-<name>` / `city-<name>` — **soft**; they can silently widen. Pair `carrier` with `failover-samecarrier` to make it binding.
+- `failover-<policy>` / `ttl-<seconds>` / `pin-<type>-<id>` — substitution scope, session-row TTL (immutable once the session exists), and endpoint pinning.
 
 ### Examples in other languages
 

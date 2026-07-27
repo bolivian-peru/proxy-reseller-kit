@@ -95,10 +95,10 @@ The component is strictly UI — it knows nothing about `api.proxies.sx`. Your A
 | Prop | Type | Default | Description |
 |---|---|---|---|
 | `apiRoute` | `string` | `"/api/pool"` | Base path of your mounted handlers |
-| `countries` | `Country[]` | `['us','gb','fr','nl','pl','ge']` | Countries the dropdown offers |
+| `countries` | `Country[]` | `['us','gb','fr','nl','pl','ge']` | Countries the dropdown offers. That default is the **`mbl`** (carrier-modem) set; the `peer` pool spans far more, so widen this if you lead with peer. **`ge` is Georgia** — Germany is `de` and has no `mbl` stock. |
 | `defaultCountry` | `Country` | first in `countries` | |
 | `defaultProtocol` | `'http' \| 'socks5'` | `'http'` | |
-| `defaultRotation` | `RotationMode` | `'none'` | |
+| `defaultRotation` | `RotationMode` | `'none'` | `'none'` emits **no** `-rot-` token, so the **gateway default `auto10` applies** — a different endpoint roughly every 10 min. It is not "no rotation". Use `'sticky'` (plus a `sid`) to hold a device. |
 | `defaultFailover` | `FailoverPolicy` | `'samecountry'` | Failover scope when the exit drops; emits `-failover-<v>` (samecountry omitted). |
 | `showStock` | `boolean` | `true` | Show the live-endpoints indicator |
 | `showIncidents` | `boolean` | `true` | Show an incident banner when active |
@@ -176,7 +176,12 @@ Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation
 | `same` | All rows share the same `-sid-<prefix>` | All rows land on the SAME modem — useful when many parallel sockets from one customer should share one exit |
 | `none` | Each row gets a random `-sid-<row-specific>` | Same as `unique` in practice — every row distinct (we always emit a sid; "none" just means "you didn't pick a prefix") |
 
-**Sticky semantics (#295 Phase 1, May 2026):** when `defaultRotation="sticky"` or `"hard"`, the gateway weighs IP-stability heavily when picking each row's modem — you get the modems whose carrier holds their egress IP best. Note that mobile CGNAT can still rotate the IP even on a held modem (the gateway pins the MODEM, not the IP). For workflows that need a truly immutable IP, switch `defaultPool="peer"` (the community SDK network — real home/ISP IPs hold for hours-to-days). Full Layer-1-vs-Layer-2 explanation: [wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
+**Sticky semantics:** with `defaultRotation="sticky"` or `"hard"` the gateway weights IP-stability when picking each row's device — you get the devices whose carrier holds an egress IP best. `hard` **pins like sticky**; it is not "a new IP per request". Two caveats worth surfacing in your own UI copy:
+
+- **Sticky pins the DEVICE, not the IP.** Mobile CGNAT can re-NAT a held modem. For a held address prefer `defaultPool="peer"` (home/ISP peers hold for hours-to-days), or lease a [Reserved IP](../../docs/RESERVED-IPS.md).
+- **Stickiness needs a `-sid-`.** The spawner always emits one, so its output is fine — but a hand-built string with `-rot-sticky` and no `-sid-` starts a fresh session on every connection and looks broken.
+
+Full token semantics, including which filters silently widen when nothing matches: [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.md). Layer-1-vs-Layer-2 explanation: [wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
 ### `<ActiveSessionsTable>` — live session manager (v0.4.0+)
 
@@ -267,41 +272,20 @@ across modems + verified peers with automatic failover.
 
 `export const { GET, POST, DELETE } = createPoolApiHandlers({...})`.
 
-#### Session routes — multi-tenant security (REQUIRED on 0.5.x)
+#### Session routes — multi-tenant security
 
-`/me` and `/regenerate` are scoped to the caller via `getUserKeyId`. **The
-`/my-sessions` routes are NOT.** On the published 0.5.x SDK the underlying
-`sessions.list()/close()/closeAll()` take no arguments and `ActiveSession` has no
-`pakKeyId`, so the handlers operate across **every** session under your `psx_`
-API key. A signed-in customer can call these routes directly (cookie auth) and
-**list, close, or wipe other customers' sessions** — even with the UI removed,
-the routes stay mounted.
+Every route above is scoped to the caller via `getUserKeyId`, including
+`/my-sessions`: since **0.6.0** the handlers thread the caller's `pakId` into
+`sessions.list({ pakId })` / `close(key, { pakId })` / `closeAll({ pakId })`,
+and `ActiveSession` carries `pakKeyId`. Mounting them on a multi-tenant customer
+dashboard is safe.
 
-**If your app is multi-tenant (each end-customer has their own `pak_`), lock the
-session routes down at your route layer until you upgrade to 0.6.x:**
-
-```ts
-const base = createPoolApiHandlers({ proxies, getSessionUserId, getUserKeyId, gatewayHost });
-const isSessionPath = (req: Request) => /\/my-sessions(?:\/|$)/.test(new URL(req.url).pathname);
-
-export async function GET(req: Request) {
-  if (isSessionPath(req))
-    return Response.json({ sessions: [], count: 0 }, { headers: { 'Cache-Control': 'private, no-store' } });
-  return base.GET(req);
-}
-export async function DELETE(req: Request) {
-  if (isSessionPath(req)) return Response.json({ error: 'session_management_disabled' }, { status: 403 });
-  return base.DELETE(req);
-}
-export const POST = base.POST;
-```
-
-Sessions still auto-expire via the gateway's Redis TTL, so customers lose nothing
-functional — only the manual session panel, which returns when **0.6.x** ships
-(`sessions.list({ pakId })` + `ActiveSession.pakKeyId` + `createPoolApiHandlers`
-auto-threading `getUserKeyId` into every session route). Single-tenant/admin apps
-(one operator viewing all sessions) can mount the routes as-is. Full copy-paste
-guidance for non-React stacks: `RESELLER-UPDATE-PROMPT` in the repo root.
+> ⚠️ **Only if you are pinned to the legacy `0.5.x` packages:** those session
+> routes took no arguments and operated across **every** session under your
+> `psx_` API key, so any signed-in customer could list, close, or wipe another
+> customer's sessions by calling the route directly. The fix is to upgrade —
+> `npm i @proxies-sx/pool-portal-react@latest` — not to work around it. Confirm
+> with `npm view @proxies-sx/pool-portal-react version`.
 
 ---
 
@@ -350,14 +334,9 @@ optional usage meter. Props: `pak` (required), `secret?` (omit to render a
 
 ## Server API reference
 
-`createPoolApiHandlers(options)` exposes these routes on whatever path you mount it:
-
-| Method | Path | Auth | Response |
-|---|---|---|---|
-| `GET` | `/me` | required | `MeResponse` — proxy URL ingredients + usage |
-| `GET` | `/stock` | public | Live endpoint counts per country |
-| `GET` | `/incidents` | public | Active gateway incidents |
-| `POST` | `/regenerate` | required | Rotates the user's `pak_` key |
+The route table lives in one place — see
+[Server handlers](#server-handlers-v040) above for every path, method, and
+scoping guarantee.
 
 ### Options
 

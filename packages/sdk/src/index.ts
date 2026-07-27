@@ -32,6 +32,10 @@ export type {
   ActiveSession,
   ActiveSessionsResponse,
   BuildProxyUrlOpts,
+  // Exported so a consumer can type a pin without reaching into
+  // BuildProxyUrlOpts['pin']. The type existed but had no exported path —
+  // the same shape of gap as a cross-package contract with no owner.
+  PinConfig,
   PoolStock,
   CarrierStock,
   CarrierStockEntry,

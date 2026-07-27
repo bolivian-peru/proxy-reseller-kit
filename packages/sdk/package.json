@@ -1,6 +1,6 @@
 {
   "name": "@proxies-sx/pool-sdk",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Typed TypeScript/JavaScript SDK for the Proxies.sx Pool Gateway reseller API. Mint Pool Access Keys, build proxy URLs, and ship a reseller business.",
   "keywords": [
     "proxies",

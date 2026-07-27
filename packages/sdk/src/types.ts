@@ -306,6 +306,38 @@ export interface TopUpPoolAccessKeyInput {
   idempotencyKey?: string;
 }
 
+/**
+ * Target of a `-pin-<type>-<id>` token — routes every request in the session to
+ * one specific endpoint instead of letting the selector choose.
+ *
+ * - `port` / `device` — a specific modem. Ids come from support; you cannot
+ *   derive them.
+ * - `lease` — a **Reserved IP** lease (the Private Pool product). The gateway
+ *   resolves the lease id through a platform-owned pointer to whichever
+ *   endpoint the lease currently holds, so the credential keeps working when
+ *   the lease is moved to a different modem. Lease ids look like
+ *   `l23d4e83c5b`: the letter `l` followed by 8–12 lowercase letters/digits.
+ *
+ * **The id is the one DSL value the gateway does NOT sanitize** — it is read
+ * raw out of the username. A hyphen inside it splits the token, and an
+ * unresolvable pin does not error: the request silently falls through to
+ * ordinary shared selection, which for a Reserved IP is worse than no pin at
+ * all. {@link buildProxyUrl} therefore validates the id at build time and
+ * throws {@link ProxiesConfigError}.
+ *
+ * @since 0.10.0 — `lease` added.
+ */
+export interface PinConfig {
+  /** What the id refers to. `lease` = Reserved IP; `port`/`device` = a specific modem. */
+  type: 'port' | 'device' | 'lease';
+  /**
+   * The pin target id. `[a-z0-9_]`, 1–64 chars, no hyphen. For
+   * `type: 'lease'` it must additionally match the lease shape
+   * `^l[a-z0-9]{8,12}$` — the gateway returns no endpoint for any other shape.
+   */
+  id: string;
+}
+
 /** Optional tokens appended to the proxy username. All fields are optional. */
 export interface BuildProxyUrlOpts {
   /** ISO country code. If omitted, any country in the pool is eligible. */
@@ -341,13 +373,52 @@ export interface BuildProxyUrlOpts {
    * Session-row TTL in seconds. Clamped to 60..2,592,000 (1 min – 30 days)
    * before emitting `-ttl-<n>`. This is the session-row lifetime, NOT an
    * IP-hold guarantee — carrier CGNAT may re-NAT the exit IP within the TTL.
+   *
+   * **TTL is fixed for the life of a session row.** The gateway stamps the TTL
+   * when the row is created and every subsequent request re-expires the row
+   * using that *stored* value. Changing `ttl` on a URL that reuses an existing
+   * `sid` therefore does nothing until the old row dies of its own accord. To
+   * change the TTL immediately, change the `sid` too — a new sid creates a new
+   * row and takes effect on the next connection.
    */
   ttl?: number;
   /**
-   * Pin to a specific port or device. Emits `-pin-<type>-<id>` (the gateway
-   * consumes the next two parts). Advanced — device/port ids come from support.
+   * Pin every request to one endpoint — a specific modem (`port` / `device`)
+   * or a Reserved IP lease (`lease`). Emits `-pin-<type>-<id>`; the gateway
+   * consumes the next two parts. See {@link PinConfig} for the id rules
+   * (they are validated at build time — an unresolvable pin does not error at
+   * the gateway, it silently falls back to shared selection).
    */
-  pin?: { type: 'port' | 'device'; id: string };
+  pin?: PinConfig;
+  /**
+   * Request the **strict** variant of endpoint pinning: emits the bare `strict`
+   * token, e.g. `-rot-sticky-strict`.
+   *
+   * Not to be confused with {@link BuildProxyUrlOpts.failover} `'strict'` —
+   * a different feature that emits `-failover-strict` and controls whether the
+   * gateway may substitute another endpoint when the chosen one dies. The two
+   * are independent and can be combined.
+   *
+   * What it does: the gateway applies a hard minimum IP-stability floor
+   * (`ipStabilityScore >= 40`) and weights stability more heavily during
+   * selection, so you land on the calmest modem available rather than merely a
+   * healthy one. Because it narrows the candidate set, a thin country may
+   * return "no endpoint" where a non-strict request would have succeeded.
+   *
+   * **Only honored under `rotation: 'sticky'` or `'hard'`** — the gateway gates
+   * it behind pinning mode. {@link buildProxyUrl} silently omits the token for
+   * every other rotation mode rather than emitting noise (or throwing: the SDK
+   * is never stricter than the self-healing gateway parser).
+   *
+   * It does not change the stickiness contract: sticky pins the **modem**, not
+   * the IP — mobile carrier CGNAT can still re-NAT the exit IP mid-session.
+   * Strict buys you the modem with the calmest observed rotation history, not
+   * an immutable IP. For an IP that must hold across a whole workflow, use a
+   * `peer` residential endpoint or a Reserved IP lease ({@link PinConfig}).
+   *
+   * @since 0.10.0
+   */
+  strict?: boolean;
   /** Session ID — same sid → same endpoint (with `rotation: 'sticky'`). Keep stable per workflow. */
   sid?: string;
   /** Rotation policy. See {@link RotationMode}. */

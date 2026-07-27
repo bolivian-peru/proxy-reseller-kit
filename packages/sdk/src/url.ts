@@ -1,4 +1,4 @@
-import type { BuildProxyUrlOpts } from './types';
+import type { BuildProxyUrlOpts, PinConfig } from './types';
 import { ProxiesConfigError } from './errors';
 
 /** Default Pool Gateway host. Override via {@link ClientConfig.gatewayHost}. */
@@ -9,6 +9,86 @@ export const HTTP_PORT = 7000;
 
 /** SOCKS5 proxy port on {@link GATEWAY_HOST}. */
 export const SOCKS5_PORT = 7001;
+
+/**
+ * Character rule every id token in the username DSL must satisfy (`sid`,
+ * `pin` id). The gateway lowercases the username and splits it on `-`, then
+ * keeps only `[a-z0-9_]` per token with a 64-char cap — so anything outside
+ * this set is either mangled or mis-tokenized server-side.
+ */
+const DSL_ID_RE = /^[a-z0-9_]{1,64}$/;
+
+/**
+ * Reserved-IP lease id shape, e.g. `l23d4e83c5b`. Mirrors the gateway's own
+ * `LEASE_ID_RE` (`gateway/src/redis/endpoint-pool.ts`): a lease pin whose id
+ * fails this test resolves to NO endpoint, and the request then falls through
+ * to ordinary shared selection instead of erroring.
+ */
+const LEASE_ID_RE = /^l[a-z0-9]{8,12}$/;
+
+/**
+ * Validate a sticky-session id against the gateway's token grammar.
+ *
+ * The gateway lowercases the proxy username and splits it on `-`, so a sid may
+ * only contain `[a-z0-9_]` and must be 1–64 chars. Anything else (uppercase,
+ * spaces, a hyphen, punctuation) is silently mangled or mis-tokenized
+ * server-side — producing the wrong session, or a CONNECT 400. Surface that at
+ * build time with a precise message instead of at runtime.
+ */
+function validateSid(sid: string): void {
+  if (!DSL_ID_RE.test(sid)) {
+    throw new ProxiesConfigError(
+      `buildProxyUrl: invalid sid ${JSON.stringify(sid)} — a session id must be 1–64 ` +
+        `characters of lowercase letters, digits, or underscores ([a-z0-9_]) and cannot ` +
+        `contain a hyphen. Use a stable per-customer id such as "cust_8f3a21bd".`,
+    );
+  }
+}
+
+/**
+ * Validate a `-pin-<type>-<id>` target.
+ *
+ * The pin id is the ONE value in the DSL the gateway does not sanitize — it is
+ * read raw out of the username. So a hyphen truncates it, and a pin that fails
+ * to resolve is NOT an error server-side: the request silently falls through to
+ * ordinary shared selection. For a Reserved IP that is worse than no pin at
+ * all (the customer pays for a held endpoint and quietly gets a random one), so
+ * both failure modes are caught here at build time.
+ */
+function validatePin(pin: PinConfig): void {
+  if (!DSL_ID_RE.test(pin.id)) {
+    throw new ProxiesConfigError(
+      `buildProxyUrl: invalid pin id ${JSON.stringify(pin.id)} for pin type ` +
+        `"${pin.type}" — a pin id must be 1–64 characters of lowercase letters, digits, ` +
+        `or underscores ([a-z0-9_]) and cannot contain a hyphen: the gateway reads the ` +
+        `pin id raw, so a hyphen splits the token and the pin resolves to nothing — the ` +
+        `request then routes to an ordinary shared endpoint with no error. Port/device ` +
+        `ids come from support; a Reserved-IP lease id looks like "l23d4e83c5b".`,
+    );
+  }
+  if (pin.type === 'lease' && !LEASE_ID_RE.test(pin.id)) {
+    throw new ProxiesConfigError(
+      `buildProxyUrl: invalid Reserved-IP lease id ${JSON.stringify(pin.id)} — a lease ` +
+        `id is the letter "l" followed by 8–12 lowercase letters or digits, e.g. ` +
+        `"l23d4e83c5b". The gateway resolves the lease through its lease→endpoint ` +
+        `pointer and returns no endpoint for any other shape, so the pin would silently ` +
+        `fall back to shared selection. Use the id from the lease record as-is — do not ` +
+        `prefix, truncate, or hyphenate it.`,
+    );
+  }
+}
+
+/**
+ * Slugify a free-text DSL value (carrier / isp / city) into a single safe
+ * token. The gateway lowercases the whole username, splits on `-`, then keeps
+ * only `[a-z0-9_]` per token (max 64). So a value must contain no `-`, space,
+ * or punctuation or it mis-tokenizes BEFORE the gateway sanitizes it (e.g.
+ * "T-Mobile US" -> would split into "t"/"mobile us"). Matches the spawner's
+ * `slugifyDsl`, so both URL builders treat carrier/isp/city identically.
+ */
+function slugToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 64);
+}
 
 /**
  * Build a proxy URL from a reseller `proxyUsername` and a customer `pak_` key.
@@ -43,7 +123,9 @@ export const SOCKS5_PORT = 7001;
  * `rotation: 'sticky'` (ultra-stable carrier modems). The `peer` pool is the
  * flagship community network (mixed mobile + residential across 80+ countries);
  * its residential IPs hold longer, but per-endpoint reliability varies, so for a
- * guaranteed held IP a dedicated modem is the strongest option.
+ * guaranteed held IP a dedicated modem is the strongest option. `strict: true`
+ * tightens the pick further (see {@link BuildProxyUrlOpts.strict}); a Reserved
+ * IP lease (`pin: { type: 'lease', … }`) is the only held-endpoint guarantee.
  *
  * **Reliability / auto-failover (gateway-side, automatic).** Your customers do
  * not need to handle dead exits. The gateway runs connect-phase auto-failover:
@@ -77,42 +159,32 @@ export const SOCKS5_PORT = 7001;
  * // (peer = community network: real mobile + residential home IPs)
  * ```
  *
+ * @example Strict sticky — only the calmest modems are eligible:
+ * ```ts
+ * buildProxyUrl('psx_abc123', 'pak_xxxxxxxxxxxxxxxxxxxxxxxx', {
+ *   country: 'us',
+ *   sid: 'checkout_flow',
+ *   rotation: 'sticky',
+ *   strict: true,
+ * });
+ * // → "…-sid-checkout_flow-rot-sticky-strict:pak_...@gw.proxies.sx:7000"
+ * // Narrower candidate set: a thin country may return no endpoint.
+ * ```
+ *
+ * @example Reserved IP (Private Pool lease) — the held-endpoint product:
+ * ```ts
+ * buildProxyUrl('psx_abc123', 'pak_xxxxxxxxxxxxxxxxxxxxxxxx', {
+ *   country: 'us',
+ *   pin: { type: 'lease', id: 'l23d4e83c5b' },
+ * });
+ * // → "…-mbl-us-pin-lease-l23d4e83c5b:pak_...@gw.proxies.sx:7000"
+ * ```
+ *
  * @param proxyUsername Your reseller identifier, e.g. `psx_abc123`.
  * @param pakKey        Customer's Pool Access Key, e.g. `pak_...`.
  * @param opts          Optional tokens — country, rotation, etc.
  * @returns A complete proxy URL suitable for `curl --proxy`, Python `requests`, etc.
  */
-/**
- * Validate a sticky-session id against the gateway's token grammar.
- *
- * The gateway lowercases the proxy username and splits it on `-`, so a sid may
- * only contain `[a-z0-9_]` and must be 1–64 chars. Anything else (uppercase,
- * spaces, a hyphen, punctuation) is silently mangled or mis-tokenized
- * server-side — producing the wrong session, or a CONNECT 400. Surface that at
- * build time with a precise message instead of at runtime.
- */
-function validateSid(sid: string): void {
-  if (!/^[a-z0-9_]{1,64}$/.test(sid)) {
-    throw new ProxiesConfigError(
-      `buildProxyUrl: invalid sid ${JSON.stringify(sid)} — a session id must be 1–64 ` +
-        `characters of lowercase letters, digits, or underscores ([a-z0-9_]) and cannot ` +
-        `contain a hyphen. Use a stable per-customer id such as "cust_8f3a21bd".`,
-    );
-  }
-}
-
-/**
- * Slugify a free-text DSL value (carrier / isp / city) into a single safe
- * token. The gateway lowercases the whole username, splits on `-`, then keeps
- * only `[a-z0-9_]` per token (max 64). So a value must contain no `-`, space,
- * or punctuation or it mis-tokenizes BEFORE the gateway sanitizes it (e.g.
- * "T-Mobile US" -> would split into "t"/"mobile us"). Matches the spawner's
- * `slugifyDsl`, so both URL builders treat carrier/isp/city identically.
- */
-function slugToken(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 64);
-}
-
 export function buildProxyUrl(
   proxyUsername: string,
   pakKey: string,
@@ -134,6 +206,7 @@ export function buildProxyUrl(
     city,
     sid,
     rotation,
+    strict,
     failover,
     ttl,
     pin,
@@ -167,11 +240,23 @@ export function buildProxyUrl(
   if (rotation && rotation !== 'none' && rotation !== 'auto10') {
     tokens.push('rot', rotation);
   }
+  // `strict` is a BARE token — no value — and the gateway only honors it while
+  // an endpoint is pinned (its selector gates strict behind sticky/hard mode).
+  // Under any other rotation it is dead weight, so skip it silently rather than
+  // throw: the SDK must never be stricter than the self-healing gateway parser.
+  // Emitted right after `rot` so the pair reads as `-rot-sticky-strict`.
+  if (strict && (rotation === 'sticky' || rotation === 'hard')) {
+    tokens.push('strict');
+  }
   // `samecountry` is the gateway default — only emit `-failover-` when overriding.
   if (failover && failover !== 'samecountry') tokens.push('failover', failover);
   // Pin consumes the next two parts server-side: `-pin-<type>-<id>`.
-  if (pin) tokens.push('pin', pin.type, pin.id);
+  if (pin) {
+    validatePin(pin);
+    tokens.push('pin', pin.type, pin.id);
+  }
   // Session-row TTL, clamped to the gateway's accepted range [60, 2_592_000].
+  // Immutable once the session row exists — a new `sid` is what changes it.
   if (ttl !== undefined) {
     const clampedTtl = Math.min(2_592_000, Math.max(60, Math.round(ttl)));
     tokens.push('ttl', String(clampedTtl));

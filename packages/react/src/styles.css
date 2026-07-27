@@ -32,6 +32,37 @@
   }
 }
 
+/*
+ * The same palette for the standalone components, which root on `.psx`
+ * (spawner, stock grid, sessions table, docs panel) rather than
+ * `.psx-pool-portal`. Without this, a spawner mounted on its own resolves
+ * `var(--psx-border)` to nothing, `border: 1px solid var(--psx-border)` becomes
+ * invalid at computed-value time, and the card renders with no border at all.
+ * Values are identical, so a `.psx` nested inside `.psx-pool-portal` is
+ * unchanged. Typography and width are deliberately NOT set here — standalone
+ * components inherit the host app's font and sizing.
+ */
+.psx {
+  --psx-primary: #6366f1;
+  --psx-primary-hover: #4f46e5;
+  --psx-accent: #10b981;
+  --psx-bg: #ffffff;
+  --psx-fg: #0f172a;
+  --psx-muted: #64748b;
+  --psx-border: #e2e8f0;
+  --psx-radius: 10px;
+  --psx-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  .psx {
+    --psx-bg: #0f172a;
+    --psx-fg: #f1f5f9;
+    --psx-muted: #94a3b8;
+    --psx-border: #1e293b;
+  }
+}
+
 .psx-card {
   background: var(--psx-bg);
   border: 1px solid var(--psx-border);
@@ -282,11 +313,101 @@
 }
 .psx-spawner-hint {
   font-size: 11px;
+  line-height: 1.45;
   color: var(--psx-muted);
+}
+.psx-spawner-hint code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  background: color-mix(in srgb, var(--psx-muted) 12%, transparent);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+/* Settings whose hint is a full sentence read badly in a 220px column, so
+   they take the whole row of the controls grid. */
+.psx-spawner-row-wide {
+  grid-column: 1 / -1;
 }
 .psx-spawner-generate {
   grid-column: 1 / -1;
   margin-top: 8px;
+}
+
+/* Stock depth — the country picker's decision-grade signal. Semantic colours,
+   deliberately NOT brandable: "this country is thin" must not be repainted by
+   a reseller's accent. */
+.psx-spawner-depth {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--psx-muted);
+}
+.psx-spawner-depth-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.psx-spawner-depth-count {
+  font-weight: 600;
+}
+.psx-spawner-depth[data-depth="strong"] {
+  color: #16a34a;
+}
+.psx-spawner-depth[data-depth="limited"] {
+  color: #d97706;
+}
+.psx-spawner-depth[data-depth="thin"] {
+  color: #dc2626;
+}
+.psx-spawner-legend {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--psx-muted);
+}
+.psx-spawner-hint-warn {
+  color: #b45309;
+}
+.psx-spawner-hint-danger {
+  color: #b91c1c;
+}
+@media (prefers-color-scheme: dark) {
+  .psx-spawner-depth[data-depth="strong"] {
+    color: #4ade80;
+  }
+  .psx-spawner-depth[data-depth="limited"] {
+    color: #fbbf24;
+  }
+  .psx-spawner-depth[data-depth="thin"] {
+    color: #f87171;
+  }
+  .psx-spawner-hint-warn {
+    color: #fbbf24;
+  }
+  .psx-spawner-hint-danger {
+    color: #f87171;
+  }
+}
+
+/* Checkbox setting (strict stability floor). The row has no <select>, so
+   centre it against the neighbouring controls instead of hugging the top.
+   Weight + colour come from the shared `.psx-spawner-row > span:first-child`. */
+.psx-spawner-row-check {
+  justify-content: center;
+}
+.psx-spawner-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.psx-checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--psx-primary);
 }
 .psx-spawner-output {
   border: 1px solid var(--psx-border);

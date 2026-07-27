@@ -35,8 +35,8 @@ reserved and how exclusive it can be.
 | | `-mbl-` private (Modem pool) | `-peer-` private (Peer network) |
 |---|---|---|
 | What you reserve | Dedicated 4G/5G mobile modems, **pulled out of the shared pool and exclusively yours** for the term | **Committed capacity** on the peer network - a guaranteed share under your own credentials (community-shared devices, so not locked hardware) |
-| Coverage | 6 countries (US, GB, FR, NL, PL, GE) — the curated modem fleet | 80+ countries |
-| IP behaviour | Most stable exit behaviour; `-sid-` sticky pins the modem (the carrier may still re-issue the IP) | IPs rotate naturally on the carrier - great when you *want* rotation; no on-command rotation |
+| Coverage | 6 countries (US, GB, FR, NL, PL, GE — **`ge` is Georgia**) | ~82–120 countries |
+| IP behaviour | Most stable exit behaviour; `-sid-` + `-rot-sticky` pins the modem (the carrier may still re-issue the IP) | IPs rotate naturally on the carrier - great when you *want* rotation |
 | Best for | Held sessions, consistent throughput, full isolation | Wide country reach, high-volume rotating workloads |
 | Exclusivity | Full - no other customer routes through your modems | Committed, not exclusive - peers stay part of the shared community network |
 
@@ -44,6 +44,15 @@ reserved and how exclusive it can be.
 *committed capacity*, not reserved hardware. Only the modem pool is pulled out of
 the shared pool exclusively. Never promise a peer customer "your own devices no one
 else touches" - that is the modem pool.
+
+**The one exception: Reserved IPs.** A *lease* holds one specific device -
+including a peer device - exclusively for one customer, and the credential
+(`-pin-lease-<id>`) keeps pointing at it across rotations. A lease can also be
+rotated to a different device on demand; that moves the device, and therefore the
+exit IP, but it is not a carrier-level IP reset (peers do not expose one).
+**Default leases are offline-substitutable** - if the leased device drops, the
+customer silently gets an unreserved one unless the lease was acquired with
+`failover: 'strict'`. Full guide: [`RESERVED-IPS.md`](./RESERVED-IPS.md).
 
 ---
 
@@ -108,11 +117,20 @@ curl -x "http://psx_ACCOUNT-mbl-us-sid-worker01-rot-sticky:pak_KEY@gw.proxies.sx
 curl -x "http://psx_ACCOUNT-peer-br-rot-auto10:pak_KEY@gw.proxies.sx:7000" https://api.ipify.org
 ```
 
-`-sid-<name>` for sticky sessions, `-rot-<mode>` for rotation, `-city-` / `-carrier-`
-for soft targeting - all documented in the
-[Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation)
-and [Glossary](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Glossary) wiki pages.
-(Use `-sid-`, not `-session-` - the latter is not a real token and is silently ignored.)
+`-sid-<name>` names the session, `-rot-<mode>` sets rotation, `-city-` / `-carrier-`
+are **soft** hints that silently widen when nothing matches, and `-iptype-` /
+`-isp-` / `-asn-` are **hard** filters that return 502 instead. Complete
+reference: [`USERNAME-DSL.md`](./USERNAME-DSL.md).
+
+Three things to get right in any generated string:
+
+- **Use `-sid-`, not `-session-`.** The latter is not a real token; it is
+  silently skipped and you get no stickiness.
+- **Sticky needs both tokens.** `-sid-` alone still soft-rotates on the gateway
+  default `auto10` (~10 min). Pair it with `-rot-sticky`.
+- **Sticky pins the device, not the IP.** See
+  [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation)
+  and the [Glossary](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Glossary).
 
 ---
 

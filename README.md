@@ -17,6 +17,19 @@
 
 ---
 
+## 📚 In-repo reference
+
+| Doc | What it answers |
+|---|---|
+| **[`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md)** | **The complete proxy-username grammar — all 15 tokens, hard vs soft, and what each does when nothing matches.** Start here for anything routing-related. |
+| [`docs/RESERVED-IPS.md`](./docs/RESERVED-IPS.md) | Exclusively leased devices: lifecycle, the offline-substitution caveat, how to resell it |
+| [`docs/PRIVATE-POOL.md`](./docs/PRIVATE-POOL.md) | Reserved / committed capacity as a premium tier |
+| [`docs/MIGRATION-DSL-COMPLETENESS.md`](./docs/MIGRATION-DSL-COMPLETENESS.md) | Upgrading an existing integration + every documentation correction |
+| [`docs/TWO-SIDED-DASHBOARD.md`](./docs/TWO-SIDED-DASHBOARD.md) | Admin-side vs customer-side architecture |
+| [`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md) | Accept USDC from AI agents |
+
+---
+
 ## 📖 Wiki — operational and conceptual docs
 
 Long-form docs that don't belong inline with code live in the **[wiki](https://github.com/bolivian-peru/proxy-reseller-kit/wiki)**:
@@ -62,30 +75,34 @@ This repo takes care of the **software** — SDK, drop-in React component, full 
 
 ## Two device networks, one gateway
 
-The same gateway endpoint (`gw.proxies.sx:7000` HTTP / `:7001` SOCKS5) routes through either of two device networks — your customer chooses by a token in their proxy username. Same credentials, same DSL, same `$4/GB` — only the device pool differs.
+The same gateway endpoint (`gw.proxies.sx:7000` HTTP / `:7001` SOCKS5) routes through either of two device networks — your customer chooses by a token in their proxy username. Same credentials, same DSL, same **$4/GB (volume-discounted to $2.40/GB at 250 GB+; duration is free)** — only the device pool differs.
 
-| Token | Network | Status | Best for |
+| Token | Network | Countries | Best for |
 |---|---|---|---|
-| **`-mbl-`** | **Mobile** (our own fleet of stable 4G/5G mobile-carrier devices) | **Production · recommended** | Workloads that need consistent speed and uptime. Monitored quality, predictable throughput. The default we suggest customers start on. |
-| **`-peer-`** | **Residential** (real home- and mobile-ISP connections from our community network) | **Growing — fleet expanding daily** | High-volume tasks where residential IPs improve success rate on consumer-facing sites that profile mobile vs residential differently. |
-| **`-any-`** | Auto-pick | — | Prefers mobile; falls back to residential when mobile is fully utilized in the requested country. |
+| **`-peer-`** | **The flagship network.** Community devices sharing bandwidth — **mixed mobile + residential home/ISP**, not residential-only. | ~82–120, varies with live supply | The primary product. Widest reach, and home-ISP IPs hold addresses for hours-to-days. Lead with this. |
+| **`-mbl-`** | **The supportive carrier-modem tier.** Our own 4G/5G ProxySmart modems, monitored quality. | exactly 6: `us` `gb` `fr` `nl` `pl` `ge` | When a customer needs guaranteed, ultra-stable carrier modems and can live inside six countries. |
+| **`-any-`** / **`-best-`** | No pool filter — the selector picks on health and load across both. | union of the two | "Just give me a working IP." |
+
+> **`ge` is GEORGIA, not Germany.** Germany is `de`, and `de` has **no `mbl` stock** — `mbl-de` always fails. Use `peer-de`.
 
 Example proxy URLs (same `pak_` everywhere — only the token changes):
 
 ```bash
-# Mobile (default, production)
-curl -x http://psx_xxx-mbl-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org
-
-# Residential (growing community network)
+# Peer — the flagship network
 curl -x http://psx_xxx-peer-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org
 
-# Auto-pick — prefer mobile, fall back to residential
+# Carrier modems — the supportive tier
+curl -x http://psx_xxx-mbl-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org
+
+# Auto-pick across both
 curl -x http://psx_xxx-any-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org
 ```
 
-The reseller kit exposes the pool toggle in `<PoolSessionSpawner>` and `<PoolDocsPanel>`; if you build your own UI, just include the token when constructing the username via `buildProxyUrl` / `buildProxyString` (see `@proxies-sx/pool-sdk`).
+**Per-pool country stock differs.** A country can have modems but no peers, or the reverse. Filter your country picker by the selected pool — `<PoolStockGrid>` and `<PoolSessionSpawner>` model this; live counts (never IPs) come from `GET /v1/gateway/pool/availability`.
 
-**Which pool for sticky-IP workflows?** Sticky pins the **modem**, not the IP — mobile carriers can rotate egress IPs via CGNAT even on a held modem (the gateway smart-picks the most IP-stable modem available, but the carrier always has the final say). For workflows that need a TRULY immutable IP (cf_clearance, banking, mTLS bound to source IP), use `-peer-` — residential ISPs hold IPs hours-to-days. Full Layer-1-vs-Layer-2 explanation in the wiki: [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
+The reseller kit exposes the pool toggle in `<PoolSessionSpawner>` and `<PoolDocsPanel>`; if you build your own UI, include the token when constructing the username via `buildProxyUrl` / `buildProxyString` (see `@proxies-sx/pool-sdk`).
+
+**Which pool for sticky-IP workflows?** Sticky pins the **device**, not the IP — mobile carriers re-NAT egress IPs even on a held modem (the gateway weights IP-stability when selecting, but the carrier has the final say). For workflows needing a held IP (cf_clearance, banking, mTLS bound to source IP): use `-peer-` with `-rot-sticky`, add the `strict` flag for a hard stability floor, or lease a **[Reserved IP](./docs/RESERVED-IPS.md)** for an exclusively held device. Full token semantics: **[`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md)**. Layer-1-vs-Layer-2 explanation: [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
 **Reliability — auto-failover is built in (nothing for you or your customers to handle).** The gateway runs connect-phase auto-failover: if the modem it selects has dropped, that modem is demoted from the pool and a healthy one is retried *before any response is returned* — this is what prevents the occasional `503 / temporarily unavailable`. Your customer controls how wide the replacement may be with the `-failover-` token (`samecountry` default, `samecarrier`, `samenode`, `any`, or `strict` to disable substitution and fail clean). SOCKS5 (`:7001`) additionally falls back to a modem's HTTP CONNECT path (`:7000`) if its SOCKS service is briefly down, so **both ports are equally reliable** — pick whichever your customer's tooling prefers.
 
@@ -125,9 +142,16 @@ device-exclusivity + committed peer capacity still go through the quote flow bel
 | | `-mbl-` private | `-peer-` private |
 |---|---|---|
 | What you reserve | Dedicated 4G/5G modems, removed from the shared pool - exclusively yours for the term | Committed capacity on the peer network - guaranteed, not exclusive |
-| Coverage | ~6 countries | 80+ countries |
-| IP behavior | Most stable; `-sid-` sticky pins the modem (the carrier may still re-issue the IP) | IPs rotate naturally on the carrier - a feature for rotation use-cases; no on-command rotation |
+| Coverage | 6 countries (US, GB, FR, NL, PL, GE) | ~82–120 countries |
+| IP behavior | Most stable; `-sid-` + `-rot-sticky` pins the modem (the carrier may still re-issue the IP) | IPs rotate naturally on the carrier - a feature for rotation use-cases |
 | Best for | Held sessions, consistent throughput, full isolation | Wide coverage, high-volume rotating workloads |
+
+**Reserved IPs** are the exception to "peer capacity is never exclusive": a lease holds
+one specific device for one customer, and the credential (`-pin-lease-<id>`) keeps
+pointing at it across rotations. A lease can also be rotated to a different device on
+demand. **By default a leased device that goes offline is silently substituted with
+unreserved shared stock** — acquire with `failover: 'strict'` to fail closed instead.
+Full guide: [`docs/RESERVED-IPS.md`](./docs/RESERVED-IPS.md).
 
 For resellers, Private Pool is the natural **premium / enterprise tier**: since it is
 quote-based rather than self-serve pak minting, surface it as a "request a quote" /
@@ -150,7 +174,7 @@ Most production resellers ship **TWO dashboards**, not one:
 
 Both share a **single backend layer** with one `ProxiesClient` instance (server-side, holds your `psx_` API key). Admin routes call SDK methods directly; customer routes go through `createPoolApiHandlers()`, which scopes `/me` and `/regenerate` to the caller via `getUserKeyId`.
 
-> ⚠️ **Multi-tenant note (published 0.5.x):** the `/my-sessions` routes from `createPoolApiHandlers()` are **not** per-customer scoped yet — on a multi-tenant customer dashboard you must lock them down at your route layer until `0.6.x` is published. See [`packages/react/README.md`](./packages/react/README.md) → "Session routes — multi-tenant security" and `RESELLER-UPDATE-PROMPT`.
+> **Multi-tenant note:** the `/my-sessions` routes from `createPoolApiHandlers()` have been per-customer scoped since **0.6.0** (they thread the caller's `pakId` via `getUserKeyId`), so they are safe to mount on a customer dashboard. Only pinned-to-0.5.x installs are affected — `npm i @proxies-sx/pool-portal-react@latest` and confirm with `npm view @proxies-sx/pool-portal-react version`.
 
 Why two: different audiences, different authz domains, different scale concerns, **catastrophically different failure modes** if you mix them (admin bug = regression; customer bug exposing other customers = P0 data leak).
 
@@ -198,12 +222,48 @@ Non-JS users: skip the npm packages and call the REST API directly. See [`SKILL.
 
 ## Show your customers HOW to use their pak (recommended)
 
-Customers who get a `pak_` and a password but don't know the username format
-(`pak_xxx-mbl-COUNTRY`) just 407 once and give up. **Conversion problem #1.**
+Customers who receive a `pak_` but don't know how to assemble the proxy string
+407 once and give up. **Conversion problem #1.**
 
-Three ways to fix it (pick one or stack them):
+The shape they need — get this wrong and nothing authenticates:
 
-**1. Drop in `<PakQuickstart>`** — React component, prefilled with the customer's actual credentials:
+```
+http://psx_YOUR_RESELLER_USERNAME-peer-us:pak_CUSTOMER_KEY@gw.proxies.sx:7000
+       └──────────── username: account + routing tokens ────┘ └─ password ─┘
+```
+
+**The `pak_` goes in the password field.** The gateway resolves the account from
+the *username* only (`proxyUsername`, then `psx_<userId>`, then e-mail) — there
+is no code path that resolves a `pak_…` username, so a `pak_xxx-mbl-us`
+username fails auth. `buildProxyUrl(proxyUsername, pakKey, opts)` builds this
+correctly for you; full grammar in
+[`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md).
+
+Three ways to get it in front of customers (pick one or stack them):
+
+**1. Build the string with the SDK** — the only path that cannot get the
+username/password split wrong:
+
+```ts
+import { buildProxyUrl } from '@proxies-sx/pool-sdk';
+
+const url = buildProxyUrl(process.env.PROXIES_SX_USERNAME!, pak.key, {
+  pool: 'peer',
+  country: 'us',
+});
+// → http://psx_acme-peer-us:pak_xxx@gw.proxies.sx:7000
+```
+
+Show that string verbatim, with a copy button, next to wherever you display the
+pak. Whatever else you build, **verify the result routes before shipping it**:
+
+```bash
+curl -x "http://<username>:<pak>@gw.proxies.sx:7000" https://api.ipify.org
+```
+
+**2. Drop in `<PakQuickstart>`** — React component that renders a 30-second
+curl, country picker, sticky toggle, copy buttons, and SOCKS5 / Python / Node /
+Playwright snippets:
 
 ```tsx
 import { PakQuickstart } from '@proxies-sx/pool-portal-react';
@@ -217,20 +277,21 @@ import '@proxies-sx/pool-portal-react/styles.css';
 />
 ```
 
-Renders: 30-second curl, country picker, sticky-session toggle, copy buttons,
-SOCKS5 + Python + Node + Playwright snippets, troubleshooting table.
-~80 lines tall, drops in next to wherever you display the pak.
+> ⚠️ **Verify the string this renders against your own account before putting it
+> in front of customers.** Run the curl above with the exact output. The
+> authoritative credential shape is `psx_<reseller>-<pool>-<cc>` as the username
+> with the `pak_` as the password — if what you see differs, prefer the
+> `buildProxyUrl` output in option 1 and
+> [open an issue](https://github.com/bolivian-peru/proxy-reseller-kit/issues).
 
-**2. Link to the hosted explainer** — for portals not built in React:
-```
-https://agents.proxies.sx/pool-quickstart.html?pak=pak_xxx&pw=YOUR_PASSWORD
-```
-The page reads `pak` and `pw` from the URL and prefills the curl. Iframe it,
-linked-button it, or paste the URL into a welcome email.
+**3. Email it on mint** — send the credentials plus a working one-liner. Even a
+single line converts far better than no email:
 
-**3. Email it on mint** — when you mint a pak, send the customer an email with
-the credentials AND a link to the quickstart. Even a single line — *"Here's
-your pak. Use it like this: `curl -x http://pak_xxx-mbl-us:PW@gw.proxies.sx:7000 https://api.ipify.org`. Full quickstart: https://agents.proxies.sx/pool-quickstart.html"* — converts ~3× better than no email.
+> *"Here's your key. Use it like this:
+> `curl -x http://psx_YOURRESELLER-peer-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org`"*
+
+Generate that line with `buildProxyUrl` rather than string-concatenating it in
+your mailer, so the email and the dashboard can never disagree.
 
 ---
 
@@ -259,21 +320,25 @@ Stripe storefront, on a different rail.
 
 ## Quickstart
 
-> **📦 Current versions on npm: `@proxies-sx/pool-sdk` 0.8.1 + `@proxies-sx/pool-portal-react` 0.9.0.**
-> Plain `npm install` now gets the latest — the GitHub-release-tarball era (0.6.x–0.8.0,
-> when npm lagged at 0.5.x) is over. Installing the React package pulls the SDK
-> automatically:
+> **📦 Install the latest — plain `npm install` gets it.** Installing the React
+> package pulls the SDK automatically:
 > ```bash
 > # Full kit (React components + SDK):
 > npm i @proxies-sx/pool-portal-react
 > # SDK only:
 > npm i @proxies-sx/pool-sdk
 > ```
+> Check what you actually got with `npm view @proxies-sx/pool-sdk version`; the
+> authoritative per-release history is each package's `CHANGELOG.md`.
+>
 > Highlights since 0.5.x: per-customer session scoping (`sessions.list({ pakId })`),
-> corrected `hard` semantics (`hard` pins like sticky, NOT
-> "new IP per request"), carrier/ASN targeting (`asn`/`isp` + `pool.getCarrierStock()`),
-> client-side `sid` validation in `buildProxyUrl`, and the `<PakQuickstart>` +
-> `usePoolCarrierStock` React additions. Full history: each package's CHANGELOG.md.
+> corrected `hard` semantics (`hard` pins like sticky, **not** "new IP per request"),
+> carrier/ASN/IP-class targeting (`asn` / `isp` / `ipType` + `pool.getCarrierStock()`),
+> client-side `sid` validation in `buildProxyUrl`, the `strict` sticky flag and
+> `pin.type: 'lease'` for Reserved IPs, plus the `<PakQuickstart>`,
+> `<PrivatePoolPanel>` and `usePoolCarrierStock` React additions.
+> Upgrading an existing integration:
+> [`docs/MIGRATION-DSL-COMPLETENESS.md`](./docs/MIGRATION-DSL-COMPLETENESS.md).
 
 ### Deploy a full storefront in 10 minutes
 

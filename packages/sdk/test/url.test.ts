@@ -127,6 +127,94 @@ describe('buildProxyUrl', () => {
     );
   });
 
+  it('emits the bare strict token under sticky / hard pinning', () => {
+    // `strict` carries no value — the gateway reads it as a single token and
+    // applies a hard ipStabilityScore floor on top of sticky selection.
+    expect(buildProxyUrl(USER, KEY, { rotation: 'sticky', strict: true })).toContain(
+      '-rot-sticky-strict',
+    );
+    expect(buildProxyUrl(USER, KEY, { rotation: 'hard', strict: true })).toContain(
+      '-rot-hard-strict',
+    );
+  });
+
+  it.each(['none', 'auto5', 'auto10', 'auto20', 'auto60', 'ondemand'] as const)(
+    'silently skips strict under rotation %s (gateway only honors it while pinned)',
+    (rotation) => {
+      expect(buildProxyUrl(USER, KEY, { rotation, strict: true })).not.toContain('-strict');
+    },
+  );
+
+  it('silently skips strict when no rotation is given (gateway default is auto10)', () => {
+    // No -rot- token means the gateway applies auto10, which is not a pinning
+    // mode — emitting strict there is noise, not an error.
+    expect(buildProxyUrl(USER, KEY, { strict: true })).not.toContain('-strict');
+    expect(buildProxyUrl(USER, KEY, { strict: false, rotation: 'sticky' })).not.toContain(
+      '-strict',
+    );
+  });
+
+  it("keeps strict and failover:'strict' as separate tokens", () => {
+    // Two different features that happen to share a word: the bare `strict`
+    // token tightens endpoint selection, `-failover-strict` disables substitution.
+    const url = buildProxyUrl(USER, KEY, {
+      country: 'us',
+      rotation: 'sticky',
+      strict: true,
+      failover: 'strict',
+    });
+    expect(url).toContain('-rot-sticky-strict-failover-strict');
+  });
+
+  it('emits -pin-lease-<id> for a Reserved IP lease', () => {
+    expect(buildProxyUrl(USER, KEY, { country: 'us', pin: { type: 'lease', id: 'l23d4e83c5b' } })).toContain(
+      '-pin-lease-l23d4e83c5b',
+    );
+  });
+
+  it('rejects a pin id the gateway would read raw and fail to resolve', () => {
+    // The pin id is the one DSL value the gateway does NOT sanitize, and an
+    // unresolvable pin falls through to shared selection with no error — so a
+    // bad id must fail here, loudly, instead of silently downgrading the route.
+    expect(() => buildProxyUrl(USER, KEY, { pin: { type: 'device', id: 'has-hyphen' } })).toThrow(
+      ProxiesConfigError,
+    );
+    expect(() => buildProxyUrl(USER, KEY, { pin: { type: 'port', id: 'UpperCase' } })).toThrow(
+      ProxiesConfigError,
+    );
+    expect(() => buildProxyUrl(USER, KEY, { pin: { type: 'device', id: '' } })).toThrow(
+      ProxiesConfigError,
+    );
+    expect(() =>
+      buildProxyUrl(USER, KEY, { pin: { type: 'device', id: 'x'.repeat(65) } }),
+    ).toThrow(ProxiesConfigError);
+  });
+
+  it('rejects a lease id that does not match the gateway lease shape', () => {
+    // Gateway: /^l[a-z0-9]{8,12}$/ — anything else resolves to no endpoint.
+    expect(() => buildProxyUrl(USER, KEY, { pin: { type: 'lease', id: 'abc123def' } })).toThrow(
+      ProxiesConfigError,
+    );
+    expect(() => buildProxyUrl(USER, KEY, { pin: { type: 'lease', id: 'l1234567' } })).toThrow(
+      ProxiesConfigError,
+    );
+    expect(() =>
+      buildProxyUrl(USER, KEY, { pin: { type: 'lease', id: `l${'a'.repeat(13)}` } }),
+    ).toThrow(ProxiesConfigError);
+    expect(() => buildProxyUrl(USER, KEY, { pin: { type: 'lease', id: 'l23d4e83c5b_' } })).toThrow(
+      ProxiesConfigError,
+    );
+  });
+
+  it('accepts the lease shape at both length bounds', () => {
+    expect(buildProxyUrl(USER, KEY, { pin: { type: 'lease', id: `l${'a'.repeat(8)}` } })).toContain(
+      '-pin-lease-laaaaaaaa',
+    );
+    expect(buildProxyUrl(USER, KEY, { pin: { type: 'lease', id: `l${'a'.repeat(12)}` } })).toContain(
+      '-pin-lease-laaaaaaaaaaaa',
+    );
+  });
+
   it('throws ProxiesConfigError on missing proxyUsername', () => {
     expect(() => buildProxyUrl('', KEY)).toThrow(ProxiesConfigError);
   });

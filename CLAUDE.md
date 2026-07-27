@@ -12,9 +12,11 @@
 
 ## The product this depends on
 
-Upstream service: **Proxies.sx Pool Gateway** at `gw.proxies.sx:7000` (HTTP) and `:7001` (SOCKS5). The **peer** network is the flagship pool — real mobile + residential IPs across 80+ countries. The **mbl** (production ProxySmart modem) tier is the supportive starter tier: 6 countries — **US, GB, FR, NL, PL, GE (Georgia)**. Wholesale pricing has volume tiers — live rates in `client.proxies.sx` dashboard. Don't hardcode prices anywhere.
+Upstream service: **Proxies.sx Pool Gateway** at `gw.proxies.sx:7000` (HTTP) and `:7001` (SOCKS5). The **peer** network is the flagship pool — mixed mobile + residential IPs across ~82–120 countries. The **mbl** (production ProxySmart modem) tier is the supportive tier: exactly 6 countries — **US, GB, FR, NL, PL, GE (Georgia — *not* Germany; `de` has no `mbl` stock)**. Both bill at $4/GB, volume-discounted to $2.40/GB at 250 GB+; duration is free. Live rates in the `client.proxies.sx` dashboard — don't hardcode prices anywhere.
 
 Reseller API: `https://api.proxies.sx/v1/reseller/pool-keys`. Auth with an API key (`psx_*`) minted at `client.proxies.sx/account` with scope `customers:write`.
+
+**The username DSL has exactly one source of truth in this repo: [`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md).** It was previously copy-pasted into five files, which drifted into contradicting each other and the gateway. When gateway routing behaviour changes, update that file and let the others keep linking to it. Do not reintroduce a second full token table.
 
 ## How auth works between the layers
 
@@ -153,6 +155,10 @@ npm publish --access public
 
 ## Key invariants
 
+0. **Never be stricter than the gateway parser.** The parser is *self-healing*: it sanitizes, aliases, and defaults every optional token and never returns 400 for a bad one. A client-side validator that rejects something the gateway would have accepted converts a working request into a build-time crash. The deliberate exceptions are `sid` and `pin.id`, which are validated precisely *because* the gateway does not fail on them — a mangled value silently routes to the wrong session or drops the pin entirely, and there is no runtime error to catch. Validate only where silence is the failure mode.
+
+0a. **A cross-package contract must name an owner for every file it touches.** The `-pin-lease-` rollout nearly shipped backend-first while nobody owned `username-parser.ts`, whose `PinConfig` lacked `'lease'` — and the parser **drops an unknown pin type silently**. Every Reserved-IP credential would have routed to a random shared exit while reporting `200`. When a change spans gateway + backend + SDK, enumerate the files first and assign each one.
+
 1. `buildProxyUrl()` output MUST be URL-encoded — username/password may contain `@`/`:` in the user's `sid` token.
 2. `pak_` keys regenerated via `regenerate()` invalidate the old value **immediately** — the old pak_ stops working mid-session.
 3. `trafficCapGB: null` means "unlimited within reseller's own pool." `0` would mean "blocked." Never confuse them.
@@ -188,9 +194,21 @@ The kit's knowledge lives in three tiers. When you change behavior, update the t
 
 | Tier | Where | Audience | Update when… |
 |---|---|---|---|
+| **Platform contract** | `docs/USERNAME-DSL.md`, `docs/RESERVED-IPS.md` | Anyone reasoning about routing | **Gateway behaviour changes.** These describe the server, not the SDK — verify every edit against gateway source and cite the file you read |
 | **Code-adjacent** | `README.md`, `packages/*/README.md`, `SKILL.md`, this file | Agents + devs integrating or extending | The API surface, invariants, or security model changes |
-| **In-repo docs** | `docs/X402-RESELLER-INTEGRATION.md`, `docs/TWO-SIDED-DASHBOARD.md`, `docs/MIGRATION-*.md` | Devs implementing a specific pattern | A pattern's shape changes, or a new version migration lands |
+| **In-repo docs** | `docs/PRIVATE-POOL.md`, `docs/X402-RESELLER-INTEGRATION.md`, `docs/TWO-SIDED-DASHBOARD.md`, `docs/MIGRATION-*.md` | Devs implementing a specific pattern | A pattern's shape changes, or a new version migration lands |
 | **Wiki** | [github.com/bolivian-peru/proxy-reseller-kit/wiki](https://github.com/bolivian-peru/proxy-reseller-kit/wiki) | Resellers (operational + conceptual) | Operational reality shifts — new error codes, country stock, sticky behavior |
+
+**Facts that keep getting written down wrong.** Each of these was live in this repo and contradicted gateway source; re-check before restating any of them:
+
+- The `pak_` is the **password**. The username is `psx_<reseller>-<pool>-<cc>-…`. No code path resolves a `pak_…` username.
+- `rot: 'none'`/omitted ⇒ the gateway default **`auto10`**, not "no rotation" and not "fresh IP per request". `hard` ≡ `sticky`.
+- `-sid-` alone is not sticky, and `-rot-sticky` alone does not persist. **Both** tokens.
+- Sticky pins the **device**, not the IP.
+- `carrier` and `city` are **soft** — they silently widen when nothing matches. `iptype`/`isp`/`asn` are hard and return 502.
+- `ttl` is immutable once a session row exists.
+- `ge` is Georgia. `mbl-de` always fails.
+- Peer is the flagship network; `mbl` is the supportive 6-country tier.
 
 **Wiki pages** (8, MVP shipped May 2026): Home, Getting-Started, Integration-Paths, Sticky-Sessions-and-Rotation, Pak-Key-Lifecycle, x402-and-Wallet-Setup, Troubleshooting, Glossary. Editable via `git clone https://github.com/bolivian-peru/proxy-reseller-kit.wiki.git` — direct push to `master`, no PR. Four more pages are tracked-but-deliberately-unbuilt (Webhooks, Migrating-From-Another-Provider, Pricing-Strategy, Per-Country-Stock); each has an explicit trigger condition and should NOT be written speculatively — wait for the real reseller question that justifies it.
 

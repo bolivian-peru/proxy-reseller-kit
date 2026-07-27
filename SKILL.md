@@ -21,9 +21,11 @@ Two pools, selected via the `pool` token in the username DSL:
 
 | Pool | What it is | Use for |
 |---|---|---|
-| `peer` | **The MAIN / flagship network** — the community SDK network of real user devices sharing bandwidth (~2,400+ routable IPs across 80+ countries). **Mixed IP types: mostly mobile + residential home/ISP** (it is NOT "residential only"). | The primary product. Widest country reach, home-ISP IP stability. Lead with peer. |
-| `mbl` | **The SUPPORTIVE starter tier** — production ProxySmart mobile modems, real 4G/5G carrier IPs in 6 countries (US, GB, FR, NL, PL, GE), monitored quality. | Ultra-stable, guaranteed carrier modems. Smaller pool — great for getting started or when a customer needs guaranteed mobile IPs. |
-| `any` / `best` | Best available across both (modems first, peers as fallback). | "Just give me a working IP." |
+| `peer` | **The MAIN / flagship network** — the community SDK network of real user devices sharing bandwidth, across ~82–120 countries depending on live supply. **Mixed IP types: mobile + residential home/ISP** (it is NOT "residential only"). | The primary product. Widest country reach, home-ISP IP stability. Lead with peer. |
+| `mbl` | **The SUPPORTIVE tier** — production ProxySmart mobile modems, real 4G/5G carrier IPs in exactly 6 countries (US, GB, FR, NL, PL, **GE = Georgia**), monitored quality. | Ultra-stable, guaranteed carrier modems. Smaller footprint — for customers who need guaranteed mobile IPs. |
+| `any` / `best` | No pool filter — the selector picks on health and load across both. | "Just give me a working IP." |
+
+**Never pin a live device count in code or copy.** Routable supply moves hourly; read it from `GET /v1/gateway/pool/availability` (counts per country, never IPs). **`ge` is Georgia** — Germany is `de`, which has **no `mbl` stock**, so `mbl-de` always fails; use `peer-de`.
 
 **Per-pool country stock is different.** A country may have modem stock but no peers, or peers but no modems. When you build a country picker, **filter the country list by the selected pool** — read the per-country `modem` and `peer` counts from `GET /v1/gateway/pool/availability` (`countries[CC].modem` / `.peer`) and only show countries with stock in the chosen pool. `<PoolStockGrid>` and `<PoolSessionSpawner>` model this; if you roll your own, do the same so users never pick a dead country.
 
@@ -44,15 +46,24 @@ within about one business day, then provisioned. Requesting a quote never charge
   the pool):
   - `mbl` - dedicated 4G/5G modems, pulled OUT of the shared pool and **exclusively**
     the customer's for the term (6 countries — US, GB, FR, NL, PL, GE (Georgia), most stable tier).
-  - `peer` - peer-network mobile IPs: **committed capacity under the customer's own
-    credentials, NOT exclusive hardware** (community-shared, 80+ countries). Peer IPs
-    rotate naturally on the carrier; there is no on-command peer IP rotation.
+  - `peer` - peer-network IPs: **committed capacity under the customer's own
+    credentials, NOT exclusive hardware** (community-shared, ~82–120 countries).
+- **Reserved IPs** are the exception to "peer is never exclusive": a lease holds ONE
+  specific device for one customer, and the credential (`-pin-lease-<id>`) keeps
+  pointing at it across rotations. A lease can also be rotated to a different device
+  on demand. Note this moves the *device*, and therefore the exit IP — it is not a
+  carrier-level IP reset, which peers do not expose. **Default leases are
+  offline-substitutable**: if the leased device drops, the customer silently gets an
+  unreserved one unless the lease was acquired with `failover: 'strict'`. Full guide:
+  [`docs/RESERVED-IPS.md`](./docs/RESERVED-IPS.md).
 - **Pricing:** traffic is identical to the shared pool ($4.00/GB base, volume discounts
-  to -40% at 250 GB/mo, billed as used, one shared GB balance covers both pools). The
-  only addition is a **monthly reservation fee** - custom-quoted per country + pool size.
-- **Honesty rules (mandatory):** never call `peer` "exclusive/reserved hardware"; never
+  to $2.40/GB at 250 GB/mo, billed as used, one shared GB balance covers both pools).
+  The only addition is a **monthly reservation fee** - custom-quoted per country + pool size.
+- **Honesty rules (mandatory):** never call committed `peer` capacity
+  "exclusive/reserved hardware" (only a *lease* is exclusive, per device); never
   show or enumerate exit IPs (counts per country only); sticky pins the device, not the
-  IP - for a held IP recommend a dedicated `mbl` modem + sticky, or a residential peer.
+  IP - for a held IP recommend a residential peer + sticky, a `-rot-sticky-strict`
+  credential, or a Reserved IP.
 - **Reseller angle:** offer Private Pool to downstream customers as a premium tier via a
   "request a quote" flow - it is quote-based, not self-serve minting. Full guide:
   [`docs/PRIVATE-POOL.md`](./docs/PRIVATE-POOL.md).
@@ -343,17 +354,19 @@ await db.update(customerId, { pakKeyId: key.id, pakKey: key.key });
 
 // 3. Build the proxy URL the customer uses in their HTTP client
 const proxyUrl = proxies.buildProxyUrl(key.key, {
+  pool: 'peer',       // the flagship network — widest country reach
   country: 'us',
-  sid: customerId,    // sticky session — pin to one modem for this customer
-  rotation: 'sticky', // gateway smart-picks the most IP-stable modem available
+  sid: customerId,    // session name — REQUIRED for stickiness to persist
+  rotation: 'sticky', // without this, the gateway default auto10 rotates ~every 10 min
 });
-// → "http://psx_abc-mbl-us-sid-cust_7a3f9b-rot-sticky:pak_xyz@gw.proxies.sx:7000"
+// → "http://psx_abc-peer-us-sid-cust_7a3f9b-rot-sticky:pak_xyz@gw.proxies.sx:7000"
 //
-// IMPORTANT: sticky pins the MODEM, not the IP. Mobile carriers can rotate
-// the modem's egress IP via CGNAT — the gateway compensates by picking the
-// most IP-stable modem available, but if your workflow requires a TRULY
-// immutable IP (cf_clearance, banking), use the residential `peer` pool
-// instead. See: https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation
+// IMPORTANT: sticky pins the DEVICE, not the IP. Mobile carriers can re-NAT a
+// held modem's egress IP — the gateway compensates by weighting IP-stability,
+// and `strict: true` adds a hard stability floor on top. Residential peers hold
+// addresses for hours-to-days. If the workflow needs a guaranteed exclusive
+// device (cf_clearance, banking), use a Reserved IP — docs/RESERVED-IPS.md.
+// Full token reference: docs/USERNAME-DSL.md
 ```
 
 **Other operations:**
@@ -558,6 +571,13 @@ resp = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
 
 ## The proxy URL grammar (every path uses this)
 
+> **Complete reference: [`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md).** It
+> documents all fifteen tokens, which are hard vs soft filters, and — most
+> importantly — **what each one does when nothing matches**. Several tokens
+> silently widen instead of erroring, so a filter can look honoured when it is
+> not. Read it before you build a picker UI or debug a "the filter is ignored"
+> report. The summary below is the working subset.
+
 The customer's HTTP/SOCKS5 client connects to:
 ```
 {protocol}://{username}:{pakKey}@gw.proxies.sx:{port}
@@ -568,39 +588,59 @@ The customer's HTTP/SOCKS5 client connects to:
 | `protocol` | `http` or `socks5` |
 | `port` | `7000` for HTTP, `7001` for SOCKS5 |
 | `username` | `psx_RESELLER_USERNAME` + optional `-`-separated tokens |
-| `pakKey` | The `pak_*` secret minted via the API |
+| `pakKey` | The `pak_*` secret minted via the API — this is the **password** |
+
+**The `pak_` is the password, never the username.** The gateway resolves the
+account from the username only (`proxyUsername`, then `psx_<userId>`, then
+e-mail); no code path resolves a `pak_…` username, so `pak_xxx-mbl-us` as a
+username fails auth. Use `buildProxyUrl(proxyUsername, pakKey, opts)`.
 
 **Tokens inside the username** (all optional, in any order, separated by `-`):
 
-| Token | Example | Meaning |
+| Token | Example | Meaning · what happens when nothing matches |
 |---|---|---|
-| Pool | `mbl`, `peer`, `any` | `peer` = the flagship community network (80+ countries), `mbl` = our own mobile-carrier modems (6-country supportive tier), `any` = auto-pick (mobile-first) |
-| Country | `us`, `gb`, `fr`, `nl`, `pl`, `ge` | ISO 3166-1 alpha-2. Those 6 are the `mbl` (modem) countries; the `peer` pool spans 80+. |
-| `sid-{id}` | `sid-alice_session1` | Pin the customer to one modem for this session — same `sid` returns to the same modem. 1–64 chars `[a-z0-9_]`, self-healing. **The token is `sid`, not `session`.** `-session-<id>` is silently ignored (unknown token) so you get a fresh synthetic session per connection and no stickiness. Always use `-sid-<id>`. |
-| `rot-{mode}` | `rot-sticky`, `rot-auto5`, `rot-auto10`, `rot-auto20`, `rot-auto60`, `rot-hard`, `rot-ondemand` | Rotation policy. `sticky`/`hard` pin the modem (gateway smart-picks the most IP-stable; `hard` ≡ `sticky`, NOT a new IP per request). For a near-immutable IP pair `sticky` with the `peer` pool. `auto*` swap every N min. **Needs a `-sid-` to persist across connections.** |
-| `city-{name}` | `city-nyc` | City filter (when supported) |
-| `carrier-{name}` | `carrier-att`, `carrier-tmobile` | Soft carrier filter (mbl / any pool) |
-| `iptype-{class}` | `iptype-mobile`, `iptype-residential`, `iptype-datacenter` | Hard IP-class filter |
-| `isp-{slug}` | `isp-spectrum` | Hard ISP match (peer pool) — slugified prefix match against the endpoint ISP name |
-| `asn-{number}` | `asn-7018` | Hard exact ASN match (peer pool) — most precise carrier filter |
-| `failover-{policy}` | `failover-samecountry`, `failover-strict` | Failover scope: `any` / `samecountry` (default) / `samecarrier` / `samenode` / `strict` |
-| `ttl-{seconds}` | `ttl-3600` | Session-row TTL override, 60 – 2,592,000 seconds (default 3600). NOT an IP-hold guarantee |
-| `pin-{type}-{id}` | `pin-port-<id>`, `pin-device-<id>` | Pin to a specific port or device (advanced — ids from support) |
+| Pool | `peer`, `mbl`, `any` | `peer` = **the flagship network** (~82–120 countries, mixed mobile + residential). `mbl` = our carrier modems, **exactly 6 countries: US GB FR NL PL GE**. `any`/`best` = no pool filter. |
+| Country | `us`, `gb`, `fr`, `nl`, `pl`, `ge` | ISO alpha-2. Those 6 are the `mbl` set; `peer` spans far more. **`ge` is GEORGIA** — Germany is `de` and has **no `mbl` stock** (`mbl-de` always fails; use `peer-de`). An unrecognised country silently becomes `any` (global). |
+| `sid-{id}` | `sid-cust_8f3a21bd` | Session name. 1–64 chars `[a-z0-9_]`, no `-`. **Required for `sticky`/`auto*` to persist across connections** — without it every connection starts a fresh synthetic session. **A sid alone is NOT sticky**: with no `-rot-`, the default `auto10` still rotates it. The token is `sid`, not `session` — `-session-<id>` is silently skipped. |
+| `rot-{mode}` | `rot-sticky`, `rot-auto5` | `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, **not** a new IP per request). `auto5/10/20/60` re-pick every N min. `ondemand` re-picks per connection. **Omitting `-rot-` applies the gateway default `auto10`** (~10 min) — it is not "no rotation". Unrecognised value → `auto10`, silently. |
+| `strict` | `rot-sticky-strict` | **Bare flag, no value.** Only active with `sticky`/`hard`: adds a hard IP-stability floor and heavier stability weighting. No-op elsewhere. |
+| `carrier-{name}` | `carrier-att` | **Soft.** If no endpoint matches, the gateway **retries without it and serves a different carrier as a normal 200.** Make it binding with `failover-samecarrier` or `failover-strict`. |
+| `city-{name}` | `city-nyc` | **Soft — ranking bonus only**, it never excludes anyone. No match → any city in the country, silently. Prefer carrier/isp/asn for real precision. |
+| `iptype-{class}` | `iptype-residential` | **Hard** IP-class filter. No match → `E_NO_STOCK_COUNTRY` 502. |
+| `isp-{slug}` | `isp-spectrum` | **Hard** slugified match (peer pool). No match → 502. |
+| `asn-{number}` | `asn-7018` | **Hard** exact ASN match. No match → 502. Most precise carrier filter. |
+| `failover-{policy}` | `failover-strict` | `any` / `samecountry` (default) / `samecarrier` / `samenode` / `strict`. `strict` disables substitution and fails clean. |
+| `ttl-{seconds}` | `ttl-43200` | Session-row TTL, clamped 60 – 2,592,000 (default 3600). NOT an IP-hold guarantee, and **immutable for a live sid** — changing it does nothing until that row expires; use a new sid. |
+| `pin-{type}-{id}` | `pin-lease-l23d4e83c5b` | Pin one endpoint. Types: `lease` (Reserved IPs — survives rotation), `device`, `port`. **An unknown type is silently dropped** and the request falls through to shared selection. |
 
 **Example URL:**
 ```
-http://psx_acme-mbl-us-sid-customer123-rot-sticky:pak_a1b2c3@gw.proxies.sx:7000
+http://psx_acme-peer-us-sid-customer123-rot-sticky:pak_a1b2c3@gw.proxies.sx:7000
 ```
 
-This says: route customer123's traffic through US mobile modems, pin to one modem for the session. The gateway smart-selects the most IP-stable modem available (lowest observed carrier-NAT rotation rate). Note: this pins the **modem** — the carrier can still rotate the egress IP via CGNAT. For workflows that need an immutable IP (cf_clearance, banking), use the residential `peer` pool. Full explanation: [wiki page Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
+Route customer123 through the US peer network and hold one device for the
+session. Two things to tell the customer, both correct-by-design:
 
-The SDK's `buildProxyUrl(pakKey, opts)` generates this. In other languages, build the string manually:
+1. **Sticky pins the DEVICE, not the IP.** Mobile CGNAT can still re-NAT a held
+   modem's exit address. Residential peers hold addresses far longer, which is
+   why `peer` + `sticky` is the recommended pairing for IP-hold work. For a
+   guaranteed exclusive device, use a **Reserved IP** —
+   [`docs/RESERVED-IPS.md`](./docs/RESERVED-IPS.md).
+2. **`sticky` needs the `-sid-`.** Both tokens, every time.
+
+Full explanation: [wiki page Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
+
+The SDK's `buildProxyUrl(pakKey, opts)` generates this. In other languages,
+build the string manually — note both tokens are needed for stickiness:
 
 ```python
-def build_proxy_url(reseller, pak_key, country='us', sid=None, rotation='sticky'):
-    parts = [reseller, 'mbl', country]
-    if sid: parts.append(f'sid-{sid}')
-    if rotation: parts.append(f'rot-{rotation}')
+def build_proxy_url(reseller, pak_key, country='us', pool='peer',
+                    sid=None, rotation='sticky'):
+    parts = [reseller, pool, country]
+    if sid:
+        parts += ['sid', sid]          # session name — [a-z0-9_], no hyphens
+    if rotation:
+        parts += ['rot', rotation]     # omit and you get the gateway default, auto10
     return f"http://{'-'.join(parts)}:{pak_key}@gw.proxies.sx:7000"
 ```
 
@@ -768,6 +808,10 @@ When the user needs more than this skill provides, point them to the right file 
 
 | File | When to read |
 |---|---|
+| **`docs/USERNAME-DSL.md`** | **The complete token reference — all 15 tokens, hard vs soft, and what each does when nothing matches. Read before building any picker UI or debugging routing.** |
+| `docs/RESERVED-IPS.md` | Exclusively leased devices (`-pin-lease-`) — lifecycle, the offline-substitution caveat, how to resell it |
+| `docs/PRIVATE-POOL.md` | Reserved / committed capacity as a premium tier, quote flow, honesty rules |
+| `docs/MIGRATION-DSL-COMPLETENESS.md` | Upgrading an existing integration: `strict`, `pin.type: 'lease'`, the new `pin.id` throw, and every doc correction |
 | `README.md` | Marketing-friendly overview, FAQ, license |
 | `packages/sdk/README.md` | Full SDK API surface, all methods, error types, language-by-language REST examples |
 | `packages/react/README.md` | `<PoolPortal />` props, all hooks, server handler details, theming |
@@ -794,7 +838,15 @@ When the user needs more than this skill provides, point them to the right file 
 
 ## Quick smoke test (run before reporting "done" to the user)
 
-After generating code, verify the integration works end-to-end. Don't trust types alone.
+After generating code, **prove** the integration routes. Types compile against a
+username that never authenticates; only a real request rules that out. The one
+command that matters:
+
+```bash
+curl -x "http://<username>:<pak>@gw.proxies.sx:7000" https://api.ipify.org
+```
+
+Full round trip:
 
 ```bash
 # 1. Mint a real key (replace YOUR_KEY with the user's real psx_ key)
@@ -802,20 +854,38 @@ RESPONSE=$(curl -s -X POST https://api.proxies.sx/v1/reseller/pool-keys \
   -H "X-API-Key: psx_YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{"label":"smoke-test","trafficCapGB":1}')
-PAK=$(echo "$RESPONSE" | grep -oE 'pak_[a-z0-9]+')
+PAK=$(echo "$RESPONSE" | grep -oE 'pak_[a-z0-9]+' | head -1)
+KEY_ID=$(echo "$RESPONSE" | grep -oE '"id":"[^"]+"' | head -1 | cut -d'"' -f4)
 echo "Got key: $PAK"
 
-# 2. Use it through the gateway (USERNAME = the user's psx_ reseller username)
-curl -x "http://USERNAME-mbl-us:$PAK@gw.proxies.sx:7000" https://api.ipify.org
-# Should return a US mobile IP.
+# 2. Route through the gateway. USERNAME = the user's psx_ reseller username.
+#    The pak is the PASSWORD — never the username.
+curl -x "http://USERNAME-peer-us:$PAK@gw.proxies.sx:7000" https://api.ipify.org
+# → a bare US IP. That proves auth + parse + selection + egress all work.
 
-# 3. Clean up
-KEY_ID=$(echo "$RESPONSE" | grep -oE '"id":"[^"]+"' | cut -d'"' -f4)
-curl -X DELETE "https://api.proxies.sx/v1/reseller/pool-keys/$KEY_ID" \
+# 3. Prove the generated sticky string actually holds a device
+for i in 1 2 3; do
+  curl -s -x "http://USERNAME-peer-us-sid-smoke_test1-rot-sticky:$PAK@gw.proxies.sx:7000" \
+    https://api.ipify.org; echo
+done
+
+# 4. SOCKS5 on 7001 takes the identical username
+curl -x "socks5://USERNAME-peer-us:$PAK@gw.proxies.sx:7001" https://api.ipify.org
+
+# 5. Clean up
+curl -s -X DELETE "https://api.proxies.sx/v1/reseller/pool-keys/$KEY_ID" \
   -H "X-API-Key: psx_YOUR_KEY"
 ```
 
-If step 2 returns a real US IP via the proxy, the integration works.
+If step 2 returns a real IP through the proxy, the integration works.
+
+**Reading step 3 correctly:** you are verifying the *device* is held, not the
+address. Mobile CGNAT can re-NAT a held modem, so differing IPs there is not
+necessarily a bug — see
+[`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md#the-two-things-that-surprise-customers).
+If a country returns `E_NO_STOCK_COUNTRY`, check live stock before blaming the
+code: `curl -s https://api.proxies.sx/v1/gateway/pool/availability` (counts per
+country, never IPs).
 
 ---
 
