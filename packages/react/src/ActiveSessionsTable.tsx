@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import type { ActiveSession } from '@proxies-sx/pool-sdk';
+import { finiteOr, useCopyToClipboard } from './hooks';
 import type { Branding, PoolPortalClassNames } from './types';
 
 /**
@@ -92,9 +93,16 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [closingKey, setClosingKey] = useState<string | null>(null);
   const [closingAll, setClosingAll] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Reuses the package's clipboard hook — it owns the permission handling, the
+  // execCommand fallback for non-secure origins, the "Copied" timer and that
+  // timer's unmount cleanup. `copied` below is that hook's flag; `copiedKey`
+  // only records WHICH row it belongs to.
+  const { copy, copied } = useCopyToClipboard();
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -104,8 +112,19 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
         setError(`Failed to load sessions (HTTP ${r.status})`);
         return;
       }
-      const body = (await r.json()) as { sessions: ActiveSession[]; count: number };
-      setSessions(body.sessions ?? []);
+      const body = (await r.json()) as { sessions?: unknown };
+      // A non-array `sessions` (error envelope, HTML proxy page parsed as JSON)
+      // would take `.filter`/`.map` down with it — the table is the only thing
+      // standing between a malformed response and the host app's whole tree.
+      // Non-object ENTRIES are dropped for the same reason: one `null` in the
+      // array is enough to throw on `s.isSynthesizedSid` a line later.
+      setSessions(
+        Array.isArray(body.sessions)
+          ? body.sessions.filter(
+              (s): s is ActiveSession => typeof s === 'object' && s !== null,
+            )
+          : [],
+      );
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -122,6 +141,7 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
   }, [fetchSessions, refreshIntervalMs]);
 
   const handleClose = useCallback(async (sessionKey: string) => {
+    if (!sessionKey) return;
     setClosingKey(sessionKey);
     try {
       const r = await fetch(`${apiRoute}/my-sessions/${encodeURIComponent(sessionKey)}`, {
@@ -147,8 +167,10 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
         credentials: 'same-origin',
       });
       if (r.ok) {
-        const body = (await r.json()) as { count: number };
-        onAllSessionsClosed?.(body.count ?? sessions.length);
+        const body = (await r.json()) as { count?: number };
+        // Hosts put this straight into a toast — "Closed NaN sessions" is a
+        // worse outcome than falling back to what we last rendered.
+        onAllSessionsClosed?.(finiteOr(body.count, sessions.length));
         setSessions([]);
       }
     } finally {
@@ -156,13 +178,25 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
     }
   }, [apiRoute, onAllSessionsClosed, sessions.length]);
 
-  const handleCopy = useCallback((session: ActiveSession) => {
+  const handleCopy = useCallback(async (session: ActiveSession) => {
+    // The gateway emits an empty proxyUrl when the Redis row has no accountId
+    // (`gateway/src/index.ts` — "corrupted writes, partial migrations"). The
+    // button is disabled in that case; this is the belt to that suspenders.
+    if (!session.proxyUrl) return;
+    setCopyError(null);
     const url = session.proxyUrl.replace('<PASSWORD>', encodeURIComponent(proxyPassword));
-    void navigator.clipboard?.writeText(url);
+    // The old code fired `void navigator.clipboard.writeText()` and flipped to
+    // "Copied" regardless — so a denied permission, an insecure origin or a
+    // dismissed prompt all sent the customer off to paste nothing. The hook
+    // resolves false in exactly those cases.
+    const ok = await copy(url);
+    if (!ok) {
+      setCopyError('Clipboard blocked by the browser — select the URL and copy it manually.');
+      return;
+    }
     onCopy?.(url);
     setCopiedKey(session.sessionKey);
-    setTimeout(() => setCopiedKey((p) => (p === session.sessionKey ? null : p)), 1500);
-  }, [proxyPassword, onCopy]);
+  }, [copy, proxyPassword, onCopy]);
 
   const visible = hideSynthesizedSessions
     ? sessions.filter((s) => !s.isSynthesizedSid)
@@ -184,6 +218,7 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
             onClick={fetchSessions}
             className={cn('psx-button', 'psx-button-ghost', classNames.button)}
             disabled={loading}
+            aria-busy={loading}
           >
             Refresh
           </button>
@@ -192,6 +227,7 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
               type="button"
               onClick={handleCloseAll}
               disabled={closingAll}
+              aria-busy={closingAll}
               className={cn('psx-button', 'psx-button-danger', classNames.button)}
             >
               {closingAll ? 'Closing…' : 'Close all'}
@@ -200,7 +236,8 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
         </div>
       </div>
 
-      {error && <p className="psx-sessions-error">{error}</p>}
+      {error && <p className="psx-sessions-error" role="status">{error}</p>}
+      {copyError && <p className="psx-sessions-error" role="status">{copyError}</p>}
 
       {!loading && visible.length === 0 && (
         <p className="psx-sessions-empty">
@@ -213,43 +250,59 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
         <table className={cn('psx-sessions-table', classNames.card)}>
           <thead>
             <tr>
-              <th>Country</th>
-              <th>Sid</th>
-              <th>IP</th>
-              <th>Rotation</th>
-              <th>Started</th>
-              <th>TTL</th>
-              <th>Bytes</th>
-              <th>Reqs</th>
-              <th></th>
+              <th scope="col">Country</th>
+              <th scope="col">Sid</th>
+              <th scope="col">IP</th>
+              <th scope="col">Rotation</th>
+              <th scope="col">Started</th>
+              <th scope="col">TTL</th>
+              <th scope="col">Bytes</th>
+              <th scope="col">Reqs</th>
+              <th scope="col" aria-label="Row actions" />
             </tr>
           </thead>
           <tbody>
-            {visible.map((s) => {
+            {visible.map((s, index) => {
               const isClosing = closingKey === s.sessionKey;
-              const flag = COUNTRY_FLAGS[s.country.toLowerCase()] ?? '🌐';
+              // EVERY read below is defensive on purpose. The gateway builds
+              // this row straight out of a Redis `hgetall` with no per-field
+              // defaults — strings come through as `undefined` and the numbers
+              // as `NaN` (`parseInt(undefined, 10)`). One `undefined.toLowerCase()`
+              // here unmounts the host app's whole tree.
+              const cc = typeof s.country === 'string' ? s.country.toLowerCase() : '';
+              const flag = COUNTRY_FLAGS[cc] ?? '🌐';
+              const rowLabel = s.sessionId || cc.toUpperCase() || 'this session';
+              const canCopy = Boolean(s.proxyUrl);
               return (
-                <tr key={s.sessionKey}>
-                  <td>{flag} {s.country.toUpperCase()} <span className="psx-sessions-pool">/{s.pool}</span></td>
-                  <td><code>{s.sessionId}</code></td>
-                  <td><code className="psx-sessions-ip">{s.currentIp}</code></td>
-                  <td>{s.rotation}</td>
-                  <td title={new Date(s.createdAt).toISOString()}>{relativeTime(s.createdAt)}</td>
-                  <td title={`Auto-expires at ${new Date(s.expiresAt).toISOString()}`}>{formatTtl(s.ttl)}</td>
+                <tr key={s.sessionKey || `${s.sessionId ?? 'row'}:${index}`}>
+                  <td>
+                    {flag} {cc ? cc.toUpperCase() : '—'}
+                    {s.pool && <span className="psx-sessions-pool">/{s.pool}</span>}
+                  </td>
+                  <td><code>{s.sessionId || '—'}</code></td>
+                  <td><code className="psx-sessions-ip">{s.currentIp || '—'}</code></td>
+                  <td>{s.rotation || 'auto10'}</td>
+                  <td title={isoTimestamp(s.createdAt)}>{relativeTime(s.createdAt)}</td>
+                  <td title={expiryTitle(s.expiresAt)}>{formatTtl(s.ttl)}</td>
                   <td>↓ {formatBytes(s.bytesIn)} / ↑ {formatBytes(s.bytesOut)}</td>
-                  <td>{s.requestCount}</td>
+                  <td>{Number.isFinite(s.requestCount) ? s.requestCount : '—'}</td>
                   <td className="psx-sessions-row-actions">
                     <button
                       type="button"
-                      onClick={() => handleCopy(s)}
+                      onClick={() => { void handleCopy(s); }}
+                      disabled={!canCopy}
+                      aria-label={`Copy proxy URL for ${rowLabel}`}
+                      title={canCopy ? undefined : 'This session row is incomplete — no proxy URL to copy.'}
                       className={cn('psx-button', 'psx-button-ghost', classNames.button)}
                     >
-                      {copiedKey === s.sessionKey ? 'Copied' : 'Copy URL'}
+                      {copied && copiedKey === s.sessionKey ? 'Copied' : 'Copy URL'}
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleClose(s.sessionKey)}
-                      disabled={isClosing}
+                      onClick={() => { void handleClose(s.sessionKey); }}
+                      disabled={isClosing || !s.sessionKey}
+                      aria-busy={isClosing}
+                      aria-label={`Close ${rowLabel}`}
                       className={cn('psx-button', 'psx-button-danger', classNames.button)}
                     >
                       {isClosing ? 'Closing…' : 'Close'}
@@ -278,8 +331,16 @@ const COUNTRY_FLAGS: Record<string, string> = {
   ch: '\u{1F1E8}\u{1F1ED}', pa: '\u{1F1F5}\u{1F1E6}', am: '\u{1F1E6}\u{1F1F2}',
 };
 
+/*
+ * Every numeric formatter below funnels through the shared `finiteOr`: the
+ * gateway parses each session field with `parseInt(value, 10)` over a raw
+ * Redis `hgetall`, so a missing field arrives as `NaN` — not `undefined` —
+ * and `?? 0` does not catch that. It is how "NaN GB" and "NaN h" reached the
+ * table.
+ */
+
 function formatBytes(n: number | undefined): string {
-  const v = n ?? 0;
+  const v = finiteOr(n, 0);
   if (v < 1024) return `${v} B`;
   if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
   if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} MB`;
@@ -287,19 +348,36 @@ function formatBytes(n: number | undefined): string {
 }
 
 function formatTtl(seconds: number | undefined): string {
-  const s = seconds ?? 0;
+  if (!Number.isFinite(seconds)) return '—';
+  const s = finiteOr(seconds, 0);
   if (s <= 0) return 'expired';
   if (s < 60) return `${s} s`;
   if (s < 3600) return `${Math.round(s / 60)} min`;
   return `${Math.round(s / 360) / 10} h`;
 }
 
-function relativeTime(unixMs: number): string {
-  const diff = Date.now() - unixMs;
+function relativeTime(unixMs: number | undefined): string {
+  if (!Number.isFinite(unixMs)) return '—';
+  const diff = Date.now() - (unixMs as number);
   if (diff < 1000) return 'just now';
   if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
   if (diff < 3_600_000) return `${Math.round(diff / 60_000)} min ago`;
   return `${Math.round(diff / 3_600_000)} h ago`;
+}
+
+/**
+ * `new Date(NaN).toISOString()` throws a `RangeError` — an unguarded tooltip
+ * is enough to take the table down. Returning `undefined` omits the `title`
+ * attribute entirely, which is the correct "we don't know" rendering.
+ */
+function isoTimestamp(unixMs: number | undefined): string | undefined {
+  if (!Number.isFinite(unixMs)) return undefined;
+  return new Date(unixMs as number).toISOString();
+}
+
+function expiryTitle(unixMs: number | undefined): string | undefined {
+  const iso = isoTimestamp(unixMs);
+  return iso ? `Auto-expires at ${iso}` : undefined;
 }
 
 function cn(...parts: Array<string | undefined>): string {

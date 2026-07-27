@@ -95,7 +95,8 @@ The component is strictly UI — it knows nothing about `api.proxies.sx`. Your A
 | Prop | Type | Default | Description |
 |---|---|---|---|
 | `apiRoute` | `string` | `"/api/pool"` | Base path of your mounted handlers |
-| `countries` | `Country[]` | `['us','gb','fr','nl','pl','ge']` | Countries the dropdown offers. That default is the **`mbl`** (carrier-modem) set; the `peer` pool spans far more, so widen this if you lead with peer. **`ge` is Georgia** — Germany is `de` and has no `mbl` stock. |
+| `pool` | `'mbl' \| 'peer' \| 'any' \| 'best'` | `'mbl'` | Which network the generated username routes to (the first username token). Set `'peer'` to sell the flagship network. **Set this before widening `countries`** — see the note below. |
+| `countries` | `Country[]` | `['us','gb','fr','nl','pl','ge']` | Countries the dropdown offers. The default is the **`mbl`** carrier-modem set — exactly those 6. **`ge` is Georgia**, not Germany. |
 | `defaultCountry` | `Country` | first in `countries` | |
 | `defaultProtocol` | `'http' \| 'socks5'` | `'http'` | |
 | `defaultRotation` | `RotationMode` | `'none'` | `'none'` emits **no** `-rot-` token, so the **gateway default `auto10` applies** — a different endpoint roughly every 10 min. It is not "no rotation". Use `'sticky'` (plus a `sid`) to hold a device. |
@@ -109,6 +110,25 @@ The component is strictly UI — it knows nothing about `api.proxies.sx`. Your A
 | `style` | `CSSProperties` | — | Inline style on the root |
 | `emptyState` | `ReactNode` | — | Rendered when the user has no key yet |
 | `onRegenerateKey` | `() => Promise<void>` | — | Called when the user clicks "Regenerate key" |
+
+#### `pool` and `countries` must agree
+
+The two props are coupled, and getting it wrong produces credentials that fail
+100% of the time with no client-side error. The generated username is
+`psx_<you>-<pool>-<country>-…`, so the country list has to be a list of
+countries **that pool actually has stock in**:
+
+- `pool="mbl"` (default) — carrier modems in exactly **6** countries:
+  `us`, `gb`, `fr`, `nl`, `pl`, `ge`. Adding anything else mints a username the
+  gateway cannot fill. The classic trap is `de`: `mbl-de` has **no stock** and
+  always fails, and `ge` is **Georgia**, not Germany.
+- `pool="peer"` — the flagship network, ~82–120 countries. This is the setting
+  to change when you want a wide country list; widening `countries` on its own
+  leaves the pool token at `mbl` and every extra country breaks.
+
+Pull the live country list from `GET /v1/gateway/pool/stock` (exposed by
+`createPoolApiHandlers()` as `/stock`, and typed as `client.pool.getStock()`)
+rather than hardcoding one — stock moves.
 
 ### Branding
 
@@ -236,16 +256,23 @@ customers already use.
 import { PrivatePoolPanel } from '@proxies-sx/pool-portal-react';
 
 <PrivatePoolPanel
-  pak={customer.pak}          // the pak_ key, minted server-side with qualityTier
-  qualityTier="safe"          // 'safe' → "Dedicated modems"; 'standard' → "Modems + peer · auto-failover"
+  proxyUsername={proxyUsername} // REQUIRED — your psx_ reseller username (the USERNAME half)
+  pak={customer.pak}            // the pak_ key, minted server-side with qualityTier (the PASSWORD half)
+  qualityTier="safe"            // 'safe' → "Dedicated modems"; 'standard' → "Modems + peer · auto-failover"
   label="Acme Private Pool"
-  usedGB={customer.usedGB}    // pass with capGB to render a usage bar
+  usedGB={customer.usedGB}      // pass with capGB to render a usage bar
   capGB={100}
-  deviceCount={20}            // optional subtitle
+  deviceCount={20}              // optional subtitle
   apiRoute="/api/pool"
   countries={['us', 'gb', 'fr', 'nl', 'pl', 'ge']}
 />
 ```
+
+`PrivatePoolPanel` extends `PoolSessionSpawnerProps` (minus `proxyPassword`,
+which it supplies from `pak`), so **`proxyUsername` is required** — omit it and
+TypeScript fails the build with `TS2741`. It is your reseller `proxyUsername`
+(`psx_…` from the `client.proxies.sx` dashboard), never the `psx_` API key.
+The panel emits `psx_<you>-…` as the username and the `pak_` as the password.
 
 Mint the key **server-side** (the reseller API key must never reach the browser)
 with `proxies.poolKeys.create({ qualityTier: 'safe', trafficCapGB: 100, … })` —
@@ -322,13 +349,23 @@ carrier/ASN controls.
 ### `<PakQuickstart>` - one-key onboarding card (v0.6.0+)
 
 Shows a customer THEIR key with a copy-ready proxy string, country dropdown, and an
-optional usage meter. Props: `pak` (required), `secret?` (omit to render a
-`<YOUR_PASSWORD>` placeholder - safest default), `secretDisplay?: 'masked' | 'plain'`,
-`defaultCountry?`, `gatewayHost?`, plus cap/used GB for the meter.
+optional usage meter. Props: `proxyUsername` (**required**), `pak` (required),
+`secret?` (omit to render a `<YOUR_PASSWORD>` placeholder - safest default),
+`secretDisplay?: 'masked' | 'plain'`, `defaultCountry?`, `gatewayHost?`, plus
+cap/used GB for the meter.
 
 ```tsx
-<PakQuickstart pak={me.data.pakKey} defaultCountry="us" />
+<PakQuickstart
+  proxyUsername={me.data.proxyUsername}
+  pak={me.data.pakKey}
+  defaultCountry="us"
+/>
 ```
+
+`proxyUsername` is what makes the rendered credential correct: it goes in the
+**username** field (`psx_<you>-<pool>-<cc>`) and the `pak` goes in the
+**password** field. `createPoolApiHandlers()`'s `/me` returns `proxyUsername`
+alongside `pakKey`, so both come from the same call.
 
 ---
 
@@ -415,7 +452,7 @@ Customers whose key has an expiry will see the countdown; those without an expir
 
 - Your `PROXIES_SX_API_KEY` lives **only on the server**. The component never sees it.
 - `pak_` keys are only sent to the customer they belong to (enforced by your `getSessionUserId` + `getUserKeyId`).
-- If a `pak_` leaks, the user can hit `POST /api/pool/regenerate` (wired to `onRegenerateKey`) to rotate it — the old value stops working immediately.
+- If a `pak_` leaks, the user can hit `POST /api/pool/regenerate` (wired to `onRegenerateKey`) to rotate it. The platform invalidates the old secret at once, but the gateway caches auth for **up to 30 s**, so the leaked value can still open new connections for that long — and tunnels already open are not torn down. Rotation is a ~30 s cutoff, not an instant kill. To end it now, also close the sessions (`DELETE /api/pool/my-sessions`).
 - `/me` responses are sent with `Cache-Control: private, no-store` so they don't leak via CDN/browser cache.
 - Public endpoints (`/stock`, `/incidents`) are cacheable (30s / 60s).
 

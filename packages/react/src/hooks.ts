@@ -67,6 +67,42 @@ function messageOf(data: unknown): string | null {
 }
 
 /**
+ * Coerce a wire-sourced number, falling back when it isn't one. The single
+ * numeric guard for this package — components import it rather than each
+ * rolling their own.
+ *
+ * Every number these components render arrives as JSON from a route the host
+ * app mounted, or from a gateway `hgetall` parsed with `parseInt` (which
+ * yields `NaN`, not `undefined`, for a missing field — so `?? 0` does not
+ * catch it). Unguarded, that surfaces as "NaN GB" in a usage meter, or makes
+ * `+` concatenate two count strings instead of adding them.
+ */
+export function finiteOr(n: number | undefined, fallback: number): number {
+  return typeof n === 'number' && Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Lower-cases every country key of a `/stock` pool map. This is the single
+ * normalisation point for country codes in this package — components import it
+ * rather than each rolling their own.
+ *
+ * Both sides of a stock lookup are mixed-case in practice: the gateway keys
+ * stock lower-case, `server.ts` upper-cases a Private Pool's
+ * `gateway.countries`, and a host app may mount its own `/stock` route
+ * entirely. A component that filters on one casing but looks up with the other
+ * silently renders every country as `0`.
+ */
+export function lowerCaseCountryKeys(
+  src: Record<string, number> | undefined,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [code, value] of Object.entries(src ?? {})) {
+    out[code.toLowerCase()] = value;
+  }
+  return out;
+}
+
+/**
  * Fetches the authenticated user's pool access key + usage snapshot from the
  * host app's API route.
  *
@@ -452,7 +488,35 @@ function usePolling<T>(url: string, refreshIntervalMs?: number): HookResult<T> {
   return { ...state, refetch: run };
 }
 
-/** Copy text to clipboard, falling back to a textarea hack for older browsers. */
+/**
+ * Fallback for origins without the async Clipboard API (plain `http://`,
+ * older Safari). `execCommand` reports refusal by RETURNING false rather than
+ * by throwing, and the scratch textarea is removed in `finally` so a throw
+ * can't leave it in the host's DOM.
+ */
+function copyViaTextarea(text: string): boolean {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'absolute';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  try {
+    ta.select();
+    return document.execCommand('copy');
+  } finally {
+    document.body.removeChild(ta);
+  }
+}
+
+/**
+ * Copy text to clipboard, falling back to a textarea hack for older browsers.
+ *
+ * `copy()` resolves `false` when the write was refused — denied permission, an
+ * insecure origin, a dismissed prompt — and `copied` only flips on a real
+ * success. Callers MUST branch on the returned boolean: reporting "Copied"
+ * unconditionally sends the customer off to paste nothing.
+ */
 export function useCopyToClipboard(): {
   copy: (text: string) => Promise<boolean>;
   copied: boolean;
@@ -464,16 +528,8 @@ export function useCopyToClipboard(): {
     try {
       if (navigator?.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.setAttribute('readonly', '');
-        ta.style.position = 'absolute';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
+      } else if (!copyViaTextarea(text)) {
+        return false;
       }
       setCopied(true);
       if (timer.current) clearTimeout(timer.current);

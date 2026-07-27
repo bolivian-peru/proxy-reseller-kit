@@ -61,10 +61,10 @@ customer silently gets an unreserved one unless the lease was acquired with
 Traffic is priced exactly like the shared pool. The only thing Private Pool adds is
 a **monthly reservation fee**.
 
-**Traffic: $4.00/GB base**, with monthly volume discounts, billed only as used from
-the same GB balance that covers both pools:
+**Traffic: $4.00/GB base**, with volume discounts on the **size of a single order**,
+billed only as used from the same GB balance that covers both pools:
 
-| Monthly volume | Discount | Effective /GB |
+| GB in one order | Discount | Effective /GB |
 |---|---|---|
 | 1-24 GB | 0% | $4.00 |
 | 25-49 GB | 10% | $3.60 |
@@ -72,13 +72,32 @@ the same GB balance that covers both pools:
 | 100-249 GB | 30% | $2.80 |
 | 250+ GB | 40% | $2.40 |
 
+> ### The discount is per order, not per month
+>
+> The tier is chosen from the quantity on **one purchase**
+> (`VOLUME_DISCOUNTS` in `src/billing/slot-tier.service.ts` — "based on single
+> purchase quantity"), and nothing accumulates across the month. Buying
+> 25 × 10 GB over 30 days earns **0%** on every one of those orders and costs
+> **$1,000**; buying 250 GB once earns 40% and costs **$600**. Same 250 GB,
+> $400 apart.
+>
+> If you resell on a monthly plan, price your COGS off **your actual order
+> size**, not your customers' monthly usage — modelling it as a monthly tier
+> overstates your margin by up to 40%. To capture the discount, batch your
+> top-ups into fewer, larger orders.
+>
+> Separately, *cumulative* lifetime GB does drive the **slot tier**
+> (Starter → Enterprise), which governs port-slot limits, not price. The two
+> ladders look alike and are easy to conflate — only the per-order one moves
+> the $/GB.
+
 **Reservation fee: monthly, custom-quoted** per country and pool size. This is the
 only Private-Pool-specific cost, and it is confirmed in the quote - requesting a
 pool never charges anything.
 
 > Live pricing is always authoritative at [client.proxies.sx](https://client.proxies.sx)
 > and [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing).
-> The tiers above mirror the shared-pool volume discounts.
+> The tiers above mirror the shared-pool volume discounts, per-order semantics included.
 
 For enterprise volumes, both the reservation fee and the per-GB wholesale rate are negotiable. Request a quote and we will price the whole allocation, traffic included, for your committed volume.
 

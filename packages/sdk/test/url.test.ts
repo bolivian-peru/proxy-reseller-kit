@@ -6,6 +6,16 @@ describe('buildProxyUrl', () => {
   const USER = 'psx_abc123';
   const KEY = 'pak_000000000000000000000001';
 
+  /**
+   * Read the emitted `-ttl-<n>` back as a number. A `toContain('-ttl-60')`
+   * assertion also matches `-ttl-600`, so the clamp bounds can only be pinned
+   * by parsing the value out.
+   */
+  function emittedTtl(url: string): number | null {
+    const match = /-ttl-(\d+)/.exec(url);
+    return match ? Number(match[1]) : null;
+  }
+
   it('builds the simplest URL (no tokens → default mbl pool, HTTP)', () => {
     expect(buildProxyUrl(USER, KEY)).toBe(
       `http://psx_abc123-mbl:pak_000000000000000000000001@${GATEWAY_HOST}:${HTTP_PORT}`,
@@ -110,6 +120,146 @@ describe('buildProxyUrl', () => {
     // Below floor clamps up to 60, above ceiling clamps down to 2592000.
     expect(buildProxyUrl(USER, KEY, { ttl: 5 })).toContain('-ttl-60');
     expect(buildProxyUrl(USER, KEY, { ttl: 9_999_999 })).toContain('-ttl-2592000');
+  });
+
+  it('CLAMPS an out-of-range ttl rather than dropping the token', () => {
+    // The emission contract: an out-of-range ttl must still reach the gateway
+    // as a ttl. Omitting it silently falls back to the gateway default of
+    // 3600, so a caller asking for a 30-day session would get a 1-hour one
+    // and only find out when their sticky session died overnight. Any wrapper
+    // (React generator, portal form) must clamp the same way — this test is
+    // the anchor that keeps them from diverging.
+    for (const ttl of [0, 1, 59, 2_592_001, 9_999_999, -100]) {
+      expect(buildProxyUrl(USER, KEY, { ttl })).toContain('-ttl-');
+    }
+    expect(buildProxyUrl(USER, KEY, { ttl: 0 })).toContain('-ttl-60');
+    expect(buildProxyUrl(USER, KEY, { ttl: -100 })).toContain('-ttl-60');
+    expect(buildProxyUrl(USER, KEY, { ttl: 2_592_001 })).toContain('-ttl-2592000');
+    // Boundaries pass through untouched.
+    expect(buildProxyUrl(USER, KEY, { ttl: 60 })).toContain('-ttl-60');
+    expect(buildProxyUrl(USER, KEY, { ttl: 2_592_000 })).toContain('-ttl-2592000');
+    // Fractional seconds are rounded, never emitted as a decimal.
+    expect(buildProxyUrl(USER, KEY, { ttl: 3600.7 })).toContain('-ttl-3601');
+  });
+
+  it('never emits a non-numeric ttl (NaN/Infinity are skipped, not stringified)', () => {
+    // `parseInt('', 10)` on an empty form field is the realistic source. The
+    // gateway would default a `-ttl-NaN` token to 3600 anyway, so skipping it
+    // routes identically and keeps the copied credential clean.
+    expect(buildProxyUrl(USER, KEY, { ttl: Number.NaN })).not.toContain('-ttl-');
+    expect(buildProxyUrl(USER, KEY, { ttl: Number.POSITIVE_INFINITY })).not.toContain('-ttl-');
+  });
+
+  it('emits the exact clamped ttl value, not merely a -ttl- token', () => {
+    // The substring assertions above cannot tell `-ttl-60` from `-ttl-600`, so
+    // the clamp itself is pinned here by parsing the number back out. This is
+    // the reference the React generator and any portal form must match: same
+    // input → same integer, always inside [60, 2_592_000].
+    const cases: Array<[number, number]> = [
+      [-100, 60],
+      [0, 60],
+      [1, 60],
+      [59, 60],
+      [60, 60],
+      [3600, 3600],
+      [3600.4, 3600],
+      [3600.7, 3601],
+      [86_400, 86_400],
+      [2_592_000, 2_592_000],
+      [2_592_001, 2_592_000],
+      [9_999_999, 2_592_000],
+    ];
+    for (const [input, expected] of cases) {
+      expect(emittedTtl(buildProxyUrl(USER, KEY, { ttl: input }))).toBe(expected);
+    }
+    // No ttl asked for, and non-finite input, both emit no token at all.
+    expect(emittedTtl(buildProxyUrl(USER, KEY))).toBeNull();
+    expect(emittedTtl(buildProxyUrl(USER, KEY, { ttl: Number.NaN }))).toBeNull();
+  });
+
+  it('clamps ttl identically under every rotation mode', () => {
+    // The clamp is a property of the ttl token, not of the routing mode — a
+    // wrapper that only clamped for sticky sessions would hand `auto*` callers
+    // a silently-defaulted 3600.
+    for (const rotation of ['none', 'auto5', 'auto60', 'ondemand', 'sticky', 'hard'] as const) {
+      expect(emittedTtl(buildProxyUrl(USER, KEY, { rotation, ttl: 9_999_999 }))).toBe(2_592_000);
+      expect(emittedTtl(buildProxyUrl(USER, KEY, { rotation, ttl: 1 }))).toBe(60);
+    }
+  });
+
+  it('emits -iptype for every pool — never gated on pool', () => {
+    // `mbl` endpoints are all mobile, so suppressing the token there looks
+    // harmless. It is not: `mbl` + `residential` is unsatisfiable, and the
+    // gateway saying so (502 E_NO_STOCK_COUNTRY) is the correct outcome.
+    // Dropping the token would hand the caller mobile IPs while they believe
+    // they asked for residential.
+    expect(buildProxyUrl(USER, KEY, { pool: 'mbl', country: 'us', ipType: 'mobile' })).toContain(
+      '-iptype-mobile',
+    );
+    expect(
+      buildProxyUrl(USER, KEY, { pool: 'mbl', country: 'us', ipType: 'residential' }),
+    ).toContain('-iptype-residential');
+    expect(buildProxyUrl(USER, KEY, { pool: 'any', country: 'us', ipType: 'datacenter' })).toContain(
+      '-iptype-datacenter',
+    );
+  });
+
+  it("builds 'hard' identically to 'sticky' apart from the mode word", () => {
+    // `hard` maps to the same rotation interval (0) and the same pinned
+    // selection path as `sticky` at the gateway — it is NOT "a fresh TCP
+    // connection picks a different modem". Nothing else in the URL may differ,
+    // because nothing else in the routing differs.
+    const opts = { country: 'us', sid: 'checkout_flow', strict: true } as const;
+    const sticky = buildProxyUrl(USER, KEY, { ...opts, rotation: 'sticky' });
+    const hard = buildProxyUrl(USER, KEY, { ...opts, rotation: 'hard' });
+    expect(hard).toBe(sticky.replace('-rot-sticky', '-rot-hard'));
+  });
+
+  it("treats 'hard' as a pinning mode for every gated token", () => {
+    // Same gating as sticky: `strict` is emitted, and the sid still rides
+    // along (without a sid neither mode persists across connections).
+    expect(buildProxyUrl(USER, KEY, { rotation: 'hard', strict: true, sid: 'w1' })).toContain(
+      '-sid-w1-rot-hard-strict',
+    );
+  });
+
+  it("builds 'hard' identically to 'sticky' across the WHOLE token surface", () => {
+    // Gateway truth: `hard` and `sticky` both map to rotation interval 0 and
+    // take the same pinned path — same stability-weighted selection, same 60s
+    // offline-blip grace on session reuse, same exclusion from connect-phase
+    // re-selection. So no other token may differ between the two credentials,
+    // or the SDK would be encoding routing that does not exist. (The docs used
+    // to claim `hard` meant "a fresh TCP connection picks a different modem";
+    // if that were true, something here would have to change.)
+    const opts = {
+      pool: 'peer',
+      country: 'us',
+      carrier: 'T-Mobile US',
+      isp: 'tmobile',
+      asn: 21928,
+      ipType: 'mobile',
+      city: 'nyc',
+      sid: 'checkout_flow',
+      strict: true,
+      failover: 'samenode',
+      pin: { type: 'device', id: 'abc123' },
+      ttl: 86_400,
+      protocol: 'socks5',
+    } as const;
+    const sticky = buildProxyUrl(USER, KEY, { ...opts, rotation: 'sticky' });
+    const hard = buildProxyUrl(USER, KEY, { ...opts, rotation: 'hard' });
+    expect(hard).toBe(sticky.replace('-rot-sticky', '-rot-hard'));
+    expect(hard).toContain('-rot-hard-strict');
+  });
+
+  it('never invents a sid — sticky and hard alike persist nothing without one', () => {
+    // Both pinning modes need a caller-supplied `-sid-`; the gateway otherwise
+    // synthesizes a throwaway session per connection. The SDK must not paper
+    // over that with a generated id, or two processes sharing a credential
+    // would silently stop sharing a modem.
+    for (const rotation of ['sticky', 'hard'] as const) {
+      expect(buildProxyUrl(USER, KEY, { country: 'us', rotation })).not.toContain('-sid-');
+    }
   });
 
   it('emits -iptype for the hard IP-class filter', () => {

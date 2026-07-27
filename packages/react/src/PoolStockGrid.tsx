@@ -1,7 +1,7 @@
 'use client';
 
 import { type CSSProperties, type JSX } from 'react';
-import { usePoolStock } from './hooks';
+import { finiteOr, lowerCaseCountryKeys, usePoolStock } from './hooks';
 import type { Branding, PoolPortalClassNames } from './types';
 
 /**
@@ -15,9 +15,10 @@ export interface PoolStockGridProps {
   /** Auto-refresh interval in ms. Default 30 000. */
   refreshIntervalMs?: number;
   /**
-   * Restrict to specific countries. If omitted, every country present
-   * in the live response renders, even ones we haven't seen before
-   * (forward-compat with new countries the gateway adds).
+   * Restrict to specific countries. Case-insensitive — `['US']` and `['us']`
+   * behave identically. If omitted, every country present in the live
+   * response renders, even ones we haven't seen before (forward-compat with
+   * new countries the gateway adds).
    */
   countries?: readonly string[];
   /** Layout: `grid` (default, responsive cards) or `compact` (one-line per country). */
@@ -36,11 +37,17 @@ export interface PoolStockGridProps {
 
 /**
  * Live "country stock" widget — shows online endpoint counts per country
- * for both pools (`mbl` mobile + `peer` residential), plus pool-wide totals.
+ * for both pools, plus pool-wide totals. `peer` is the flagship network
+ * (mixed mobile + residential, ~82–120 countries); `mbl` is the supportive
+ * carrier-modem tier, exactly 6 countries — US, GB, FR, NL, PL and GE
+ * (Georgia, *not* Germany: `de` has no `mbl` stock and never will).
  *
  * Mirrors the live counter on `client.proxies.sx/pool-proxy`. Polls
  * `GET <apiRoute>/stock` every 30 s by default; counts update without
  * a page refresh.
+ *
+ * `countries` is matched case-insensitively, so an upper-case list — such as
+ * a Private Pool's `gateway.countries` — works unchanged.
  *
  * @example
  * ```tsx
@@ -85,14 +92,21 @@ export function PoolStockGrid(props: PoolStockGridProps): JSX.Element {
     );
   }
 
-  const mbl = data.pools?.mbl ?? {};
-  const peer = data.pools?.peer ?? {};
-  const totals = data.totals ?? { mbl: 0, peer: 0, all: 0 };
+  // Country codes are lower-cased ONCE, here, on both sides — see
+  // `lowerCaseCountryKeys`. The previous code filtered on `c.toLowerCase()` but
+  // then looked up `mbl[c]` with the ORIGINAL casing, so an upper-case list
+  // (which is exactly what `server.ts` produces for a Private Pool) rendered
+  // every card as 0/0.
+  const mbl = lowerCaseCountryKeys(data.pools?.mbl);
+  const peer = lowerCaseCountryKeys(data.pools?.peer);
+  const totals = data.totals;
 
   // Union of country codes present in either pool, optionally filtered.
+  // De-duplicated so a caller passing both `US` and `us` can't produce two
+  // cards sharing one React key.
   const allCodes = new Set([...Object.keys(mbl), ...Object.keys(peer)]);
   const visible = countries
-    ? countries.filter((c) => allCodes.has(c.toLowerCase()))
+    ? Array.from(new Set(countries.map((c) => String(c).toLowerCase()))).filter((c) => allCodes.has(c))
     : Array.from(allCodes).sort();
 
   return (
@@ -100,16 +114,16 @@ export function PoolStockGrid(props: PoolStockGridProps): JSX.Element {
       {showTotals && (
         <div className="psx-stockgrid-totals">
           <div className="psx-stockgrid-total-card">
-            <div className="psx-stockgrid-total-num">{totals.all}</div>
+            <div className="psx-stockgrid-total-num">{finiteOr(totals?.all, 0)}</div>
             <div className="psx-stockgrid-total-label">endpoints online</div>
           </div>
           <div className="psx-stockgrid-total-card">
-            <div className="psx-stockgrid-total-num">{totals.mbl}</div>
+            <div className="psx-stockgrid-total-num">{finiteOr(totals?.mbl, 0)}</div>
             <div className="psx-stockgrid-total-label">mobile (mbl)</div>
           </div>
           <div className="psx-stockgrid-total-card">
-            <div className="psx-stockgrid-total-num">{totals.peer}</div>
-            <div className="psx-stockgrid-total-label">residential (peer)</div>
+            <div className="psx-stockgrid-total-num">{finiteOr(totals?.peer, 0)}</div>
+            <div className="psx-stockgrid-total-label">peer (mobile + residential)</div>
           </div>
         </div>
       )}
@@ -117,11 +131,13 @@ export function PoolStockGrid(props: PoolStockGridProps): JSX.Element {
       {variant === 'compact' ? (
         <ul className="psx-stockgrid-compact">
           {visible.map((c) => {
-            const m = mbl[c] ?? 0;
-            const p = peer[c] ?? 0;
+            const m = finiteOr(mbl[c], 0);
+            const p = finiteOr(peer[c], 0);
             return (
               <li key={c}>
-                <span className="psx-stockgrid-flag">{COUNTRY_FLAGS[c.toLowerCase()] ?? '🌐'}</span>
+                {/* Decorative — the ISO code beside it carries the meaning, and
+                    a screen reader announcing "flag: United States, US" is noise. */}
+                <span className="psx-stockgrid-flag" aria-hidden="true">{COUNTRY_FLAGS[c] ?? '🌐'}</span>
                 <span className="psx-stockgrid-cc">{c.toUpperCase()}</span>
                 <span className="psx-stockgrid-counts">
                   <span className="psx-stockgrid-mbl">{m} mbl</span>
@@ -135,8 +151,8 @@ export function PoolStockGrid(props: PoolStockGridProps): JSX.Element {
       ) : (
         <div className="psx-stockgrid-grid">
           {visible.map((c) => {
-            const m = mbl[c] ?? 0;
-            const p = peer[c] ?? 0;
+            const m = finiteOr(mbl[c], 0);
+            const p = finiteOr(peer[c], 0);
             const total = m + p;
             const healthy = total >= 5;
             return (
@@ -144,11 +160,11 @@ export function PoolStockGrid(props: PoolStockGridProps): JSX.Element {
                 key={c}
                 className="psx-stockgrid-card"
                 data-healthy={healthy ? 'true' : 'false'}
-                title={`${total} endpoints online in ${(COUNTRY_NAMES[c.toLowerCase()] ?? c.toUpperCase())}`}
+                title={`${total} endpoints online in ${COUNTRY_NAMES[c] ?? c.toUpperCase()}`}
               >
-                <div className="psx-stockgrid-card-flag">{COUNTRY_FLAGS[c.toLowerCase()] ?? '🌐'}</div>
+                <div className="psx-stockgrid-card-flag" aria-hidden="true">{COUNTRY_FLAGS[c] ?? '🌐'}</div>
                 <div className="psx-stockgrid-card-cc">{c.toUpperCase()}</div>
-                <div className="psx-stockgrid-card-name">{COUNTRY_NAMES[c.toLowerCase()] ?? '—'}</div>
+                <div className="psx-stockgrid-card-name">{COUNTRY_NAMES[c] ?? '—'}</div>
                 <div className="psx-stockgrid-card-counts">
                   <div>
                     <span className="psx-stockgrid-card-num">{m}</span>
@@ -192,6 +208,7 @@ const COUNTRY_NAMES: Record<string, string> = {
 };
 
 function relTime(unixMs: number): string {
+  if (!Number.isFinite(unixMs)) return '—';
   const diff = Date.now() - unixMs;
   if (diff < 1000) return 'just now';
   if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;

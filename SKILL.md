@@ -57,7 +57,8 @@ within about one business day, then provisioned. Requesting a quote never charge
   unreserved one unless the lease was acquired with `failover: 'strict'`. Full guide:
   [`docs/RESERVED-IPS.md`](./docs/RESERVED-IPS.md).
 - **Pricing:** traffic is identical to the shared pool ($4.00/GB base, volume discounts
-  to $2.40/GB at 250 GB/mo, billed as used, one shared GB balance covers both pools).
+  to $2.40/GB on a **single order of 250 GB+** — *not* a monthly total; billed as used,
+  one shared GB balance covers both pools).
   The only addition is a **monthly reservation fee** - custom-quoted per country + pool size.
 - **Honesty rules (mandatory):** never call committed `peer` capacity
   "exclusive/reserved hardware" (only a *lease* is exclusive, per device); never
@@ -204,8 +205,23 @@ The user needs ONE thing first: a Proxies.sx reseller API key.
 
 - Sign up / log in at [client.proxies.sx](https://client.proxies.sx)
 - Visit [client.proxies.sx/account](https://client.proxies.sx/account)
-- Click "Create API key" with scope `customers:write`
+- Click "Create API key" with scopes **`ports:read` + `ports:write`**
 - Save the `psx_...` value — **server-side only, never expose to the browser**
+
+Those two scopes look wrong and are right. `customers:write` reads like the
+obvious choice for a reseller key and it grants nothing this kit uses — worse, it
+**403s** the live-sessions surface. The reason:
+
+| Surface | Scope required |
+|---|---|
+| `/v1/reseller/pool-keys/*` (mint, list, get, top-up, regenerate, reveal, audit, delete) | **none** — no `ScopesGuard`; the reseller *role* is the gate |
+| `GET /v1/gateway/pool/my-sessions` | `ports:read` |
+| `DELETE /v1/gateway/pool/my-sessions[/:sessionKey]` | `ports:write` |
+| `GET /v1/gateway/pool/stock`, `/v1/gateway/incidents` | none — public |
+
+`hasScope()` matches exact strings or a `prefix:*` wildcard; there is no
+`customers` → `ports` mapping, so a `customers:write`-only key fails every
+`sessions.*` SDK call and the `<ActiveSessionsTable>` component.
 
 The user will also have a "reseller username" of the form `psx_<id>` shown in the same dashboard. That value is safe to reference in proxy URLs (it's the public part of the proxy auth) — it's NOT the secret API key.
 
@@ -346,7 +362,7 @@ const proxies = new ProxiesClient({
 // 1. Mint a key for a customer who just paid
 const key = await proxies.poolKeys.create({
   label: `customer:${customerId}`,
-  trafficCapGB: 10, // null/omit = unlimited within reseller's pool
+  trafficCapGB: 10, // REQUIRED for ordinary resellers — a positive number. null/omit → 400
 });
 
 // 2. Store key.id (for management) and key.key (the pak_ secret) in your DB
@@ -379,7 +395,7 @@ await proxies.poolKeys.topUp(keyId, {              // atomic cap+expiry extensio
   extendDays: 30,
   idempotencyKey: `topup_${invoiceId}`,
 });
-await proxies.poolKeys.regenerate(keyId);          // rotate the secret (old pak_ stops working immediately)
+await proxies.poolKeys.regenerate(keyId);          // rotate the secret (old pak_ dies within ~30s — see below)
 await proxies.poolKeys.reveal(keyId);              // audit-logged unmask (v0.5.0+)
 await proxies.poolKeys.audit({ limit: 50 });       // 90-day forensic log across all keys (v0.5.0+)
 await proxies.poolKeys.auditForKey(keyId);         // forensic log for one key (v0.5.0+)
@@ -440,7 +456,7 @@ await proxies.poolKeys.create({
 
 // Request correlation for support tickets
 try {
-  await proxies.poolKeys.create({ label: 'alice' });
+  await proxies.poolKeys.create({ label: 'alice', trafficCapGB: 10 });
 } catch (err) {
   if (err instanceof ProxiesApiError) {
     logger.error({ status: err.status, requestId: err.requestId, body: err.body });
@@ -466,7 +482,7 @@ Use when the user's backend is **not JavaScript**. The SDK is a thin wrapper aro
 | `GET` | `/v1/reseller/pool-keys/{keyId}` | Fetch a single key by id (v0.3.0+) |
 | `PATCH` | `/v1/reseller/pool-keys/{keyId}` | Update `label` / `enabled` / `trafficCapGB` / `expiresAt` |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/topup` | Atomic cap-and/or-expiry extension (v0.3.0+). Body: `{addTrafficGB?, extendDays?}`. Accepts `Idempotency-Key` |
-| `POST` | `/v1/reseller/pool-keys/{keyId}/regenerate` | Rotate secret (old pak_ stops working immediately). Returns full record from v0.3.0. **Sensitive.** |
+| `POST` | `/v1/reseller/pool-keys/{keyId}/regenerate` | Rotate secret. The old `pak_` keeps authenticating for **up to 30 s** (gateway auth cache) — not an instant kill-switch, see [Revocation timing](#revocation-timing-regenerate-is-not-instant). Returns full record from v0.3.0. **Sensitive.** |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/reveal` | Audit-logged unmask (returns full pak_ + records `reveal` event). Use this in customer-facing UIs instead of displaying the key from `list`. |
 | `DELETE` | `/v1/reseller/pool-keys/{keyId}` | Delete permanently |
 | `GET` | `/v1/reseller/pool-keys/audit` | 90-day forensic log across all keys. Filter via `?action=...`, paginate via `?before=<ISO>&limit=N` |
@@ -498,7 +514,33 @@ UI pattern: catch `FRESH_AUTH_REQUIRED`, prompt the user for their current passw
 
 When traffic crosses `trafficCapGB`, the platform flips `enabled = false` automatically and writes an `auto_suspended_cap_exceeded` audit event. Your reseller must inspect and explicitly top up + re-enable. Don't paper over this with a webhook auto-recreate — the suspend is intentional, to limit blast radius if the key was compromised.
 
-Base URL: `https://api.proxies.sx/v1`. OpenAPI: <https://api.proxies.sx/docs/api-json>. Swagger UI: <https://api.proxies.sx/docs/api>.
+### `trafficCapGB` is mandatory — an uncapped key is partner-only
+
+Every mint and update must carry a **positive** `trafficCapGB`. This is enforced server-side by `assertCapAllowed()` in `src/reseller/services/reseller-pool-access-key.service.ts` and it is the single most common first-run failure:
+
+| You send | Ordinary reseller | Partner account (`poolFreeBandwidth`) or `admin` |
+|---|---|---|
+| `trafficCapGB: 10` | ✅ minted | ✅ minted |
+| `trafficCapGB` omitted / `null` | ❌ `400` — *"An unlimited pool-access-key requires a partner account. Set a GB cap for this key."* | ✅ uncapped |
+| `trafficCapGB: 0` or negative | ❌ `400` — *"Pool-access-key GB cap must be between 1 and N"* | exempt |
+| `trafficCapGB: 0.5` (any fraction) | ❌ `400` — DTO validation is `@IsInt() @Min(1) @Max(100000)`; it never reaches the service check | ❌ **also 400** — the DTO runs first, so partners aren't exempt from *this* one |
+| `trafficCapGB` > `RESELLER_MAX_PAK_CAP_GB` (default 1000) | ❌ same `400` | exempt |
+
+The exemption exists because partner accounts settle wholesale out-of-band; a self-serve reseller minting `null` caps was a real free-traffic exploit (closed 2026-07-22), which is why the check is unconditional. Two consequences for generated code:
+
+1. **Never emit `create({ label })` with no cap** — it 400s on the first call.
+2. There is **no "blocked" sentinel value.** `0` is rejected, not stored. To disable a key use `update(id, { enabled: false })`.
+
+Cap the key to exactly what the customer paid for; that is what makes the auto-suspend above a real spend ceiling rather than a nicety.
+
+Base URL: `https://api.proxies.sx/v1`.
+
+**There is no public OpenAPI document for `/reseller/pool-keys/*`** — `/docs/api`,
+`/docs/api-json`, `/docs/seller` and `/docs/seller-json` are all basic-auth gated and
+return **403** to an anonymous caller (verified 2026-07-27). The table above is the
+reference; don't send a user to a spec URL that will 401 them. What *is* public:
+<https://api.proxies.sx/docs/gateway> (Pool Gateway API — Private Pool leases, x402
+pool; JSON at `/docs/gateway-json`).
 
 ### Mint a key — minimum viable curl
 
@@ -655,7 +697,7 @@ The REST API returns standard HTTP codes. Map them like this:
 | `200` / `201` | Success | Use the response body |
 | `400` | Validation error | Show error details to the user, don't retry |
 | `401` | API key invalid or revoked | Re-mint key from `client.proxies.sx/account` |
-| `403` | Scope insufficient | Add `customers:write` to the key |
+| `403` | Scope insufficient, or the account isn't a reseller | On `/gateway/pool/my-sessions`, add `ports:read` (GET) / `ports:write` (DELETE). On `/reseller/pool-keys/*` no scope is missing — the account lacks the `reseller` role; ask support to grant it |
 | `404` | Key doesn't exist | Stop — don't loop |
 | `429` | Rate-limited | Back off (exponential, start at 1s) |
 | `500–599` | Server error | Retry up to 3× with exponential backoff |
@@ -663,7 +705,7 @@ The REST API returns standard HTTP codes. Map them like this:
 The SDK ships these as typed errors:
 ```ts
 import { ProxiesApiError, ProxiesTimeoutError } from '@proxies-sx/pool-sdk';
-try { await proxies.poolKeys.create({ label: 'x' }); }
+try { await proxies.poolKeys.create({ label: 'x', trafficCapGB: 10 }); }
 catch (err) {
   if (err instanceof ProxiesApiError) {
     if (err.isAuth)        { /* 401/403 */ }
@@ -686,8 +728,37 @@ DO NOT skip these. Burn them into any code generated for the user:
    - ✅ **Session routes are scoped per-customer since 0.6.0** (npm now serves 0.9.0): `createPoolApiHandlers()`'s `/my-sessions` GET + DELETE routes thread the caller's `pakId` via `getUserKeyId` → `sessions.list({ pakId })` / `close(key, { pakId })`, and `ActiveSession` carries `pakKeyId`. ⚠️ Only if you are pinned to the legacy `0.5.x` packages: those routes were NOT scoped (any signed-in customer could list/close other customers' sessions) — upgrade (`npm i @proxies-sx/pool-portal-react@latest`) rather than exposing them. Confirm with `npm view @proxies-sx/pool-portal-react version`.
 3. **Use parameterized SQL** if you're storing keys (the starter app does this — `$1`, `$2` placeholders, never string interpolation).
 4. **Verify Stripe webhook signatures.** The starter app's webhook handler does this; if you adapt it, do not comment out the signature check "to test".
-5. **Rotate leaked `pak_` keys immediately** via `regenerate()` — the old value is invalidated within ~1 second.
+5. **Rotate leaked `pak_` keys immediately** via `regenerate()` — but budget for the **~30 s** revocation window below, and close the live sessions too.
 6. **Store `psx_` keys in a secrets manager**, not in source. The starter uses `.env`; production deployments should use 1Password / Doppler / AWS Secrets Manager / etc.
+
+### Revocation timing: `regenerate()` is not instant
+
+Older revisions of this file claimed the old `pak_` died "within ~1 second."
+That is wrong, and if you build a leaked-credential runbook on it you will
+under-estimate your exposure. What actually happens:
+
+- `regenerate()` swaps the secret in the platform database immediately.
+- The gateway caches auth results for **30 s** (`CACHE_TTL_MS = 30000` in
+  `gateway/src/auth/http-auth.ts`), keyed on `accountId:password`. Nothing
+  invalidates that entry on rotate. **The old secret keeps authenticating new
+  connections for up to 30 s.**
+- **Connections already established are not torn down.** An in-flight tunnel
+  runs until it closes on its own, however long that is.
+- If the platform API is unreachable, the gateway serves last-known-good auth
+  for `GW_AUTH_GRACE_MS` (default **15 min**). A real `valid:false` is always
+  honoured — but during an outage a *stale cached pass* can outlive the rotation.
+
+`update(id, { enabled: false })` sits behind the same 30 s cache, so it is not
+faster. To actually cut a leaked key off:
+
+```ts
+// 1. Kill the secret (new connections stop within ~30s)
+await proxies.poolKeys.regenerate(keyId);
+// 2. Kill the live tunnels the old secret already opened
+await proxies.sessions.closeAll({ pakId: keyId });
+```
+
+Tell customers "revoked within about 30 seconds", never "revoked instantly."
 
 ## Pool IPs are not publicly enumerable (May 2026)
 
@@ -761,30 +832,50 @@ await proxies.poolKeys.update(customer.pakKeyId, { enabled: true });
 
 ### Customer is an AI agent → accept USDC via x402 (instead of, or alongside, Stripe)
 
-If the buyer is an autonomous agent rather than a human with a card, you can sell proxies on the same rail the agent economy already speaks: **HTTP 402 + USDC on-chain**. The agent calls your endpoint, gets `402 Payment Required` with *your* wallet address, pays on Base or Solana, retries with the transaction hash, and you mint a `pak_` capped at exactly what they paid for. You keep the margin between your retail USDC price and the platform's wholesale rate — the same economics as Stripe, on a different rail, with no chargebacks and second-scale settlement.
+If the buyer is an autonomous agent rather than a human with a card, you can sell proxies on the same rail the agent economy already speaks: **HTTP 402 + USDC on-chain**. The agent calls your endpoint, gets `402 Payment Required` with *your* wallet address, signs a USDC payment authorization on Base or Solana, retries with it, and you mint a `pak_` capped at exactly what they paid for. You keep the margin between your retail USDC price and the platform's wholesale rate — the same economics as Stripe, on a different rail, with no chargebacks and second-scale settlement.
 
-The shape, in one breath: **verify the on-chain payment with the public facilitator → mint a `pak_` whose `idempotencyKey` is the transaction hash (so retries never double-mint) → return the proxy URL.** You run no chain node and no payment infrastructure.
+The shape, in three steps: **`/verify` the payload → `/settle` it (this is the step that actually moves the USDC) → mint a `pak_` whose `idempotencyKey` is the settled transaction hash, so retries never double-mint.** You run no chain node and no payment infrastructure.
+
+**Three shape errors to avoid — all three fail silently:**
+
+1. The facilitator body key is **`payment`**, not `signature`.
+2. The amount comes back **nested** as `verify.payment.amount`, not flat as `verify.amount`. Reading it flat yields `NaN` → `0`, so your tolerance check 402s every real payment.
+3. **`verify` alone does not move money — you must call `/settle`.** A verify-only handler mints paks for free.
 
 ```ts
-// Sketch — the full ~80-line drop-in handler is in docs/X402-RESELLER-INTEGRATION.md
+// Sketch — the full drop-in handler is in docs/X402-RESELLER-INTEGRATION.md.
+// `paymentSig` is the base64 payment payload from the Payment-Signature header.
+// It is NOT a tx hash — the tx hash only exists after /settle.
 const verify = await fetch('https://x402.org/facilitator/verify', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ signature: txHash }),
+  body: JSON.stringify({ payment: paymentSig }),
 }).then((r) => r.json());
 
-if (!verify.valid) return Response.json({ error: 'unverified' }, { status: 402 });
+if (!verify.valid || !verify.payment) return Response.json({ error: 'unverified' }, { status: 402 });
+if (parseInt(verify.payment.amount, 10) < requiredMicro) {
+  return Response.json({ error: 'underpaid' }, { status: 402 });
+}
+
+// Collect the money. Skipping this gives bandwidth away.
+const settle = await fetch('https://x402.org/facilitator/settle', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ payment: paymentSig }),
+});
+if (!settle.ok) return Response.json({ error: 'settlement failed' }, { status: 402 });
+const { txHash } = await settle.json();
 
 const key = await proxies.poolKeys.create({
-  label: `x402:${verify.payer}:${txHash.slice(0, 10)}`,
-  trafficCapGB: gbPaidFor,
+  label: `x402:${verify.payment.payer}:${txHash.slice(0, 10)}`,
+  trafficCapGB: gbPaidFor,          // REQUIRED — positive number; null/omit → 400
   expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
-  idempotencyKey: txHash, // the tx hash IS the natural dedupe key
-});
+  idempotencyKey: txHash,           // settled hash: unique, and 8-128 [A-Za-z0-9_-]
+});                                 // (a raw base64 paymentSig would be rejected)
 return Response.json({ proxyUrl: proxies.buildProxyUrl(key.key, { country, rotation: 'sticky' }) });
 ```
 
-**Full code + flow diagram + security model:** [`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md). **Operational wallet setup** (creating Base + Solana wallets, env config, end-to-end test, treasury hygiene): the [x402 and Wallet Setup wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup). This is the canonical pattern — there is no `@proxies-sx/pool-portal-x402` package yet (a `createX402PaidProxyHandler()` factory is earmarked for 0.7.x); until then, the copy-paste handler in the doc IS the implementation.
+**Full code + flow diagram + security model:** [`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md). **Operational wallet setup** (creating Base + Solana wallets, env config, end-to-end test, treasury hygiene): the [x402 and Wallet Setup wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup). There is no `@proxies-sx/pool-portal-x402` package yet (a `createX402PaidProxyHandler()` factory is earmarked for 0.7.x), so the handler in that doc is the reference implementation. **Its request/response shapes are traced from `src/x402/x402-facilitator.service.ts` but the handler has not been run end-to-end as written, and facilitator shapes vary by vendor — tell the user to smoke-test one testnet payment before taking real money.**
 
 ---
 

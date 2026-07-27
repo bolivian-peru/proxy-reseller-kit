@@ -14,7 +14,18 @@
 
 Upstream service: **Proxies.sx Pool Gateway** at `gw.proxies.sx:7000` (HTTP) and `:7001` (SOCKS5). The **peer** network is the flagship pool — mixed mobile + residential IPs across ~82–120 countries. The **mbl** (production ProxySmart modem) tier is the supportive tier: exactly 6 countries — **US, GB, FR, NL, PL, GE (Georgia — *not* Germany; `de` has no `mbl` stock)**. Both bill at $4/GB, volume-discounted to $2.40/GB at 250 GB+; duration is free. Live rates in the `client.proxies.sx` dashboard — don't hardcode prices anywhere.
 
-Reseller API: `https://api.proxies.sx/v1/reseller/pool-keys`. Auth with an API key (`psx_*`) minted at `client.proxies.sx/account` with scope `customers:write`.
+Reseller API: `https://api.proxies.sx/v1/reseller/pool-keys`. Auth with an API key (`psx_*`) minted at `client.proxies.sx/account` with scopes **`ports:read` + `ports:write`**.
+
+Those two scopes are what the SDK actually needs, and the reason is worth knowing because the naming is counter-intuitive:
+
+| Surface | Guard | Scope required |
+|---|---|---|
+| `/v1/reseller/pool-keys/*` (mint, list, top-up, regenerate, reveal, audit, delete) | `JwtOrApiKeyAuthGuard` + `ResellerOnlyGuard` | **none** — no `ScopesGuard` is applied; the reseller *role* is the gate |
+| `GET /v1/gateway/pool/my-sessions` | + `ScopesGuard` | `ports:read` |
+| `DELETE /v1/gateway/pool/my-sessions[/:sessionKey]` | + `ScopesGuard` | `ports:write` |
+| `GET /v1/gateway/pool/stock`, `/v1/gateway/incidents` | none | public |
+
+So `customers:write` — which reads like the obvious choice and which older revisions of this file recommended — grants nothing the kit uses and **403s the live-sessions surface**. `hasScope()` (`src/auth/api-key.service.ts`) matches exact strings or a `prefix:*` wildcard; there is no `customers` → `ports` mapping, so a `customers:write`-only key fails `ActiveSessionsTable` and every `sessions.*` SDK call.
 
 **The username DSL has exactly one source of truth in this repo: [`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md).** It was previously copy-pasted into five files, which drifted into contradicting each other and the gateway. When gateway routing behaviour changes, update that file and let the others keep linking to it. Do not reintroduce a second full token table.
 
@@ -160,10 +171,10 @@ npm publish --access public
 0a. **A cross-package contract must name an owner for every file it touches.** The `-pin-lease-` rollout nearly shipped backend-first while nobody owned `username-parser.ts`, whose `PinConfig` lacked `'lease'` — and the parser **drops an unknown pin type silently**. Every Reserved-IP credential would have routed to a random shared exit while reporting `200`. When a change spans gateway + backend + SDK, enumerate the files first and assign each one.
 
 1. `buildProxyUrl()` output MUST be URL-encoded — username/password may contain `@`/`:` in the user's `sid` token.
-2. `pak_` keys regenerated via `regenerate()` invalidate the old value **immediately** — the old pak_ stops working mid-session.
-3. `trafficCapGB: null` means "unlimited within reseller's own pool." `0` would mean "blocked." Never confuse them.
+2. `pak_` keys regenerated via `regenerate()` invalidate the old value at the **platform** immediately, but the gateway caches auth results for **up to 30 s** (`CACHE_TTL_MS = 30000`, `gateway/src/auth/http-auth.ts`), keyed on `accountId:password`. So the old secret keeps authenticating **new** connections for up to 30 s after you rotate, and connections already established are **not** torn down — an in-flight tunnel runs until it closes on its own. Treat rotation as "leaked key stops working within ~30 s", never as an instant kill-switch. If the backend is unreachable the gateway additionally serves last-known-good auth for `GW_AUTH_GRACE_MS` (default 15 min) — a real `valid:false` is always honoured, but a *stale-cached* pass can outlive the rotation during an outage. For an immediate hard stop, `update(id, { enabled: false })` has the same 30 s cache floor, so also close the sessions (`client.sessions.closeAll({ pakId })`).
+3. `trafficCapGB` must be a **whole number ≥ 1** for an ordinary reseller, and it is checked in two places. **The DTO runs first** (`src/reseller/dto/`): `@IsInt() @Min(1) @Max(100_000)` — so `0.5`, `0.1`, or any fraction is a `400` for *everyone*, partner accounts included. **Then `assertCapAllowed()`** (`src/reseller/services/reseller-pool-access-key.service.ts`) applies the business rule: `null`/omitted means "unlimited" and is **partner-only**, rejected with `400 "An unlimited pool-access-key requires a partner account. Set a GB cap for this key."` unless the account has `poolFreeBandwidth` or the `admin` role, and a finite cap must satisfy `0 < cap <= RESELLER_MAX_PAK_CAP_GB` (default **1000**) or you get `400 "Pool-access-key GB cap must be between 1 and N"`. `0` is rejected by both, so there is no "blocked" sentinel — use `enabled: false` to disable a key. **The practical consequence: 1 GB is the smallest sellable slice.** If your product sells fractions of a GB, track that in your own ledger and still mint the pak at a whole number.
 4. `expiresAt: null` means "never expires." Setting a Date or ISO string in the past is rejected by the platform — use `enabled: false` to disable a key, not a past date.
-5. Expired keys are rejected by the gateway **immediately** (inline check on every auth). The platform's nightly cron at 03:30 UTC just flips `enabled = false` for tidiness; revocation does not depend on it.
+5. Expiry is enforced **inline on every auth** by the platform (`src/gateway/gateway.service.ts` compares `pak.expiresAt` to now), not by a scheduled job — the nightly 03:30 UTC cron only flips `enabled = false` for tidier admin queries, and revocation does not depend on it. Subject to the same 30 s auth cache as invariant 2, so the practical rejection window is "within 30 s of the expiry instant", not the exact second.
 6. The SDK never caches responses. Callers who need caching layer it themselves (React Query, SWR, etc.).
 
 ## Common agent tasks (continued)
@@ -177,7 +188,7 @@ npm publish --access public
 
 **`psx_` API key callers bypass fresh-auth.** The platform's `FreshAuthGuard` only fires on interactive JWT sessions. SDK consumers using a server-stored `psx_` API key never see `FRESH_AUTH_REQUIRED` 401s and don't need to handle them. This is intentional — server-side automation can't re-authenticate interactively.
 
-**Compensating controls** (so the SDK isn't the weak link): per-key rate limit (passport-strategy enforced), scope checks (`customers:write` for pool-keys ops), and a 90-day audit log on every mutation that records `ip`, `userAgent`, `requestId`, and `authMethod: 'apiKey'`.
+**Compensating controls** (so the SDK isn't the weak link): per-key rate limit (passport-strategy enforced), a role gate (`ResellerOnlyGuard` — pool-keys routes carry no `ScopesGuard`, so the reseller role *is* the authorization check there; scopes only bite on the `/gateway/pool/my-sessions` surface, see the table above), and a 90-day audit log on every mutation that records `ip`, `userAgent`, `requestId`, and `authMethod: 'apiKey'`.
 
 **Auto-suspend on cap**: when a `pak_`'s `trafficUsedMB / 1024 >= trafficCapGB`, the platform flips `enabled = false` automatically and records `auto_suspended_cap_exceeded`. The SDK's `topUp()` extends the cap but does NOT auto re-enable — callers must explicitly `update(id, { enabled: true })` to bring a suspended key back online. This is by design: a leaked key that auto-recovered would defeat the suspend.
 

@@ -161,8 +161,15 @@ provision leases against your own pool and hand the customer the generated
 credential.
 
 Traffic bills exactly like the shared pool — **$4.00/GB, discounted to
-$2.40/GB at 250 GB+/month, duration free** — from the same GB balance. Anything
-above that is your retail margin.
+$2.40/GB on a single order of 250 GB+, duration free** — from the same GB
+balance. Anything above that is your retail margin.
+
+The discount tier is set by the quantity on **one purchase**, not by a monthly
+running total (`VOLUME_DISCOUNTS` in `src/billing/slot-tier.service.ts` —
+"based on single purchase quantity"). Topping up 10 GB at a time all month
+earns **0%** every time, so a lease priced against an assumed 40% monthly tier
+loses the difference on every GB. Full table:
+[`PRIVATE-POOL.md`](./PRIVATE-POOL.md#pricing).
 
 ### Honesty rules
 

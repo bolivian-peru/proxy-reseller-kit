@@ -88,8 +88,13 @@ Aliases are accepted and corrected silently: `mobile`/`modem`/`lte`/`4g`/`5g` �
 > **`ge` is GEORGIA, not Germany.** Germany is `de`, and `de` has **no `mbl`
 > stock** — `mbl-de` always fails. Use `peer-de`.
 
-Both pools bill identically: **$4.00/GB, volume-discounted to $2.40/GB at
-250 GB+/month. Duration is free — you pay for traffic only.**
+Both pools bill identically: **$4.00/GB, volume-discounted to $2.40/GB on a
+single order of 250 GB+. Duration is free — you pay for traffic only.**
+
+> The discount tier comes from the quantity on **one purchase**, not from a
+> monthly total — nothing accumulates across the month. 25 orders of 10 GB earn
+> **0%**; one order of 250 GB earns 40%. Full table and the margin trap it
+> creates: [`PRIVATE-POOL.md`](./PRIVATE-POOL.md#pricing).
 
 **Per-pool stock differs per country.** A country can have modems but no peers,
 or the reverse. Filter your country picker by the selected pool using the live

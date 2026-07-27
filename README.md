@@ -119,9 +119,11 @@ credentials (not exclusive hardware; peers stay community-shared by nature). Sam
 `pak_` keys, same username DSL (`-sid-`, `-rot-`, `-city-`, `-carrier-`), just
 scoped to your allocation - switching the pool token is the whole integration.
 
-Traffic pricing is identical to the shared pool: $4.00/GB with the standard monthly
-volume tiers (-10% from 25 GB, -20% from 50 GB, -30% from 100 GB, -40% from 250 GB),
-billed only as used from the same GB balance that covers both pools. The only
+Traffic pricing is identical to the shared pool: $4.00/GB with the standard volume
+tiers (-10% from 25 GB, -20% from 50 GB, -30% from 100 GB, -40% from 250 GB). **The
+tier comes from the size of a single order, not a monthly total** — 25 orders of
+10 GB earn 0%; one order of 250 GB earns 40%. Billed only as used from the same GB
+balance that covers both pools ([full table](./docs/PRIVATE-POOL.md#pricing)). The only
 addition is a **monthly reservation fee**, quoted per country and pool size. Private
 Pool is quote-based, not instant checkout - reserving real devices needs a capacity
 check - so you configure and request at
@@ -270,19 +272,19 @@ import { PakQuickstart } from '@proxies-sx/pool-portal-react';
 import '@proxies-sx/pool-portal-react/styles.css';
 
 <PakQuickstart
-  pak={pak.key}
-  secret={pakSecret}        // optional; defaults to placeholder
+  proxyUsername={process.env.NEXT_PUBLIC_PROXIES_SX_USERNAME!}  // REQUIRED — your psx_ reseller username
+  pak={pak.key}                                                 // the customer's pak_ → rendered as the PASSWORD
   capGB={pak.trafficCapGB}
   usedGB={pak.trafficUsedMB / 1024}
 />
 ```
 
-> ⚠️ **Verify the string this renders against your own account before putting it
-> in front of customers.** Run the curl above with the exact output. The
-> authoritative credential shape is `psx_<reseller>-<pool>-<cc>` as the username
-> with the `pak_` as the password — if what you see differs, prefer the
-> `buildProxyUrl` output in option 1 and
-> [open an issue](https://github.com/bolivian-peru/proxy-reseller-kit/issues).
+`proxyUsername` is required, and it is the whole reason this component is safe
+to hand a customer: it renders `psx_<you>-<pool>-<cc>` in the username field and
+your customer's `pak_` in the password field, matching what `buildProxyUrl`
+produces. Pass your **reseller `proxyUsername`** (`psx_…`, shown in the
+`client.proxies.sx` dashboard) — never the `psx_` **API key**, which is a
+different secret and must stay server-side.
 
 **3. Email it on mint** — send the credentials plus a working one-liner. Even a
 single line converts far better than no email:
@@ -436,7 +438,7 @@ Endpoints (`X-API-Key` auth, [`psx_` keys minted at client.proxies.sx/account](h
 | `POST` | `/v1/reseller/pool-keys/:id/regenerate` | Rotate secret. Returns full record from v0.3.0 |
 | `DELETE` | `/v1/reseller/pool-keys/:id` | Delete |
 
-Full spec: [api.proxies.sx/docs/api](https://api.proxies.sx/docs/api) (Swagger UI) | [api.proxies.sx/docs/api-json](https://api.proxies.sx/docs/api-json) (OpenAPI 3.0)
+The table above is the full pool-keys surface — there is no public OpenAPI document for it (`/docs/api` and `/docs/seller` are basic-auth gated and 403 anonymously). The publicly readable spec is [api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway) (Pool Gateway API — Private Pool leases, x402 pool).
 
 **v0.3.0 production-readiness features:**
 - `Idempotency-Key` header on writes — dedupes retries within 24h. Critical for webhook handlers and payment flows.

@@ -117,15 +117,45 @@ function slugToken(value: string): string {
  * (unknown token) so you get a fresh synthetic session per connection and no
  * stickiness. Always use `-sid-<id>` (this helper always emits `sid`).
  *
- * **IP-stability contract.** Sticky pins the *modem*, not the IP — mobile
- * carrier CGNAT may still re-NAT the exit IP. For an IP that holds across a
- * whole workflow (cf_clearance, banking 2FA), prefer `pool: 'mbl'` with
- * `rotation: 'sticky'` (ultra-stable carrier modems). The `peer` pool is the
- * flagship community network (mixed mobile + residential across 80+ countries);
- * its residential IPs hold longer, but per-endpoint reliability varies, so for a
- * guaranteed held IP a dedicated modem is the strongest option. `strict: true`
- * tightens the pick further (see {@link BuildProxyUrlOpts.strict}); a Reserved
- * IP lease (`pin: { type: 'lease', … }`) is the only held-endpoint guarantee.
+ * **Emission contract — this function is the reference implementation.** Any
+ * wrapper that builds a proxy URL (a portal form, a React generator, a CLI)
+ * must produce the same token string for the same inputs, so the rules are
+ * stated rather than left to be re-derived:
+ *
+ * - Every routing value you set is emitted. The builder never silently drops
+ *   one because it looks redundant for the chosen pool — see `ipType`.
+ * - Any **finite** `ttl` is **clamped** into `60..2_592_000` — never dropped
+ *   and never thrown on. Dropping it falls back to the gateway default of
+ *   3600, which shortens a session the caller explicitly asked to lengthen.
+ *   (`NaN` / `Infinity` have no clamp target and emit no token at all.)
+ * - `carrier` / `isp` / `city` are **slugified** to one `[a-z0-9_]` token,
+ *   because a raw value like `"T-Mobile US"` would split on its own hyphen.
+ * - The only deliberate omissions are the gateway's own defaults —
+ *   `rotation: 'none'`, `rotation: 'auto10'`, `failover: 'samecountry'` — plus
+ *   `strict` under a rotation mode the gateway would not honor it in.
+ * - Only two things throw: `sid` and `pin.id`. Both are validated precisely
+ *   *because* the gateway does not fail on them — a mangled sid routes to the
+ *   wrong session and an unresolvable pin falls through to shared selection,
+ *   with no error either way. Everywhere else, be no stricter than the
+ *   self-healing parser.
+ *
+ * **IP-stability contract.** Sticky pins the *modem*, not the IP — and `hard`
+ * is the same thing spelled differently (the gateway maps both to a rotation
+ * interval of `0` and routes them down the identical pinned path). Neither
+ * holds an IP: mobile carrier CGNAT re-NATs the exit address on its own
+ * cadence, so a perfectly-pinned modem still surfaces different IPs. Ranked by
+ * how well an IP actually holds:
+ *
+ * 1. A Reserved IP lease (`pin: { type: 'lease', … }`) — the only held-endpoint
+ *    guarantee, and the only thing to sell for cf_clearance / banking 2FA.
+ * 2. `pool: 'peer'` residential — real home/ISP IPs, typically hours-to-days.
+ *    Per-endpoint reliability varies more than a modem's.
+ * 3. `pool: 'mbl'` with `rotation: 'sticky'`, optionally `strict: true` (see
+ *    {@link BuildProxyUrlOpts.strict}) — the calmest carrier modem available,
+ *    chosen on observed rotation history. Rock-solid *connection*, still
+ *    behind carrier CGNAT, still not a held IP.
+ *
+ * Never promise a customer "the same IP" on the strength of a rotation mode.
  *
  * **Reliability / auto-failover (gateway-side, automatic).** Your customers do
  * not need to handle dead exits. The gateway runs connect-phase auto-failover:
@@ -227,7 +257,11 @@ export function buildProxyUrl(
   // `asn: 21928`. Live per-carrier stock: `client.pool.getCarrierStock(cc)`.
   if (isp) tokens.push('isp', slugToken(isp));
   if (asn) tokens.push('asn', String(asn));
-  // Hard IP-class filter (`-iptype-mobile|residential|datacenter`).
+  // Hard IP-class filter (`-iptype-mobile|residential|datacenter`). Emitted
+  // for EVERY pool — deliberately not gated on `pool`. Suppressing it for
+  // `mbl` (all-mobile by definition) would turn an unsatisfiable request into
+  // a silently-different one: `mbl` + `residential` must reach the gateway so
+  // it can answer 502 E_NO_STOCK_COUNTRY instead of quietly serving mobile.
   if (ipType) tokens.push('iptype', ipType);
   if (city) tokens.push('city', slugToken(city));
   if (sid) {
@@ -255,9 +289,16 @@ export function buildProxyUrl(
     validatePin(pin);
     tokens.push('pin', pin.type, pin.id);
   }
-  // Session-row TTL, clamped to the gateway's accepted range [60, 2_592_000].
+  // Session-row TTL, CLAMPED to the gateway's accepted range [60, 2_592_000]
+  // — never dropped, never thrown. The gateway clamps to the same bounds and
+  // records a correction rather than erroring, so clamping here keeps the two
+  // in agreement. Omitting an out-of-range value instead would silently fall
+  // back to the gateway default of 3600 and quietly shorten a long session.
+  // A non-finite value has no meaningful clamp target and would emit a
+  // literal `-ttl-NaN`, so it is skipped (the gateway would default it to
+  // 3600 either way — this just keeps the copied credential clean).
   // Immutable once the session row exists — a new `sid` is what changes it.
-  if (ttl !== undefined) {
+  if (ttl !== undefined && Number.isFinite(ttl)) {
     const clampedTtl = Math.min(2_592_000, Math.max(60, Math.round(ttl)));
     tokens.push('ttl', String(clampedTtl));
   }

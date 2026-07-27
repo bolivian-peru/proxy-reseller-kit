@@ -9,6 +9,7 @@ import {
   useMemo,
   useState,
 } from 'react';
+import { buildProxyUrl, type BuildProxyUrlOpts } from '@proxies-sx/pool-sdk';
 import type {
   Country,
   Pool,
@@ -62,7 +63,12 @@ export interface PoolSessionSpawnerProps {
    * The component holds this in component state only — never logs it.
    */
   proxyPassword: string;
-  /** Available countries the user can choose. Defaults to the current Pool Gateway list. */
+  /**
+   * Available countries the user can choose. Defaults to the current Pool
+   * Gateway list. Safe to load asynchronously: when the list changes and the
+   * current selection is no longer in it, the picker re-seeds to the first
+   * entry rather than leaving state pointing at a country it no longer shows.
+   */
   countries?: readonly Country[];
   /**
    * Live per-country stock, e.g. from `usePoolStock(apiRoute).data`. When
@@ -316,34 +322,94 @@ function routableCount(stock: PoolStock | undefined, country: Country, pool: Poo
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
+/**
+ * Stable identity of one carrier row, used as both the React key and the
+ * <select> value.
+ *
+ * The platform builds carrier stock by merging entries on `${name}|${ipType}`
+ * (`getCarrierStock`, `gateway.service.ts`), and the combined mobile+peer list
+ * leaves `asn` null for every modem carrier. So neither `name` nor `asn` is
+ * unique on its own — the merge key is, which makes it the one correct choice
+ * here too.
+ */
+function carrierOptionKey(entry: CarrierStockEntry): string {
+  return `${entry.name}|${entry.ipType}`;
+}
+
+/**
+ * Narrow a carrier row's advertised access class to the three values the DSL
+ * accepts. `CarrierStockEntry.ipType` is deliberately widened to `string` in the
+ * SDK so an unknown class from a newer platform doesn't break the build —
+ * anything unrecognised means "don't emit a class filter".
+ */
+function ipClassOf(
+  entry: CarrierStockEntry | null,
+): 'mobile' | 'residential' | 'datacenter' | undefined {
+  switch (entry?.ipType) {
+    case 'mobile':
+      return 'mobile';
+    case 'residential':
+      return 'residential';
+    case 'datacenter':
+      return 'datacenter';
+    default:
+      return undefined;
+  }
+}
+
 function randomPrefix(): string {
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
   return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
 /**
- * Build a single proxy URL. Same DSL as `client.proxies.sx/pool-proxy`.
- *
- * The credentials half (`username:password`) is URL-encoded, so user-
- * supplied sids with `@` / `:` / `/` survive into the username portion
- * intact.
- *
- * `ttlSeconds` (when supplied) appends `-ttl-N` to the username — the
- * gateway accepts 60–2,592,000 and clamps out-of-range values server-side.
- *
- * @public
- */
-/**
  * Slugify a free-text value (carrier name) into a DSL-safe token.
  * The gateway lowercases the whole username, splits on `-`, then per token keeps
  * only `[a-z0-9_]` (max 64). So the value must contain no `-`, spaces, or
  * punctuation. Multi-word values collapse to a single token (e.g.
  * "New York" -> "newyork", "T-Mobile US" -> "tmobileus").
+ *
+ * `buildProxyString` and `buildProxyUrl` already apply this rule to the carrier
+ * they are given, so pass those a raw display name. This helper is for
+ * hand-rolled UIs that assemble a username token string themselves.
  */
 export function slugifyDsl(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 64);
 }
 
+/**
+ * Build a single proxy URL for one spawned row. Same DSL as
+ * `client.proxies.sx/pool-proxy`.
+ *
+ * This is a thin wrapper around `buildProxyUrl` from `@proxies-sx/pool-sdk`,
+ * which that package documents as the reference implementation of the emission
+ * contract: *"any wrapper that builds a proxy URL must produce the same token
+ * string for the same inputs"*. The only thing added here is deriving the sid
+ * from `sessionType` / `sessionPrefix` / `index`; every routing token, the
+ * URL-encoding of the credentials, and the protocol→port mapping come from that
+ * one builder. A second copy of the token logic lived here previously and drifted
+ * out of agreement with it on two tokens (`ttl` and `iptype`), which is exactly
+ * the failure this wrapper now cannot have.
+ *
+ * Three consequences worth knowing, all inherited from the SDK builder:
+ *
+ * - **It throws `ProxiesConfigError`** for a sid outside `^[a-z0-9_]{1,64}$`,
+ *   or an empty `proxyUsername` / `proxyPassword`. The gateway does NOT fail on
+ *   a mangled sid — it silently sanitizes it, so `sid-cust-11` and `sid-cust-12`
+ *   both parse to session `cust` and N supposedly-unique proxies quietly share
+ *   one modem. There is no runtime error to catch, so it is raised at build
+ *   time. The component only ever passes `<8 random chars><index>`, which always
+ *   satisfies the rule; the throw guards direct callers of this export.
+ * - **`ttlSeconds` is clamped** into 60–2,592,000 s, never dropped. Dropping an
+ *   out-of-range value falls back to the gateway default of 3600 s, silently
+ *   shortening a session the caller explicitly asked to lengthen.
+ * - **`ipType` is emitted for every pool**, `mbl` included. An unsatisfiable
+ *   combination (`mbl` + `residential`) has to reach the gateway so it can
+ *   answer `502 E_NO_STOCK_COUNTRY`; suppressing the token would hand the caller
+ *   mobile IPs while they believe they asked for residential.
+ *
+ * @public
+ */
 export function buildProxyString(opts: {
   proxyUsername: string;
   proxyPassword: string;
@@ -355,7 +421,11 @@ export function buildProxyString(opts: {
   sessionPrefix: string;
   index: number;
   gatewayHost?: string;
-  /** Optional session TTL override in seconds (60–2,592,000). @since 0.4.2 */
+  /**
+   * Optional session-row TTL override in seconds. Any finite value is CLAMPED
+   * into 60–2,592,000 and always emitted — the gateway clamps to the same
+   * bounds and records a correction rather than erroring. @since 0.4.2
+   */
   ttlSeconds?: number;
   /** Hard ASN filter (peer pool) — exact match, e.g. 21928 (T-Mobile). @since 0.8.0 */
   asn?: number;
@@ -367,11 +437,10 @@ export function buildProxyString(opts: {
    */
   failover?: FailoverPolicy;
   /**
-   * Hard IP-class filter (peer/any pools). `mobile` = cellular-carrier exit
-   * IPs, `residential` = home/ISP IPs, `datacenter` = hosting IPs. Emits
-   * `-iptype-<v>`; the endpoint must be that verified class (unclassified
-   * peers are excluded). The mbl pool is mobile by construction, so this is
-   * only meaningful for peer/any. @since 0.11.0
+   * Hard IP-class filter. `mobile` = cellular-carrier exit IPs,
+   * `residential` = home/ISP IPs, `datacenter` = hosting IPs. Emits
+   * `-iptype-<v>` for EVERY pool, `mbl` included; the endpoint must be that
+   * verified class (unclassified peers are excluded). @since 0.11.0
    */
   ipType?: 'mobile' | 'residential' | 'datacenter';
   /**
@@ -383,43 +452,33 @@ export function buildProxyString(opts: {
    */
   strict?: boolean;
 }): string {
-  const port = opts.protocol === 'http' ? 7000 : 7001;
-  const tokens = [opts.pool, opts.country];
+  // 'same' shares one sid across every row, so all rows land on one session and
+  // one endpoint. 'unique' and 'none' both get a per-row sid — they differ only
+  // in the caller's intent, never in wire format, because emitting N identical
+  // strings from a spawner is a UX bug, not a feature.
+  const sid =
+    opts.sessionType === 'same' ? opts.sessionPrefix : `${opts.sessionPrefix}${opts.index}`;
+
+  const urlOpts: BuildProxyUrlOpts = {
+    pool: opts.pool,
+    country: opts.country,
+    protocol: opts.protocol,
+    rotation: opts.rotation,
+    sid,
+    ipType: opts.ipType,
+    strict: opts.strict,
+    failover: opts.failover,
+    ttl: opts.ttlSeconds,
+    host: opts.gatewayHost,
+  };
   // Carrier/ISP targeting differs by pool: the peer pool pins by exact ASN
-  // (`-asn-<n>`); the mbl/any pool matches by carrier name (`-carrier-<slug>`).
-  // Never emit -asn- on mbl — it can filter modem stock to zero.
-  if (opts.asn) tokens.push('asn', String(opts.asn));
-  else if (opts.carrierName) tokens.push('carrier', slugifyDsl(opts.carrierName));
-  // Hard IP-class filter. Meaningful for peer/any; a no-op on mbl (which is
-  // mobile by construction), so we only emit it when the pool isn't mbl.
-  if (opts.ipType && opts.pool !== 'mbl') tokens.push('iptype', opts.ipType);
-  // Always inject a sid when spawning a multi-row table. 'same' shares one;
-  // 'unique' and 'none' both give per-row sids — the only difference is that
-  // 'none' callers don't want long-lived stickiness, but the URLs must still be
-  // distinct or the spawner is useless (4 identical strings is a UX bug).
-  // The gateway will still synthesize a fresh internal session when needed.
-  if (opts.sessionType === 'same') tokens.push('sid', opts.sessionPrefix);
-  else tokens.push('sid', `${opts.sessionPrefix}${opts.index}`);
-  if (opts.rotation !== 'none' && opts.rotation !== 'auto10') {
-    tokens.push('rot', opts.rotation);
-  }
-  // Bare `strict` flag — no value, the parser consumes a single part. The
-  // gateway selector only reads it when the rotation is sticky or hard
-  // (`strictSticky = stickyMode and ARGV[16] == '1'`), so emitting it for a
-  // rotating mode is inert noise in the credential. Only emit where it acts.
-  if (opts.strict && (opts.rotation === 'sticky' || opts.rotation === 'hard')) {
-    tokens.push('strict');
-  }
-  // samecountry is the gateway default — only emit -failover- when overriding.
-  if (opts.failover && opts.failover !== 'samecountry') {
-    tokens.push('failover', opts.failover);
-  }
-  if (opts.ttlSeconds && opts.ttlSeconds >= 60 && opts.ttlSeconds <= 2_592_000) {
-    tokens.push('ttl', String(opts.ttlSeconds));
-  }
-  const username = `${opts.proxyUsername}-${tokens.join('-')}`;
-  const host = opts.gatewayHost ?? 'gw.proxies.sx';
-  return `${opts.protocol}://${encodeURIComponent(username)}:${encodeURIComponent(opts.proxyPassword)}@${host}:${port}`;
+  // (`-asn-<n>`); the mbl/any pool matches by carrier name (`-carrier-<slug>`,
+  // slugified by the builder). Never emit -asn- on mbl — it can filter modem
+  // stock to zero.
+  if (opts.asn) urlOpts.asn = opts.asn;
+  else if (opts.carrierName) urlOpts.carrier = opts.carrierName;
+
+  return buildProxyUrl(opts.proxyUsername, opts.proxyPassword, urlOpts);
 }
 
 /**
@@ -501,14 +560,49 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
   const [count, setCount] = useState(5);
   const [country, setCountry] = useState<Country>(defaultCountry);
   const [pool, setPool] = useState<Pool>(defaultPool);
-  // Carrier/ASN selection — peer pool only. 0 = any carrier. Reset when the
-  // scope (country/pool) changes, since a carrier in one country doesn't apply
-  // to another. Live stock is supplied by the host via the `carrierStock` prop
-  // (see the `usePoolCarrierStock` hook).
-  const [carrierAsn, setCarrierAsn] = useState<number>(0);
+  // One invariant, enforced every render: the selected country is always one the
+  // picker is currently OFFERING. The host may load `countries` asynchronously
+  // (a Private Pool's allowed list only arrives with the first poll) or narrow it
+  // later, and a <select> whose `value` matches none of its options silently
+  // renders a different one — so state that outlives the list makes the picker
+  // DISPLAY one country and EMIT another.
+  //
+  // The empty list is the same invariant, not a special case: falling back to
+  // `''` (rather than leaving the stale choice, or `undefined`, which would make
+  // the <select> uncontrolled) both keeps the control controlled and trips the
+  // `!country` guards on generate. Same rule as the reserved-IP country picker
+  // in PrivatePoolPanel.
   useEffect(() => {
-    setCarrierAsn(0);
+    if (!countries.includes(country)) setCountry(countries[0] ?? '');
+  }, [countries, country]);
+  // Carrier/ISP selection — '' = any carrier. Keyed by the carrier row's own
+  // identity rather than its ASN: the platform merges carrier stock by
+  // `${name}|${ipType}` (gateway.service.ts), so one ASN can surface as two rows
+  // ("AT&T (mobile)" and "AT&T (residential)"). Selecting by ASN alone collides
+  // in React AND throws the class away at generation time. Reset when the scope
+  // (country/pool) changes, since a carrier in one country doesn't apply to
+  // another. Live stock is supplied by the host via the `carrierStock` prop
+  // (see the `usePoolCarrierStock` hook).
+  const [carrierKey, setCarrierKey] = useState('');
+  useEffect(() => {
+    setCarrierKey('');
   }, [country, pool]);
+  // Which carrier rows the SELECTED POOL can actually express. The peer pool
+  // routes the choice as a hard `-asn-<n>`, so a row with no AS number has
+  // nothing to emit there. mbl / any match on the carrier NAME instead, and the
+  // platform leaves `asn` null on every modem carrier (`getMblCarrierStock`), so
+  // requiring an ASN for those pools empties the picker that exists to serve
+  // them. Offering an option the generator cannot emit is the same defect as
+  // showing one country and routing to another, so the list and the emission
+  // below read from one rule.
+  const selectableCarriers = useMemo(
+    () => carrierStock.filter((c) => pool !== 'peer' || c.asn != null),
+    [carrierStock, pool],
+  );
+  const selectedCarrier = useMemo(
+    () => selectableCarriers.find((c) => carrierOptionKey(c) === carrierKey) ?? null,
+    [selectableCarriers, carrierKey],
+  );
   // Hard IP-class filter — peer/any pools only ('' = any class). mbl is mobile
   // by construction, so we reset the filter whenever mbl is selected.
   const [ipType, setIpType] = useState<'' | 'mobile' | 'residential' | 'datacenter'>('');
@@ -542,7 +636,9 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
   const depth = routable === null ? null : stockDepthFor(routable, pool);
 
   const handleGenerate = useCallback(() => {
-    if (!proxyUsername || !proxyPassword) return;
+    // No country means no routing target: the emitted username would be
+    // `…-mbl--sid-…`, which the gateway reads as country ANY and heals silently.
+    if (!proxyUsername || !proxyPassword || !country) return;
     const urls: string[] = [];
     for (let i = 1; i <= count; i++) {
       urls.push(
@@ -551,12 +647,13 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
           sessionType, sessionPrefix, index: i, gatewayHost,
           ttlSeconds, failover,
           // peer pool pins by exact ASN; mbl/any matches by carrier name.
-          asn: pool === 'peer' && carrierAsn ? carrierAsn : undefined,
-          carrierName:
-            pool !== 'peer' && carrierAsn
-              ? carrierStock.find((c) => c.asn === carrierAsn)?.name
-              : undefined,
-          ipType: ipType || undefined,
+          asn: pool === 'peer' ? selectedCarrier?.asn ?? undefined : undefined,
+          carrierName: pool !== 'peer' ? selectedCarrier?.name : undefined,
+          // An explicit IP-class choice wins. Otherwise inherit the class the
+          // chosen carrier row advertises: the option reads "AT&T (residential)",
+          // so the credential has to say residential too — an ASN alone can span
+          // both classes, and dropping the token hands back whatever the pool has.
+          ipType: ipType || ipClassOf(selectedCarrier),
           strict,
         }),
       );
@@ -567,7 +664,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
       count, country, pool, protocol, rotation, sessionType, failover, sessionPrefix,
       generatedAt: Date.now(),
     });
-  }, [proxyUsername, proxyPassword, count, country, pool, carrierAsn, carrierStock, protocol, rotation, strict, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, ipType, onSpawn]);
+  }, [proxyUsername, proxyPassword, count, country, pool, selectedCarrier, protocol, rotation, strict, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, ipType, onSpawn]);
 
   const handleCopyOne = useCallback((url: string, idx: number) => {
     void navigator.clipboard?.writeText(url);
@@ -622,10 +719,11 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
         <label className="psx-spawner-row psx-spawner-row-wide">
           <span>Country</span>
           <select
-            value={country}
+            value={country || ''}
             onChange={(e) => setCountry(e.target.value as Country)}
             className={cn('psx-select', classNames.select)}
           >
+            {countries.length === 0 && <option value="">No countries available</option>}
             {countries.map((c) => {
               const n = routableCount(stock, c, pool);
               const label = `${countryFlag(c)} ${countryName(c)}`;
@@ -637,6 +735,14 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
               );
             })}
           </select>
+          {countries.length === 0 && (
+            <span className="psx-spawner-hint psx-spawner-hint-danger">
+              No countries were supplied to this generator, so there is nothing to
+              route to. Pass a <code>countries</code> list (or wait for the one your
+              app loads) — a credential built without a country routes to whatever
+              the pool happens to have, in any country.
+            </span>
+          )}
           {depth !== null && (
             <>
               <span className="psx-spawner-depth" data-depth={depth} aria-live="polite">
@@ -704,23 +810,29 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             route it as a soft `-carrier-<name>` match. Live stock supplied by
             the host via the `carrierStock` prop (see `usePoolCarrierStock`).
             Counts only — never IPs. */}
-        {carrierStock.length > 0 && (
+        {selectableCarriers.length > 0 && (
           <label className="psx-spawner-row">
             <span>Carrier / ISP</span>
             <select
-              value={String(carrierAsn)}
-              onChange={(e) => setCarrierAsn(Number(e.target.value) || 0)}
+              value={carrierKey}
+              onChange={(e) => setCarrierKey(e.target.value)}
               className={cn('psx-select', classNames.select)}
             >
-              <option value="0">Any carrier</option>
-              {carrierStock
-                .filter((c) => c.asn != null)
-                .map((c) => (
-                  <option key={c.asn!} value={String(c.asn)}>
-                    {c.name} ({c.ipType}) — {c.count}
-                  </option>
-                ))}
+              <option value="">Any carrier</option>
+              {selectableCarriers.map((c) => (
+                <option key={carrierOptionKey(c)} value={carrierOptionKey(c)}>
+                  {c.name} ({c.ipType}) — {c.count}
+                </option>
+              ))}
             </select>
+            {selectedCarrier && !ipType && ipClassOf(selectedCarrier) && (
+              <span className="psx-spawner-hint">
+                This carrier is listed as {selectedCarrier.ipType}, so the generated
+                URLs also carry <code>-iptype-{selectedCarrier.ipType}</code> — one
+                ASN can span both classes, and without it you would get whichever
+                the pool has free.
+              </span>
+            )}
           </label>
         )}
 
@@ -842,6 +954,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
         <button
           type="button"
           onClick={handleGenerate}
+          disabled={!country}
           className={cn('psx-button', 'psx-spawner-generate', classNames.button)}
         >
           Generate {count} proxy URL{count > 1 ? 's' : ''}

@@ -51,7 +51,13 @@ describe('buildProxyString rotation + ttl guards (parity with the live parser)',
 
   it('clamps ttl into the 60..2_592_000 window', () => {
     expect(username(buildProxyString({ ...base, ttlSeconds: 2_592_000 }))).toContain('-ttl-2592000');
-    // below floor is dropped (not emitted)
-    expect(username(buildProxyString({ ...base, ttlSeconds: 30 }))).not.toContain('-ttl-');
+    // CLAMPED to the floor, not dropped. This assertion used to expect a drop,
+    // which was the divergence itself: the SDK clamped while this emitter
+    // dropped, so the same input routed two different ways depending on which
+    // public API the reseller reached for. The gateway parser also clamps
+    // (-ttl-30 heals to 60), so clamping is what the whole stack agrees on —
+    // and dropping silently gave the customer 3600 when they asked for 30.
+    expect(username(buildProxyString({ ...base, ttlSeconds: 30 }))).toContain('-ttl-60');
+    expect(username(buildProxyString({ ...base, ttlSeconds: 5_000_000 }))).toContain('-ttl-2592000');
   });
 });

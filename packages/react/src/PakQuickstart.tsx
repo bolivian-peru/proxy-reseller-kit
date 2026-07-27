@@ -10,12 +10,24 @@
  * Why this exists separate from PoolDocsPanel:
  *   - PoolDocsPanel (4 sections, ~360 lines of UI) is for power users.
  *   - PakQuickstart is for the 80% of customers who got their first pak
- *     and don't know the username format `pak_xxx-mbl-COUNTRY`. Without
- *     it, they 407 once and give up. That's the conversion problem.
+ *     and don't know which half of the credential it is. Without it, they
+ *     407 once and give up. That's the conversion problem.
  *
- * Anti-pattern: rendering the live secret as plaintext on a long-lived
+ * THE CREDENTIAL MODEL — get this wrong and every request 407s:
+ *
+ *   username = <proxyUsername>-<pool>-<country>[-sid-…][-rot-…]
+ *   password = the pak_ key   (or the account's proxy-password)
+ *
+ * The gateway resolves the account from the FIRST username segment only,
+ * matching it against `users.proxyUsername`, `psx_<userId>`, or the account
+ * email. A `pak_…` in the username position matches none of those, and the
+ * username parser is self-healing — it accepts the string without a single
+ * correction — so the only symptom is a 407 with no explanation. That is why
+ * `proxyUsername` is a required prop rather than an optional one.
+ *
+ * Anti-pattern: rendering the live password as plaintext on a long-lived
  * page. Use `secretDisplay='masked'` (default) and a Reveal button. Only
- * pass `secret` if you've gated the page behind fresh auth.
+ * switch to `'plain'` if you've gated the page behind fresh auth.
  *
  * @public
  */
@@ -37,15 +49,33 @@ const COUNTRIES = [
  * @public
  */
 export interface PakQuickstartProps {
-  /** The customer's pak_ key. Required — the whole point is showing them their actual key. */
+  /**
+   * The account identity that goes in the USERNAME position — your reseller
+   * `proxyUsername` (`psx_…`), or the end-account's own `proxyUsername` if you
+   * mint keys per sub-account.
+   *
+   * Required, and deliberately so: the gateway resolves the account from this
+   * segment alone (`users.proxyUsername` → `psx_<userId>` → account email). A
+   * `pak_…` here matches none of them and every request 407s, silently — the
+   * username parser self-heals, so it reports no error to correct against.
+   */
+  proxyUsername: string;
+  /**
+   * The customer's pak_ key. This is the PASSWORD, not the username — the
+   * whole point is showing them their actual credential in the right slot.
+   */
   pak: string;
   /**
-   * The secret password matched to the pak. Optional.
-   *   - omit → renders `<YOUR_PASSWORD>` placeholder (safest default)
-   *   - provide → renders the actual password (only if your page is fresh-auth gated)
+   * Override the password. Only needed when the customer authenticates with an
+   * account proxy-password instead of a `pak_` key; otherwise leave it unset and
+   * the `pak` is used, which is what the gateway expects.
    */
   secret?: string;
-  /** Mask mode. Default 'masked' shows last-4 with reveal button. */
+  /**
+   * Mask mode for the password. Default 'masked' shows a truncated value plus a
+   * Reveal button, and keeps the real secret out of the copyable strings until
+   * the customer asks for it.
+   */
   secretDisplay?: 'masked' | 'plain';
   /** Default country dropdown selection. Default 'us'. */
   defaultCountry?: 'us' | 'gb' | 'fr' | 'nl' | 'pl' | 'ge';
@@ -91,6 +121,7 @@ function maskSecret(secret: string): string {
  */
 export function PakQuickstart(props: PakQuickstartProps): JSX.Element {
   const {
+    proxyUsername,
     pak,
     secret,
     secretDisplay = 'masked',
@@ -111,14 +142,26 @@ export function PakQuickstart(props: PakQuickstartProps): JSX.Element {
   const [revealed, setRevealed] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  const pwForUrl = secret && (revealed || secretDisplay === 'plain') ? secret : 'YOUR_PASSWORD';
-  const pwForDisplay = secret
-    ? revealed || secretDisplay === 'plain'
-      ? secret
-      : maskSecret(secret)
-    : 'YOUR_PASSWORD';
+  // The pak_ IS the password. `secret` only overrides it for an account that
+  // authenticates with a proxy-password instead of a key.
+  const password = secret ?? pak;
+  const passwordVisible = revealed || secretDisplay === 'plain';
+  // Keep the live credential out of the copyable blocks until it is explicitly
+  // revealed — these get pasted into chats, screenshots, and support tickets.
+  const pwForUrl = passwordVisible ? password : 'YOUR_PASSWORD';
+  const pwForDisplay = passwordVisible ? password : maskSecret(password);
 
-  const username = sticky ? `${pak}-mbl-${country}-sid-${stickyId}` : `${pak}-mbl-${country}`;
+  // Username = account identity + routing tokens. The pak_ never appears here:
+  // the gateway resolves the account from this first segment only, so a pak_ in
+  // this position is an unconditional 407.
+  //
+  // Sticky needs BOTH tokens. `-sid-` names the session so it survives across
+  // connections; `-rot-sticky` overrides the gateway's default rotation
+  // (`auto10`), which would otherwise re-pick a device every ~10 minutes even
+  // with a sid present.
+  const username = sticky
+    ? `${proxyUsername}-mbl-${country}-sid-${stickyId}-rot-sticky`
+    : `${proxyUsername}-mbl-${country}`;
   const httpUrl = `http://${username}:${pwForUrl}@${gatewayHost}:7000`;
   const socksUrl = `socks5://${username}:${pwForUrl}@${gatewayHost}:7001`;
   const curlCmd = `curl -x ${httpUrl} https://api.ipify.org`;
@@ -155,28 +198,27 @@ console.log(await r.text());`;
         </p>
       </header>
 
-      {/* Credentials block */}
+      {/* Credentials block. Two rows on purpose: which half is which is the
+          single thing customers get wrong, and it costs them a silent 407. */}
       <div className="pp-pakquick__creds">
         <div className="pp-pakquick__row">
-          <span className="pp-pakquick__label">Access key</span>
-          <code className="pp-pakquick__mono">{pak}</code>
-          <button className="pp-pakquick__btn-link" onClick={() => copy(pak, 'pak')}>
-            {copiedKey === 'pak' ? 'Copied' : 'Copy'}
+          <span className="pp-pakquick__label">Username</span>
+          <code className="pp-pakquick__mono">{username}</code>
+          <button className="pp-pakquick__btn-link" onClick={() => copy(username, 'user')}>
+            {copiedKey === 'user' ? 'Copied' : 'Copy'}
           </button>
         </div>
         <div className="pp-pakquick__row">
           <span className="pp-pakquick__label">Password</span>
           <code className="pp-pakquick__mono">{pwForDisplay}</code>
-          {secret && secretDisplay === 'masked' && (
+          {secretDisplay === 'masked' && (
             <button className="pp-pakquick__btn-link" onClick={() => setRevealed(v => !v)}>
               {revealed ? 'Hide' : 'Reveal'}
             </button>
           )}
-          {secret && (
-            <button className="pp-pakquick__btn-link" onClick={() => copy(secret, 'pw')}>
-              {copiedKey === 'pw' ? 'Copied' : 'Copy'}
-            </button>
-          )}
+          <button className="pp-pakquick__btn-link" onClick={() => copy(password, 'pw')}>
+            {copiedKey === 'pw' ? 'Copied' : 'Copy'}
+          </button>
         </div>
       </div>
 
@@ -207,7 +249,7 @@ console.log(await r.text());`;
         </label>
         <label className="pp-pakquick__field pp-pakquick__field--check">
           <input type="checkbox" checked={sticky} onChange={(e) => setSticky(e.target.checked)} />
-          <span>Sticky session (same IP across requests)</span>
+          <span>Sticky session (same device)</span>
         </label>
         {sticky && (
           <label className="pp-pakquick__field">
@@ -216,11 +258,22 @@ console.log(await r.text());`;
               type="text"
               value={stickyId}
               maxLength={32}
-              onChange={(e) => setStickyId(e.target.value.replace(/[^a-z0-9_]/gi, '').slice(0, 32) || 'myproject')}
+              // The gateway lowercases the username and keeps only [a-z0-9_]
+              // per token, so normalise here — what's on screen is then exactly
+              // what the gateway routes on.
+              onChange={(e) => setStickyId(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 32) || 'myproject')}
             />
           </label>
         )}
       </div>
+
+      {sticky && (
+        <p className="pp-pakquick__hint">
+          Sticky pins the <strong>device</strong> for this session id, not the exit IP —
+          mobile carriers can re-issue a NAT address on their own schedule. Reuse the same
+          session ID for requests that belong together.
+        </p>
+      )}
 
       {/* Curl block */}
       <div className="pp-pakquick__example">
@@ -284,19 +337,43 @@ console.log(await r.text());`;
             <tbody>
               <tr>
                 <td><code>407 Proxy Authentication Required</code></td>
-                <td>Wrong key/password — check the username includes <code>-mbl-{country}</code> (without it, auth fails). Or you hit your traffic cap.</td>
+                <td>
+                  The two halves are swapped. The username is your account id plus
+                  routing tokens (<code>{username}</code>); the <code>pak_</code> key is
+                  the <em>password</em>. A <code>pak_</code> in the username position
+                  always fails — the gateway looks the account up by that first segment
+                  only. Otherwise: the key is disabled, expired, or over its traffic cap.
+                </td>
               </tr>
               <tr>
                 <td><code>502 Bad Gateway</code></td>
                 <td>No device available for that country right now. Try another country or wait 30s.</td>
               </tr>
               <tr>
-                <td>Same IP every time, wanted rotation</td>
-                <td>Remove <code>-sid-X</code> from the username (uncheck "Sticky session" above).</td>
+                <td>Device changes every ~10 minutes</td>
+                <td>
+                  That is the gateway default (<code>auto10</code>) — it applies whenever the
+                  username carries no <code>-rot-</code> token. Tick "Sticky session" above;
+                  it emits both <code>-sid-</code> and <code>-rot-sticky</code>, and you need
+                  both for a session to hold.
+                </td>
               </tr>
               <tr>
-                <td>Different IP every request, wanted sticky</td>
-                <td>Check "Sticky session" and use the same session ID for related requests.</td>
+                <td>Exit IP changed while sticky was on</td>
+                <td>
+                  Expected. Sticky holds the device; the carrier can still re-NAT the exit IP
+                  underneath it. If a workflow needs one IP end-to-end (cookies, 2FA), ask us
+                  about a Reserved IP lease or a dedicated modem — no pool rotation mode can
+                  promise that.
+                </td>
+              </tr>
+              <tr>
+                <td>Want a fresh device more often</td>
+                <td>
+                  Leave "Sticky session" off for the default 10-minute turnover, or append
+                  <code> -rot-auto5</code> to the username yourself for 5-minute turnover.
+                  Every routing choice lives in the username — nothing to configure here.
+                </td>
               </tr>
               <tr>
                 <td>Slow / timeouts</td>

@@ -57,9 +57,21 @@ export type Country = KnownCountry | (string & {});
  * - `ondemand` — No auto-rotate timer; reuse the chosen modem while connected.
  * - `sticky` — Pin to one modem for the session lifetime. Selector weights
  *   `ipStabilityScore` at 50% — picks the most IP-stable modem available.
- * - `hard` — Same modem-pinning as sticky, but a fresh TCP connection picks a
- *   different modem. Useful for parallel workers that each want their own
- *   stable modem.
+ * - `hard` — **Identical to `sticky` at routing time.** The gateway maps both
+ *   to a rotation interval of `0` and runs them through the same pinned path:
+ *   same stability-weighted selection, same 60s offline-blip tolerance on
+ *   session reuse, same exclusion from connect-phase re-selection. It does NOT
+ *   mean "a fresh TCP connection picks a different modem" and it does NOT mean
+ *   "a new IP per request". A true carrier-IP reset is a separate, explicit
+ *   `/rotate` action (a ProxySmart airplane-mode toggle) that peers do not
+ *   support at all. Prefer `sticky` in new code — `hard` exists for
+ *   credentials already in customers' hands.
+ *
+ * **Every mode above needs a `sid` to mean anything across connections.**
+ * Without one the gateway synthesizes a throwaway session per connection, so
+ * `sticky` does not stick and `auto*` has nothing to rotate. Conversely, for
+ * parallel workers that each want their own stable modem, give each worker its
+ * own `sid` — the session id is what separates them, not the rotation mode.
  *
  * Tokens emitted: `-rot-{mode}`. `none` and `auto10` (the gateway default)
  * emit no token.
@@ -74,10 +86,8 @@ export type RotationMode =
   | 'sticky'        // pin one modem; gateway smart-picks the most IP-stable.
                     // Needs a sid to persist. Pair with the `peer`
                     // (community/residential) pool for a near-immutable IP.
-  | 'hard';         // pins like `sticky` (NOT a new IP per request). A true
-                    // carrier-IP reset only happens via the /rotate action and
-                    // is unavailable for peers — at routing time
-                    // `hard` is equivalent to `sticky`.
+  | 'hard';         // EXACTLY equivalent to `sticky` at routing time. Not a new
+                    // modem per connection, not a new IP per request.
 
 /**
  * Pool the customer's traffic routes through.
@@ -99,15 +109,68 @@ export type Protocol = 'http' | 'socks5';
 export interface PoolAccessKey {
   /** MongoDB ObjectId of the key record. */
   id: string;
-  /** The secret key itself, `pak_{24 hex}`. Treat as credential material. */
+  /**
+   * The secret key itself, `pak_{24 hex}`. Treat as credential material.
+   *
+   * **Revocation is not instantaneous — budget ~30 seconds, plus open
+   * tunnels.** Rotating via {@link PoolKeysApi.regenerate}, disabling via
+   * `update({ enabled: false })`, deleting, and expiry all take effect at the
+   * platform the moment the write lands, but the gateway caches each
+   * `(username, password)` auth result for **30 s** (`CACHE_TTL_MS`,
+   * `gateway/src/auth/http-auth.ts`). Until that entry ages out, the OLD
+   * secret still authenticates new connections. Connections already
+   * established are never re-authenticated, so an open CONNECT tunnel keeps
+   * flowing until the client or the endpoint closes it — a long-lived tunnel
+   * can outlive revocation by far more than 30 s. There is also a fail-open
+   * grace path (`GW_AUTH_GRACE_MS`, default 15 min) that serves the
+   * last-known-good result **only while the platform API is unreachable**; a
+   * real rejection from a reachable API is always honoured.
+   *
+   * Practical consequence for a leaked key: regenerate immediately, then treat
+   * the old value as live for at least the next 30 s of new connections and
+   * for the lifetime of whatever tunnels are already open. Note that
+   * {@link SessionsApi.closeAll} does NOT shorten this — it deletes the Redis
+   * session rows, so the next connection re-selects an endpoint, but it does
+   * not destroy sockets that are already carrying traffic. Cutting live
+   * traffic dead is a support/ops action, not an API one. Metering is
+   * unaffected throughout — every byte is still billed to the key that
+   * carried it.
+   */
   key: string;
   /** Human-friendly label shown in your admin (e.g. `"customer:alice@acme.com"`). */
   label: string;
-  /** `false` disables the key immediately; `true` re-enables. */
+  /**
+   * `false` disables the key; `true` re-enables. The platform write is
+   * immediate but the gateway is not — see the revocation-latency note on
+   * {@link key}. Auto-flipped to `false` by the platform when the key passes
+   * {@link trafficCapGB} or {@link expiresAt}; {@link PoolKeysApi.topUp} does
+   * NOT re-enable a suspended key, you must `update({ enabled: true })`.
+   */
   enabled: boolean;
   /**
-   * Maximum GB this key can consume. `null` = unbounded within the reseller's
-   * own shared traffic pool.
+   * Maximum GB this key can consume. Once `trafficUsedMB / 1024` reaches this
+   * value the platform flips {@link enabled} to `false` and the gateway
+   * rejects the key with `E_CAP_EXCEEDED`.
+   *
+   * **`null` is partner-only — for an ordinary reseller it is not "unlimited",
+   * it is a `400`.** The platform rejects an uncapped key with
+   * *"An unlimited pool-access-key requires a partner account. Set a GB cap for
+   * this key."* unless the account is flagged `poolFreeBandwidth` (partner
+   * accounts that settle wholesale out-of-band) or is an admin. A finite cap
+   * must also be `> 0` and `<= RESELLER_MAX_PAK_CAP_GB` (platform default
+   * `1000`; ask support to raise it) — outside that range is likewise a `400`.
+   * The same guard runs on {@link PoolKeysApi.update} and on the resulting cap
+   * in {@link PoolKeysApi.topUp}, so a key cannot be walked past the ceiling
+   * after minting.
+   *
+   * You will still read `null` here on keys minted by a partner account.
+   * There it means uncapped — metering continues, but nothing auto-suspends,
+   * so the reseller's own shared traffic balance is the only backstop.
+   *
+   * `0` is not a "blocked" sentinel you can write: it fails the same
+   * `cap > 0` check and comes back as a `400`. Reading a `0` off a legacy
+   * record means the key is already at/over its cap, so the gateway rejects it
+   * with `E_CAP_EXCEEDED`. To stop a key, use `update({ enabled: false })`.
    */
   trafficCapGB: number | null;
   /** Bytes consumed so far, in megabytes (fractional). */
@@ -152,7 +215,12 @@ export type PoolQualityTier = 'safe' | 'standard';
 export interface CreatePoolAccessKeyInput {
   /** Human label. Must be non-empty. Shown in your admin; never sent to the gateway. */
   label: string;
-  /** Traffic cap in GB. Pass `null` for unbounded. */
+  /**
+   * Traffic cap in GB. Required in practice: `null`/omitted mints an uncapped
+   * key, which the platform allows only for partner accounts and otherwise
+   * rejects with a `400`. Must be `> 0` and within the per-key ceiling.
+   * See {@link PoolAccessKey.trafficCapGB} for the exact rules.
+   */
   trafficCapGB?: number | null;
   /**
    * Quality tier — pass `'safe'` to mint a modem-only **Private Pool** key, or
@@ -261,6 +329,13 @@ export interface AuditQueryOpts {
 export interface UpdatePoolAccessKeyInput {
   label?: string;
   enabled?: boolean;
+  /**
+   * Replace the cap. Runs the same backing guard as mint — `null` is
+   * partner-only and a value outside `0 < cap <= ceiling` is a `400`, so a key
+   * cannot be edited into an uncapped one after creation. See
+   * {@link PoolAccessKey.trafficCapGB}. To ADD GB to the existing cap, use
+   * {@link PoolKeysApi.topUp} instead (atomic `$inc`, no read-modify-write race).
+   */
   trafficCapGB?: number | null;
   /** Switch a key between the modem-only Private Pool tier and the general tier. See {@link PoolQualityTier}. */
   qualityTier?: PoolQualityTier;
@@ -360,7 +435,17 @@ export interface BuildProxyUrlOpts {
   /**
    * Hard IP-type class filter. Restricts selection to `mobile`
    * (carrier modems + mobile peers), `residential` (home/ISP peers), or
-   * `datacenter` (hosting IPs). Emits `-iptype-<v>`. Omit for any class.
+   * `datacenter` (hosting IPs). Omit for any class.
+   *
+   * **Emission contract: always emitted as `-iptype-<v>` when set, for every
+   * pool.** {@link buildProxyUrl} does NOT gate this on `pool` — not on
+   * `peer`, and not on anything else. It looks tempting to suppress it for
+   * `mbl` (whose modems are all `mobile` anyway), but that would silently
+   * change routing: `mbl` + `residential` must reach the gateway so it can
+   * answer `502 E_NO_STOCK_COUNTRY`, which tells the caller their filter is
+   * unsatisfiable. Dropping the token instead would hand them mobile IPs while
+   * they believe they asked for residential. Any wrapper around this builder
+   * must keep the same rule.
    */
   ipType?: 'mobile' | 'residential' | 'datacenter';
   /**
@@ -370,9 +455,18 @@ export interface BuildProxyUrlOpts {
    */
   failover?: 'any' | 'samecountry' | 'samecarrier' | 'samenode' | 'strict';
   /**
-   * Session-row TTL in seconds. Clamped to 60..2,592,000 (1 min – 30 days)
-   * before emitting `-ttl-<n>`. This is the session-row lifetime, NOT an
+   * Session-row TTL in seconds. This is the session-row lifetime, NOT an
    * IP-hold guarantee — carrier CGNAT may re-NAT the exit IP within the TTL.
+   *
+   * **Emission contract: CLAMPED, never dropped and never thrown.** Any finite
+   * number you pass is rounded and clamped into `60..2_592_000` (1 min – 30
+   * days) and always emitted as `-ttl-<n>`. This mirrors the gateway, which
+   * clamps to exactly the same bounds and records a `corrections[]` entry
+   * rather than erroring. A wrapper that instead *omits* an out-of-range ttl
+   * is a behaviour change, not a nicety: omitting the token silently falls
+   * back to the gateway default of 3600, so a caller asking for a 7-day
+   * session gets a 1-hour one and finds out when their sticky session dies
+   * overnight. Clamp, don't drop.
    *
    * **TTL is fixed for the life of a session row.** The gateway stamps the TTL
    * when the row is created and every subsequent request re-expires the row
@@ -626,8 +720,16 @@ export interface RetryConfig {
 /** Constructor config for {@link ProxiesClient}. */
 export interface ClientConfig {
   /**
-   * Reseller API key (`psx_...`) — mint at
-   * https://client.proxies.sx/account with scope `customers:write`.
+   * Reseller API key (`psx_...`) — mint at https://client.proxies.sx/account
+   * with scopes **`ports:read` + `ports:write`**.
+   *
+   * Not `customers:write`, which reads like the obvious choice and grants
+   * nothing this SDK uses: the `/reseller/pool-keys/*` routes are gated by the
+   * reseller *role* rather than by a scope, while the live-session routes
+   * behind {@link ProxiesClient.sessions} do check scopes and `403` without
+   * `ports:*`. Scope matching is exact-string or `prefix:*` wildcard — there
+   * is no `customers` → `ports` mapping.
+   *
    * Keep this server-side only; never expose to browsers.
    */
   apiKey: string;

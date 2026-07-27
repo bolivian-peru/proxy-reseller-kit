@@ -462,7 +462,14 @@ try {
 
 - **Never** ship `PROXIES_SX_API_KEY` to the browser. The SDK is designed for server-side use (API routes, server components, webhooks, cron).
 - The only truly browser-safe export is the standalone `buildProxyUrl()` — and even then, only call it once you've fetched the specific customer's `pak_` from *your own* backend.
-- If a `pak_` key leaks, call `proxies.poolKeys.regenerate(keyId)`. The old value stops working immediately.
+- If a `pak_` key leaks, call `proxies.poolKeys.regenerate(keyId)` — **then close its live sessions.** Rotation is not instant: the gateway caches auth results for **30 s** (`CACHE_TTL_MS = 30000`, keyed on `accountId:password`) and nothing invalidates that entry on rotate, so the old secret keeps authenticating **new** connections for up to 30 s. Connections it already opened are **not** torn down and run until they close on their own. If the platform API is unreachable the gateway additionally serves last-known-good auth for `GW_AUTH_GRACE_MS` (default 15 min). `update(id, { enabled: false })` sits behind the same cache and is no faster. The full revocation is two calls:
+
+  ```ts
+  await proxies.poolKeys.regenerate(keyId);            // new connections stop within ~30s
+  await proxies.sessions.closeAll({ pakId: keyId });   // drop the tunnels it already opened (~5s)
+  ```
+
+  Tell customers "revoked within about 30 seconds", never "revoked instantly."
 - Each `pak_` key is scoped to your reseller account. A leaked key can only consume traffic from *your* GB pool, not from other resellers.
 
 ---
@@ -491,7 +498,7 @@ This SDK is a thin wrapper around a public REST API. Any language with an HTTP c
 | `GET` | `/v1/reseller/pool-keys/:keyId` | Fetch a single key (v0.3.0+) |
 | `PATCH` | `/v1/reseller/pool-keys/:keyId` | Update label / cap / enabled / expiresAt |
 | `POST` | `/v1/reseller/pool-keys/:keyId/topup` | Atomic cap-and/or-expiry extension (v0.3.0+) |
-| `POST` | `/v1/reseller/pool-keys/:keyId/regenerate` | Rotate the secret (old value invalidated immediately) |
+| `POST` | `/v1/reseller/pool-keys/:keyId/regenerate` | Rotate the secret. The old value keeps working for **up to 30 s** (gateway auth cache) and does not drop live tunnels — see [Security](#security) |
 | `DELETE` | `/v1/reseller/pool-keys/:keyId` | Permanently delete |
 
 **Idempotency:** `POST` and `PATCH` endpoints accept an `Idempotency-Key`
@@ -585,7 +592,11 @@ req.body = { label: 'customer:alice', trafficCapGB: 10 }.to_json
 resp = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
 ```
 
-**Full OpenAPI spec:** [api.proxies.sx/docs/api-json](https://api.proxies.sx/docs/api-json) (interactive at [api.proxies.sx/docs/api](https://api.proxies.sx/docs/api))
+**Spec:** the endpoint table above is the complete pool-keys surface. There is no
+public OpenAPI document for it — `/docs/api`, `/docs/api-json`, `/docs/seller` and
+`/docs/seller-json` are basic-auth gated and return `403` anonymously. The publicly
+readable spec is [api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway)
+(Pool Gateway API — Private Pool leases, x402 pool; JSON at `/docs/gateway-json`).
 
 ---
 

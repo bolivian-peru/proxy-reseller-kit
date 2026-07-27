@@ -37,6 +37,7 @@ import {
   usePoolCarrierStock,
   usePoolLeases,
   useLeaseActions,
+  type LeaseActions,
   type LeaseFailover,
   type LeaseGateway,
   type LeaseRotationMode,
@@ -53,6 +54,12 @@ export interface PrivatePoolPanelProps extends Omit<PoolSessionSpawnerProps, 'pr
    * `privatePool.poolId` points at: the gateway only honours a `-pin-lease-`
    * for the pak that owns the lease, so any other key silently routes onto
    * ordinary shared stock.
+   *
+   * **The username that goes with it is not yours.** A Private Pool's pak is
+   * minted under the platform's house reseller, and gateway auth rejects a pak
+   * whose owner is not the account the username resolves to. With `apiRoute`
+   * set, this panel reads the correct username off the pool itself and ignores
+   * the `proxyUsername` prop — see {@link PrivatePoolPanelProps.apiRoute}.
    */
   pak: string;
   /** `'safe'` = dedicated modems only; `'standard'` = modems + peer with failover. Default `'standard'`. */
@@ -68,7 +75,16 @@ export interface PrivatePoolPanelProps extends Omit<PoolSessionSpawnerProps, 'pr
   /**
    * Mount path of your `createPoolApiHandlers()`, e.g. `/api/pool`. Set it to
    * render the Reserved IPs section; it needs `privatePool` configured on those
-   * handlers. Omit and the panel is header + generator, exactly as before.
+   * handlers.
+   *
+   * It is also what makes the session generator correct. The handler returns the
+   * pool's own connection facts (house `proxyUsername`, pool token, gateway
+   * host, allowed countries), and the generator is signed with those — the
+   * `proxyUsername` prop is IGNORED here, because a Private Pool pak
+   * authenticates only against the house account that minted it. Omit
+   * `apiRoute` and the panel is header + generator signed with the
+   * `proxyUsername` you passed, which is right only if that account owns the
+   * pak.
    *
    * @since 0.12.0
    */
@@ -133,20 +149,27 @@ export function PrivatePoolPanel(props: PrivatePoolPanelProps): JSX.Element {
         ) : null}
       </div>
       {apiRoute ? (
-        <ReservedIps
+        <PrivatePoolConnected
           apiRoute={apiRoute}
           pak={pak}
           refreshIntervalMs={leaseRefreshIntervalMs}
           maxQuantity={maxReserveQuantity}
-          classNames={props.classNames}
+          spawner={spawnerProps}
         />
-      ) : null}
-      <PoolSessionSpawner {...spawnerProps} proxyPassword={pak} />
+      ) : (
+        <PoolSessionSpawner {...spawnerProps} proxyPassword={pak} />
+      )}
     </div>
   );
 }
 
-/* ── Reserved IPs ─────────────────────────────────────────────────────────
+/* ── The connected pool (Reserved IPs + generator) ────────────────────────
+ *
+ * Everything that needs the pool's LIVE connection lives here, because it all
+ * needs the same one: the reserved-IP section and the session generator are both
+ * built from the `gateway` block the handler returns, and both are wrong without
+ * it. One component means one `usePoolLeases` poll and one source for the
+ * credential identity — the generator cannot drift from the lease strings.
  *
  * Kept in this file, and deliberately NOT exported: reserving an exclusive
  * device only makes sense inside a Private Pool, and a second public component
@@ -217,19 +240,88 @@ const IP_CLASS_OPTS: { value: '' | 'mobile' | 'residential'; label: string; hint
   },
 ];
 
-interface ReservedIpsProps {
+interface PrivatePoolConnectedProps {
   apiRoute: string;
   pak: string;
   refreshIntervalMs?: number;
   maxQuantity?: number;
+  /** Everything the host passed through for the generator, minus the password. */
+  spawner: Omit<PoolSessionSpawnerProps, 'proxyPassword'>;
+}
+
+/**
+ * Owns the single lease poll and hands the pool's live connection to both
+ * consumers, so the generator can never disagree with the reserved-IP strings.
+ *
+ * The identity in that connection is the whole point. A Private Pool's `pak_`
+ * is minted under the platform's HOUSE reseller (`private-pool.service.ts`
+ * stamps `connection.proxyUsername = house.proxyUsername`), and gateway auth
+ * resolves the account from the USERNAME, then refuses any pak whose owner is
+ * not that account (`pak.resellerId !== user._id` → "Invalid credentials").
+ * Signing the generator with the reseller's own `psx_` id therefore 407s every
+ * single string — while the reserved-IP rows beside it, built from this same
+ * object, keep working. That is why `proxyUsername` is forced here rather than
+ * defaulted: there is no case where the caller's value is the right one.
+ */
+function PrivatePoolConnected(props: PrivatePoolConnectedProps): JSX.Element {
+  const { apiRoute, pak, refreshIntervalMs, maxQuantity, spawner } = props;
+
+  const leases = usePoolLeases(apiRoute, { refreshIntervalMs });
+  const actions = useLeaseActions(apiRoute);
+  const gateway = leases.data?.gateway ?? null;
+
+  // Offer only the countries this pool may actually route to, lower-cased to
+  // match the DSL the credential carries (the platform returns ISO-2 upper).
+  // `undefined` rather than `[]` when the pool declares none, so the generator
+  // falls back to its own list instead of rendering an empty picker. An explicit
+  // `countries` prop still wins — the host may be scoping further.
+  const poolCountries = useMemo(() => {
+    const list = (gateway?.countries ?? []).map((c) => c.toLowerCase());
+    return list.length > 0 ? list : undefined;
+  }, [gateway]);
+
+  return (
+    <>
+      <ReservedIps
+        apiRoute={apiRoute}
+        pak={pak}
+        maxQuantity={maxQuantity}
+        leases={leases}
+        actions={actions}
+        classNames={spawner.classNames}
+      />
+      {gateway ? (
+        <PoolSessionSpawner
+          {...spawner}
+          proxyPassword={pak}
+          proxyUsername={gateway.proxyUsername}
+          gatewayHost={spawner.gatewayHost ?? gateway.host}
+          countries={spawner.countries ?? poolCountries}
+          defaultPool={spawner.defaultPool ?? gateway.poolToken}
+        />
+      ) : (
+        <p className="psx-spawner-hint">
+          {leases.loading
+            ? 'Reading the connection for this pool…'
+            : 'This pool has no live connection yet, so proxy URLs cannot be built for it.'}
+        </p>
+      )}
+    </>
+  );
+}
+
+interface ReservedIpsProps {
+  apiRoute: string;
+  pak: string;
+  maxQuantity?: number;
+  /** The shared lease poll, owned by {@link PrivatePoolConnected}. */
+  leases: ReturnType<typeof usePoolLeases>;
+  actions: LeaseActions;
   classNames?: PoolPortalClassNames;
 }
 
 function ReservedIps(props: ReservedIpsProps): JSX.Element {
-  const { apiRoute, pak, refreshIntervalMs, maxQuantity = 25, classNames = {} } = props;
-
-  const leases = usePoolLeases(apiRoute, { refreshIntervalMs });
-  const actions = useLeaseActions(apiRoute);
+  const { apiRoute, pak, maxQuantity = 25, leases, actions, classNames = {} } = props;
 
   const gateway = leases.data?.gateway ?? null;
   const rows = leases.data?.leases ?? [];
@@ -246,9 +338,14 @@ function ReservedIps(props: ReservedIpsProps): JSX.Element {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // The pool decides which countries exist, and that list only arrives with the
-  // first poll — so seed the selection from it rather than guessing 'us'.
+  // first poll — so seed the selection from it rather than guessing 'us'. The
+  // same effect re-seeds if the pool's allowed list later changes or empties: a
+  // <select> whose value matches none of its options renders a different one, so
+  // state that outlives the list would show one country and reserve in another.
+  // Falling back to `''` when nothing is on offer is what re-disables Reserve.
+  // Same rule as the generator's country picker (PoolSessionSpawner).
   useEffect(() => {
-    if (!country && countries.length > 0) setCountry(countries[0]!);
+    if (!countries.includes(country)) setCountry(countries[0] ?? '');
   }, [country, countries]);
 
   // A carrier in one country doesn't exist in the next.
