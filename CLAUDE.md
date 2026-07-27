@@ -156,13 +156,39 @@ pnpm -r --filter @proxies-sx/pool-sdk typecheck
 
 ## Publishing
 
-```bash
-# Make sure you're logged into npm as a proxies-sx org member
-cd packages/sdk
-npm version patch             # or minor/major
-pnpm build
-npm publish --access public
+**Publish with `pnpm`, never `npm`.** `packages/react` depends on the sdk via
+`workspace:^`, and only pnpm rewrites that to a real semver range when it packs.
+`npm publish` ships the literal string, and every consumer then gets:
+
 ```
+npm error code EUNSUPPORTEDPROTOCOL
+npm error Unsupported URL Type "workspace:": workspace:^
+```
+
+That is not hypothetical — `@proxies-sx/pool-portal-react@0.11.0` shipped that
+way and was uninstallable for its entire life on the registry, because an
+earlier revision of this section said `npm publish --access public`. Verify with
+`pnpm pack` + read the tarball's `package.json` before releasing:
+
+```bash
+pnpm pack && tar -xzOf *.tgz package/package.json | grep pool-sdk
+#   want: "^0.10.0"      NOT: "workspace:^"
+```
+
+Order matters — the sdk must exist on the registry before react's range can
+resolve for anyone installing react alone.
+
+```bash
+# from the repo root, logged in as a proxies-sx org member
+pnpm install && pnpm build     # topological: sdk's .d.ts must exist before react's DTS pass
+pnpm --filter @proxies-sx/pool-sdk publish --access public --no-git-checks
+pnpm --filter @proxies-sx/pool-portal-react publish --access public --no-git-checks
+```
+
+Do NOT "fix" the `workspace:^` by hardcoding the version in the repo — that
+makes `pnpm install` fail on a clean clone until the new version is actually
+published (a bootstrap deadlock), and it drops the workspace link pnpm uses to
+order the build.
 
 ## Key invariants
 
