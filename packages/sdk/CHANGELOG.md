@@ -5,6 +5,29 @@ All notable changes to this package are documented here. The format is based on
 semver from 0.3.0 onwards (the public surface is everything exported from
 `dist/index.d.ts`).
 
+## 0.11.0 — full carrier catalogue + mobile/residential discovery (Jul 2026)
+
+- **`pool.getCarrierStock()` now scopes on two axes.** Previously it required a
+  country and always returned the `peer` pool, so there was no way to fetch the
+  full carrier catalogue or to see the modem tier at all. Now:
+  - **omit `country`** to get every country in one call (~122 today), keyed as
+    `{ pool, updatedAt, countries: { US: { total, other, carriers[] }, … } }`;
+  - **`pool: 'mbl' | 'all'`** to read the carrier-modem tier (every entry
+    `ipType: 'mobile'`, 6 countries) or both pools merged.
+
+  Each `carriers[]` entry carries `ipType`, so filtering on
+  `mobile` vs `residential` is a one-liner — this is the supported way to build
+  a mobile-vs-residential picker without hardcoding carrier names.
+
+- **New types:** `CarrierStockAll`, `CarrierStockCountry`, `CarrierStockPool`,
+  all exported. `CarrierStock` now extends `CarrierStockCountry` and its `pool`
+  widened from the literal `'peer'` to `CarrierStockPool`.
+
+- **Not a breaking change.** `getCarrierStock('us')` (bare string) still compiles
+  and behaves identically; it is marked `@deprecated` in favour of
+  `getCarrierStock({ country: 'us' })`. The runtime envelope validator now checks
+  whichever shape you asked for, instead of assuming `carriers[]`.
+
 ## 0.9.0 — Private Pool quality tier (Jul 2026)
 
 - **`qualityTier` on `poolKeys.create` / `poolKeys.update`** — mint or switch a key

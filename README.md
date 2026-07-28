@@ -335,7 +335,10 @@ Stripe storefront, on a different rail.
 >
 > Highlights since 0.5.x: per-customer session scoping (`sessions.list({ pakId })`),
 > corrected `hard` semantics (`hard` pins like sticky, **not** "new IP per request"),
-> carrier/ASN/IP-class targeting (`asn` / `isp` / `ipType` + `pool.getCarrierStock()`),
+> carrier/ASN/IP-class targeting (`asn` / `isp` / `ipType` + `pool.getCarrierStock()` —
+> now scopeable to **all countries at once** and to the `mbl`/`all` pools, so you can
+> build a full mobile-vs-residential carrier picker in one call:
+> [Carrier / ASN / mobile-vs-residential discovery](./packages/sdk/README.md#carrier--asn--mobile-vs-residential-discovery)),
 > client-side `sid` validation in `buildProxyUrl`, the `strict` sticky flag and
 > `pin.type: 'lease'` for Reserved IPs, plus the `<PakQuickstart>`,
 > `<PrivatePoolPanel>` and `usePoolCarrierStock` React additions.

@@ -8,6 +8,8 @@ import type {
   AuditQueryOpts,
   PoolStock,
   CarrierStock,
+  CarrierStockAll,
+  CarrierStockPool,
   Incident,
   IncidentsResponse,
   BuildProxyUrlOpts,
@@ -554,31 +556,56 @@ export class PoolApi {
   }
 
   /**
-   * Live routable PEER stock by carrier/ASN for a country (counts only — no
-   * exit IPs). Powers a carrier/ASN selector: pair an entry's `asn` with
-   * {@link buildProxyUrl}'s `asn` option to route to that carrier. Cached 30s.
+   * Live routable stock by carrier/ASN (counts only — never exit IPs). Powers a
+   * carrier/ASN selector: pair an entry's `asn` with {@link buildProxyUrl}'s
+   * `asn` option to route to that carrier, or filter on `ipType` to offer
+   * mobile-vs-residential. Cached 30s server-side.
+   *
+   * Scope it two ways, independently:
+   * - **country** — omit it to get the FULL catalogue, every country in one
+   *   call. Pass one to get just that country.
+   * - **pool** — `peer` (default) is the mixed residential+mobile fleet; `mbl`
+   *   is the carrier-modem tier (every entry `ipType: 'mobile'`, 6 countries);
+   *   `all` merges both.
    *
    * Runtime-validates the response envelope, same as {@link getStock}.
    *
-   * @param country ISO 2-letter code, e.g. `'us'`.
+   * @example Full catalogue, every country, both pools
+   * ```ts
+   * const all = await client.pool.getCarrierStock();          // peer, all countries
+   * const mob = await client.pool.getCarrierStock({ pool: 'mbl' });
+   * const us  = await client.pool.getCarrierStock({ country: 'us', pool: 'all' });
+   * ```
    */
-  async getCarrierStock(country: string): Promise<CarrierStock> {
+  async getCarrierStock(opts: { country: string; pool?: CarrierStockPool }): Promise<CarrierStock>;
+  async getCarrierStock(opts?: { pool?: CarrierStockPool }): Promise<CarrierStockAll>;
+  /** @deprecated Pass `{ country }` instead — kept so existing calls keep working. */
+  async getCarrierStock(country: string): Promise<CarrierStock>;
+  async getCarrierStock(
+    arg?: string | { country?: string; pool?: CarrierStockPool },
+  ): Promise<CarrierStock | CarrierStockAll> {
+    const { country, pool } = typeof arg === 'string' ? { country: arg, pool: undefined } : (arg ?? {});
+    const qs = new URLSearchParams();
+    if (country) qs.set('country', country);
+    if (pool) qs.set('pool', pool);
+    const q = qs.toString();
     const raw = await this.client.request<unknown>(
-      `/gateway/pool/stock/carriers?country=${encodeURIComponent(country)}`,
+      `/gateway/pool/stock/carriers${q ? `?${q}` : ''}`,
     );
-    if (
-      !raw ||
-      typeof raw !== 'object' ||
-      !('carriers' in raw) ||
-      !Array.isArray((raw as { carriers?: unknown }).carriers)
-    ) {
+    // The two scopes return different envelopes: one country -> `carriers[]`,
+    // all countries -> `countries{}`. Validate whichever we asked for, so a
+    // silent upstream shape change still surfaces instead of returning junk.
+    const ok = country
+      ? !!raw && typeof raw === 'object' && Array.isArray((raw as { carriers?: unknown }).carriers)
+      : !!raw && typeof raw === 'object' && !!(raw as { countries?: unknown }).countries;
+    if (!ok) {
       throw new ProxiesError(
         'CarrierStock response shape unexpected — possible upstream change. ' +
           'Got: ' +
           JSON.stringify(raw).slice(0, 200),
       );
     }
-    return raw as CarrierStock;
+    return raw as CarrierStock | CarrierStockAll;
   }
 
   /**

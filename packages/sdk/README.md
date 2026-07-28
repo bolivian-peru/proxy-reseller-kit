@@ -333,26 +333,79 @@ authenticates:
 curl -x "http://<username>:<pak>@gw.proxies.sx:7000" https://api.ipify.org
 ```
 
-#### Carrier / ASN targeting (peer pool)
+#### Carrier / ASN / mobile-vs-residential discovery
 
-Show your customers which carriers are live, then route to a specific one. The
-gateway honors `-asn-<n>` (exact) and `-isp-<slug>` (prefix) for the peer pool.
+`getCarrierStock()` is the live catalogue behind a carrier picker. Every entry
+carries an `ipType`, so this is also how you offer **mobile vs residential**
+without hardcoding anything. Counts only — never exit IPs.
+
+Scope it on two independent axes:
+
+| | omit `country` | pass `country` |
+|---|---|---|
+| **omit `pool`** (peer, default) | full catalogue, every country | one country, peer |
+| **`pool: 'mbl'`** | all 6 modem countries | one country, modems |
+| **`pool: 'all'`** | full catalogue, both pools merged | one country, both |
 
 ```ts
-// 1. What's available right now?
-const stock = await proxies.pool.getCarrierStock('us');
-// → { country: 'US', total: 88, other: 27, carriers: [
-//     { asn: 7922, name: 'Comcast', ipType: 'residential', count: 13 },
-//     { asn: 21928, name: 'T-Mobile', ipType: 'mobile', count: 3 }, … ] }
+// FULL carrier list across every country, in one call
+const all = await proxies.pool.getCarrierStock();
+// → { pool: 'peer', updatedAt, countries: {
+//     US: { total: 265, other: 41, carriers: [
+//       { asn: 7922,  name: 'Comcast',  ipType: 'residential', count: 63 },
+//       { asn: 21928, name: 'T-Mobile', ipType: 'mobile',      count: 9  }, … ] },
+//     GB: { … }, … } }        // ~122 countries
 
-// 2. Route to a chosen carrier (pair the entry's asn):
-const url = proxies.buildProxyUrl(pakKey, { pool: 'peer', country: 'us', asn: 21928 });
-// → "http://psx_abc123-peer-us-asn-21928:pak_…@gw.proxies.sx:7000"
-//   (or use isp: 'tmobile' for a name-prefix match)
+// One country, both pools
+const us = await proxies.pool.getCarrierStock({ country: 'us', pool: 'all' });
+// → { pool: 'all', country: 'US', total, other, carriers: [ … ] }
+
+// The modem tier — every entry is ipType 'mobile', 6 countries
+const modems = await proxies.pool.getCarrierStock({ pool: 'mbl' });
 ```
 
-> Counts are real-time routable supply — small pools are normal for residential
-> ASNs. If a carrier shows `0`, route customers to the modem (`mbl`) pool instead.
+**Detecting mobile vs residential** — filter on `ipType`, then route with the
+entry's `asn`:
+
+```ts
+const us = await proxies.pool.getCarrierStock({ country: 'us', pool: 'all' });
+
+const mobile      = us.carriers.filter((c) => c.ipType === 'mobile');
+const residential = us.carriers.filter((c) => c.ipType === 'residential');
+
+// Route to a chosen carrier — pair the entry's asn. Set `pool` explicitly:
+// buildProxyUrl defaults to 'mbl', so peer ASNs need `pool: 'peer'` (or 'best').
+const url = proxies.buildProxyUrl(pakKey, { pool: 'peer', country: 'us', asn: mobile[0].asn! });
+// → "http://psx_abc123-peer-us-asn-21928:pak_…@gw.proxies.sx:7000"
+//   (or isp: 'tmobile' for a name-prefix match)
+```
+
+Prefer `asn` over `isp` when you have it: `asn` is an exact match, `isp` is a
+slugified prefix match. Both are **hard** filters — if nothing matches, the
+gateway returns `E_NO_STOCK_COUNTRY` (502) rather than silently widening, unlike
+the soft `carrier`/`city` tokens.
+
+Want the whole network split by access type in one pass:
+
+```ts
+const all = await proxies.pool.getCarrierStock({ pool: 'all' });
+
+const byType = { mobile: 0, residential: 0, datacenter: 0 } as Record<string, number>;
+for (const c of Object.values(all.countries)) {
+  for (const carrier of c.carriers) {
+    byType[carrier.ipType] = (byType[carrier.ipType] ?? 0) + carrier.count;
+  }
+}
+// → { residential: 1872, mobile: 938, datacenter: 0 }   (live, 2026-07-28)
+```
+
+> Counts are real-time routable supply, cached ~30s server-side. Small pools are
+> normal for residential ASNs. **Check depth before you sell a country** — a
+> country with a handful of endpoints is unreliable no matter how it's
+> configured, and `pool.getStock()` gives you the per-country totals to gate on.
+>
+> `getCarrierStock('us')` (bare string) still works and is equivalent to
+> `{ country: 'us' }` — it is deprecated but not removed.
 
 ---
 

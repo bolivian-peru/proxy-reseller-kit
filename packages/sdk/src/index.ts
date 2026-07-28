@@ -39,6 +39,9 @@ export type {
   PoolStock,
   CarrierStock,
   CarrierStockEntry,
+  CarrierStockAll,
+  CarrierStockCountry,
+  CarrierStockPool,
   Incident,
   ClientConfig,
 } from './types';

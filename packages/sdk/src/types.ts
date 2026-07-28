@@ -581,23 +581,56 @@ export interface CarrierStockEntry {
 }
 
 /**
- * Live routable PEER stock by carrier/ASN for one country. Returned by
- * {@link PoolApi.getCarrierStock}. Counts only — never exit IPs.
+ * Which pool's carrier breakdown to read.
+ *
+ * - `peer` (default) — the flagship fleet: a mix of `residential` and `mobile`
+ *   carriers across every country with live stock.
+ * - `mbl` — the carrier-modem tier. Every entry is `ipType: 'mobile'`, in the
+ *   6 modem countries only.
+ * - `all` — both, merged per country.
+ *
+ * @since 0.12.0
+ */
+export type CarrierStockPool = 'peer' | 'mbl' | 'all';
+
+/** Per-country carrier bucket, as returned in the all-countries shape. */
+export interface CarrierStockCountry {
+  /** Total routable endpoints in the country across all carriers. */
+  total: number;
+  /** Endpoints whose ASN could not be named (bucketed out of `carriers`). */
+  other: number;
+  /** Named carriers, sorted by `count` desc. */
+  carriers: CarrierStockEntry[];
+}
+
+/**
+ * Live routable stock by carrier/ASN for ONE country. Returned by
+ * {@link PoolApi.getCarrierStock} when a `country` is given.
+ * Counts only — never exit IPs.
  *
  * @since 0.8.0
  */
-export interface CarrierStock {
-  pool: 'peer';
+export interface CarrierStock extends CarrierStockCountry {
+  pool: CarrierStockPool;
   /** ISO 8601 timestamp when the snapshot was taken (cached server-side ~30s). */
   updatedAt: string;
   /** ISO 2-letter country this stock is for. */
   country: string;
-  /** Total routable peers in the country across all carriers. */
-  total: number;
-  /** Routable peers whose ASN could not be named (bucketed out of `carriers`). */
-  other: number;
-  /** Named carriers, sorted by `count` desc. */
-  carriers: CarrierStockEntry[];
+}
+
+/**
+ * Live routable stock by carrier/ASN for EVERY country in one call — the full
+ * catalogue. Returned by {@link PoolApi.getCarrierStock} when no `country` is
+ * given. Counts only — never exit IPs.
+ *
+ * @since 0.12.0
+ */
+export interface CarrierStockAll {
+  pool: CarrierStockPool;
+  /** ISO 8601 timestamp when the snapshot was taken (cached server-side ~30s). */
+  updatedAt: string;
+  /** Keyed by ISO 2-letter country code, e.g. `countries.US`. */
+  countries: Record<string, CarrierStockCountry>;
 }
 
 /**
