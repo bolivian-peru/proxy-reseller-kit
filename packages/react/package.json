@@ -1,6 +1,6 @@
 {
   "name": "@proxies-sx/pool-portal-react",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Drop-in React component and headless hooks for embedding a Proxies.sx Pool Gateway reseller dashboard into any React app.",
   "keywords": [
     "proxies",

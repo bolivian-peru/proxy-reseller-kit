@@ -2,6 +2,17 @@
 
 All notable changes to this package are documented here.
 
+## 0.12.1 — pick up pool-sdk 0.11.0 (Jul 2026)
+
+No change to this package's own code. The dependency range on
+`@proxies-sx/pool-sdk` moves to `^0.11.0` so consumers get the widened
+`getCarrierStock()` — full carrier catalogue across every country, both pools,
+and `ipType` for mobile-vs-residential filtering.
+
+Why a release was needed at all: on a 0.x version `^0.10.0` means
+`>=0.10.0 <0.11.0`, so the previously-published 0.12.0 would have resolved to
+sdk 0.10.0 forever and silently withheld the new API from React consumers.
+
 ## 0.10.0 — Private Pool panel (Jul 2026)
 
 - **`<PrivatePoolPanel>`** — a drop-in Private Pool management layout: a header
