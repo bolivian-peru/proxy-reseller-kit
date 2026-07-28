@@ -233,7 +233,7 @@ The kit's knowledge lives in three tiers. When you change behavior, update the t
 |---|---|---|---|
 | **Platform contract** | `docs/USERNAME-DSL.md`, `docs/RESERVED-IPS.md` | Anyone reasoning about routing | **Gateway behaviour changes.** These describe the server, not the SDK — verify every edit against gateway source and cite the file you read |
 | **Code-adjacent** | `README.md`, `packages/*/README.md`, `SKILL.md`, this file | Agents + devs integrating or extending | The API surface, invariants, or security model changes |
-| **In-repo docs** | `docs/PRIVATE-POOL.md`, `docs/X402-RESELLER-INTEGRATION.md`, `docs/TWO-SIDED-DASHBOARD.md`, `docs/MIGRATION-*.md` | Devs implementing a specific pattern | A pattern's shape changes, or a new version migration lands |
+| **In-repo docs** | `docs/PRIVATE-POOL.md`, `docs/PRIVATE-POOL-BUILD.md`, `docs/X402-RESELLER-INTEGRATION.md`, `docs/TWO-SIDED-DASHBOARD.md`, `docs/MIGRATION-*.md` | Devs implementing a specific pattern | A pattern's shape changes, or a new version migration lands |
 | **Wiki** | [github.com/bolivian-peru/proxy-reseller-kit/wiki](https://github.com/bolivian-peru/proxy-reseller-kit/wiki) | Resellers (operational + conceptual) | Operational reality shifts — new error codes, country stock, sticky behavior |
 
 **Facts that keep getting written down wrong.** Each of these was live in this repo and contradicted gateway source; re-check before restating any of them:
@@ -246,6 +246,7 @@ The kit's knowledge lives in three tiers. When you change behavior, update the t
 - `ttl` is immutable once a session row exists.
 - `ge` is Georgia. `mbl-de` always fails.
 - Peer is the flagship network; `mbl` is the supportive 6-country tier.
+- **A Private Pool's country scoping is advisory, not enforced.** `allowedCountries` lives on the pool record and the gateway never reads it — it is absent from the auth response and from all routing code. Scoping is a property of the strings you generate, so a customer who edits `-us-` to `-br-` gets Brazil. The same is true of the first-party page. `qualityTier: 'safe'` (peer→mbl rewrite) is the one scoping lever the gateway *does* enforce. Never tell a reseller their country lock is server-side.
 
 **Wiki pages** (8, MVP shipped May 2026): Home, Getting-Started, Integration-Paths, Sticky-Sessions-and-Rotation, Pak-Key-Lifecycle, x402-and-Wallet-Setup, Troubleshooting, Glossary. Editable via `git clone https://github.com/bolivian-peru/proxy-reseller-kit.wiki.git` — direct push to `master`, no PR. Four more pages are tracked-but-deliberately-unbuilt (Webhooks, Migrating-From-Another-Provider, Pricing-Strategy, Per-Country-Stock); each has an explicit trigger condition and should NOT be written speculatively — wait for the real reseller question that justifies it.
 

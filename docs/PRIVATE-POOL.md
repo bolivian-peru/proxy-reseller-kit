@@ -155,8 +155,21 @@ Three things to get right in any generated string:
 
 ## Offering it as a reseller
 
-Private Pool is your natural **premium / enterprise tier**. Because it is quote-based
-rather than self-serve `pak_` minting, you surface it as a **"request a quote" /
+Private Pool is your natural **premium / enterprise tier**, and you have two ways
+to offer it.
+
+**Build it yourself.** You can re-create the whole
+[client.proxies.sx/private-pool](https://client.proxies.sx/private-pool) product
+inside your own app — the builder page, the pool dashboard, the generated
+proxies, usage and top-up — using the reseller API you already have. A Private
+Pool is assembled from a capped `pak_` key plus the strings you generate, not
+requested from a special endpoint. Step-by-step build guide, including exactly
+which guarantees the gateway enforces and which are yours to honour:
+**[`PRIVATE-POOL-BUILD.md`](./PRIVATE-POOL-BUILD.md)**.
+
+**Or relay it to us** for allocations that need real reserved hardware or
+Reserved-IP leases (neither is in the reseller API). Then it is quote-based
+rather than self-serve, and you surface it as a **"request a quote" /
 "contact us"** action rather than a checkout button:
 
 - Add a "Private Pool / Dedicated capacity" card to your storefront that collects the

@@ -24,6 +24,7 @@
 | **[`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md)** | **The complete proxy-username grammar — all 15 tokens, hard vs soft, and what each does when nothing matches.** Start here for anything routing-related. |
 | [`docs/RESERVED-IPS.md`](./docs/RESERVED-IPS.md) | Exclusively leased devices: lifecycle, the offline-substitution caveat, how to resell it |
 | [`docs/PRIVATE-POOL.md`](./docs/PRIVATE-POOL.md) | Reserved / committed capacity as a premium tier |
+| [`docs/PRIVATE-POOL-BUILD.md`](./docs/PRIVATE-POOL-BUILD.md) | **Re-create the Private Pool page + system in your own app** — build guide, and exactly which guarantees the gateway enforces vs. which are yours to honour |
 | [`docs/MIGRATION-DSL-COMPLETENESS.md`](./docs/MIGRATION-DSL-COMPLETENESS.md) | Upgrading an existing integration + every documentation correction |
 | [`docs/TWO-SIDED-DASHBOARD.md`](./docs/TWO-SIDED-DASHBOARD.md) | Admin-side vs customer-side architecture |
 | [`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md) | Accept USDC from AI agents |
