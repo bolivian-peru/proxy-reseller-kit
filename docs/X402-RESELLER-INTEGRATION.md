@@ -296,7 +296,7 @@ Your margin per session = `(PRICE_PER_GB_USDC - 4) × gb`. Sensible defaults:
 |---|---|---|---|
 | $5.00 | $4.00 | $1.00 (20%) | Tight, volume play |
 | $6.00 | $4.00 | $2.00 (33%) | Default suggestion |
-| $8.00 | $4.00 | $4.00 (50%) | Premium positioning |
+| $7.00 | $4.00 | $3.00 (43%) | Premium positioning |
 
 The $4/GB platform cost shown here is the standard rate; at scale it is negotiable. A lower negotiated wholesale rate widens every margin row above. Contact admin to arrange volume pricing.
 
