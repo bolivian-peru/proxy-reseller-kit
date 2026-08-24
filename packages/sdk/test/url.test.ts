@@ -49,6 +49,26 @@ describe('buildProxyUrl', () => {
     expect(url).toContain('-mbl-us-carrier-att-city-nyc');
   });
 
+  it('appends the soft state/region token after city', () => {
+    const url = buildProxyUrl(USER, KEY, {
+      pool: 'peer',
+      country: 'us',
+      city: 'brooklyn',
+      state: 'ny',
+    });
+    expect(url).toContain('-peer-us-city-brooklyn-state-ny');
+  });
+
+  it('slugifies a state value the same way as city/carrier', () => {
+    const url = buildProxyUrl(USER, KEY, { pool: 'peer', country: 'us', state: 'New York' });
+    expect(url).toContain('-state-newyork');
+  });
+
+  it('emits state without city (state alone is valid)', () => {
+    const url = buildProxyUrl(USER, KEY, { pool: 'peer', country: 'us', state: 'ca' });
+    expect(url).toContain('-peer-us-state-ca');
+  });
+
   it('appends a hard ASN filter (peer carrier targeting)', () => {
     const url = buildProxyUrl(USER, KEY, { pool: 'peer', country: 'us', asn: 21928 });
     expect(url).toContain('psx_abc123-peer-us-asn-21928');

@@ -433,6 +433,18 @@ export interface BuildProxyUrlOpts {
   /** City name (e.g. `"nyc"`, `"berlin"`). Carrier-level precision recommended over city. */
   city?: string;
   /**
+   * Region / state — **soft**, peer-pool only. A US state code like `"ca"`,
+   * `"fl"`, `"ny"` (or a region slug elsewhere). Like {@link city}, it is a
+   * pure ranking preference: the gateway prefers endpoints in that region and
+   * silently widens to any region in the country when none match — it never
+   * excludes and never errors. Coarser than {@link city} and looser than the
+   * hard filters ({@link isp} / {@link asn} / {@link ipType}); reach for those
+   * when you need guaranteed precision. Region availability comes back as
+   * `states[]` from {@link PoolApi.getCities} / {@link PoolApi.getFacets}.
+   * Slugified to one `[a-z0-9]` token on emission, same as `city`/`carrier`.
+   */
+  state?: string;
+  /**
    * Hard IP-type class filter. Restricts selection to `mobile`
    * (carrier modems + mobile peers), `residential` (home/ISP peers), or
    * `datacenter` (hosting IPs). Omit for any class.
@@ -631,6 +643,111 @@ export interface CarrierStockAll {
   updatedAt: string;
   /** Keyed by ISO 2-letter country code, e.g. `countries.US`. */
   countries: Record<string, CarrierStockCountry>;
+}
+
+/**
+ * One city bucket of routable peer stock (counts only — never exit IPs).
+ * `city` is the slug to pass to {@link BuildProxyUrlOpts.city}; `label` is the
+ * human display form.
+ *
+ * @since 0.13.0
+ */
+export interface PoolCityEntry {
+  /** Slug form, e.g. `"brooklyn"` — pass to {@link BuildProxyUrlOpts.city}. */
+  city: string;
+  /** Human display form, e.g. `"Brooklyn"` — use in a picker label. */
+  label: string;
+  /** Routable endpoints available right now in this city. */
+  count: number;
+}
+
+/**
+ * One region/state bucket of routable peer stock (counts only).
+ * `region` is the slug to pass to {@link BuildProxyUrlOpts.state}.
+ *
+ * @since 0.13.0
+ */
+export interface PoolRegionEntry {
+  /** Region/state slug, e.g. `"ca"` — pass to {@link BuildProxyUrlOpts.state}. */
+  region: string;
+  /** Routable endpoints available right now in this region. */
+  count: number;
+}
+
+/**
+ * City + region breakdown of routable stock for one country. Returned by
+ * {@link PoolApi.getCities}. Peer-pool by default (city/region data is only
+ * meaningful for the residential/peer fleet — carrier modems drift on NAT).
+ * Counts only — never exit IPs.
+ *
+ * @since 0.13.0
+ */
+export interface PoolCities {
+  /** ISO 2-letter country this breakdown is for (upper-case, as the API returns). */
+  country: string;
+  /** Pool the counts are for (`peer` default). */
+  pool: CarrierStockPool;
+  /** ISO 8601 timestamp when the snapshot was taken (cached server-side ~30s). */
+  updatedAt: string;
+  /** Cities with routable stock, descending by count. */
+  cities: PoolCityEntry[];
+  /** Regions/states with routable stock, descending by count. */
+  regions: PoolRegionEntry[];
+}
+
+/**
+ * One carrier bucket in a facets response. Unlike {@link CarrierStockEntry},
+ * this carries a stable `id` (`"<name-slug>|<ipType>"`) that the first-party
+ * pickers echo back verbatim as the `carrier` facet selector, avoiding the
+ * name-vs-ASN ambiguity. Pass `asn` to {@link BuildProxyUrlOpts.asn} for a hard
+ * match, or the name-slug to {@link BuildProxyUrlOpts.isp}.
+ *
+ * @since 0.13.0
+ */
+export interface PoolFacetCarrier {
+  /** Stable selector id, e.g. `"comcast|residential"`. Echo verbatim as the facets `carrier` arg. */
+  id: string;
+  /** Numeric ASN, or `null` if unknown. Pass to {@link BuildProxyUrlOpts.asn}. */
+  asn: number | null;
+  /** Carrier/ISP display name, e.g. `"Comcast"`. */
+  name: string;
+  /** Access type of this carrier's endpoints. */
+  ipType: 'mobile' | 'residential' | 'datacenter' | string;
+  /** Routable endpoints for this carrier under the current cross-filter. */
+  count: number;
+}
+
+/**
+ * Cross-filtered city + region + carrier facets for one country. Returned by
+ * {@link PoolApi.getFacets}. Each list already reflects the other selections you
+ * passed, so a UI can render three pickers that narrow each other and stay in
+ * agreement with what the gateway will actually route. Counts only — never IPs.
+ *
+ * @since 0.13.0
+ */
+export interface PoolFacets {
+  /** ISO 2-letter country (upper-case, as the API returns). */
+  country: string;
+  /** Pool the facets are for (`peer` default). */
+  pool: CarrierStockPool;
+  /** ISO 8601 timestamp when the snapshot was taken (cached server-side ~15s). */
+  updatedAt: string;
+  /** Cities co-available under the current carrier/state selection. */
+  cities: PoolCityEntry[];
+  /** Regions/states co-available under the current city/carrier selection. */
+  states: { state: string; count: number }[];
+  /** Carriers co-available under the current city/state selection. */
+  carriers: PoolFacetCarrier[];
+  /** Routable endpoints whose carrier fell outside the top buckets. */
+  other: number;
+  /** Total routable endpoints in the country for this pool. */
+  total: number;
+  /** Endpoint counts by IP class within the current filter. */
+  ipTypes: { mobile: number; residential: number; unclassified: number };
+  /** Routable endpoints with no city classification (still routable, just not city-tagged). */
+  withoutCity: number;
+  /** Endpoints excluded from the city facet because their geo was not stability-proven. */
+  cityIneligible: number;
 }
 
 /**

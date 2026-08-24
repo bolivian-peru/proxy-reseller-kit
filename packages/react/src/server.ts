@@ -281,6 +281,53 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
     }
   };
 
+  const handleCities = async (req: Request): Promise<Response> => {
+    const sp = new URL(req.url).searchParams;
+    const country = sp.get('country') ?? '';
+    if (!country) {
+      return json({ error: 'country_required' }, { status: 400 });
+    }
+    const pool = sp.get('pool');
+    try {
+      const cities = await proxies.pool.getCities(
+        country,
+        pool === 'mbl' || pool === 'all' || pool === 'peer' ? { pool } : undefined,
+      );
+      return json(cities, { headers: { 'Cache-Control': 'public, max-age=30' } });
+    } catch (err) {
+      const apiErr = err as ProxiesApiError;
+      return json(
+        { error: 'upstream_error' },
+        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502 },
+      );
+    }
+  };
+
+  const handleFacets = async (req: Request): Promise<Response> => {
+    const sp = new URL(req.url).searchParams;
+    const country = sp.get('country') ?? '';
+    if (!country) {
+      return json({ error: 'country_required' }, { status: 400 });
+    }
+    const pool = sp.get('pool');
+    try {
+      const facets = await proxies.pool.getFacets({
+        country,
+        pool: pool === 'mbl' || pool === 'all' || pool === 'peer' ? pool : undefined,
+        city: sp.get('city') ?? undefined,
+        state: sp.get('state') ?? undefined,
+        carrier: sp.get('carrier') ?? undefined,
+      });
+      return json(facets, { headers: { 'Cache-Control': 'public, max-age=15' } });
+    } catch (err) {
+      const apiErr = err as ProxiesApiError;
+      return json(
+        { error: 'upstream_error' },
+        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502 },
+      );
+    }
+  };
+
   const handleIncidents = async (): Promise<Response> => {
     try {
       const incidents = await proxies.pool.getIncidents();
@@ -653,6 +700,8 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
     const p = pathOf(req);
     if (p.endsWith('/me')) return handleMe(req);
     if (p.includes('/stock/carriers')) return handleCarrierStock(req);
+    if (p.includes('/stock/cities')) return handleCities(req);
+    if (p.includes('/stock/facets')) return handleFacets(req);
     if (p.endsWith('/stock')) return handleStock();
     if (p.endsWith('/incidents')) return handleIncidents();
     if (p.endsWith('/my-sessions')) return handleListSessions(req);

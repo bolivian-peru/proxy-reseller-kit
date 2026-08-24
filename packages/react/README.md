@@ -186,6 +186,21 @@ Count slider (1–100), country / pool / protocol / rotation / failover / sid-mo
 
 **IP class filter (v0.11.0+).** When `pool` is `peer` or `any`, an "IP class" dropdown appears with `Any` / `Mobile only` / `Residential only` / `Datacenter only` — it emits `-iptype-<v>` and hard-filters the peer pool to that verified exit class (unclassified peers are excluded). The `mbl` pool is mobile-only by construction, so the control is hidden whenever `mbl` is selected. Programmatic equivalent: `buildProxyString({ ..., ipType: 'mobile' })`.
 
+**City + Region pickers (v0.13.0+).** Pass a `facets` prop (from `usePoolFacets`) and, on the peer pool, "Region / State" and "City" dropdowns appear — emitting the **soft** `-state-` / `-city-` tokens. Because the facets endpoint is cross-filtered, feeding the current City/Region/Carrier selection back into the hook makes each picker narrow the others (the same "city smallens carrier and vice versa" behaviour as `client.proxies.sx/pool-proxy`):
+
+```tsx
+const [country, setCountry] = useState<Country>('us');
+const [sel, setSel] = useState<{ city?: string; state?: string; carrier?: string }>({});
+const facets = usePoolFacets('/api/pool', { country, ...sel }).data ?? undefined;
+const carrierStock = usePoolCarrierStock('/api/pool', country).data?.carriers;
+<PoolSessionSpawner
+  proxyUsername={me.proxyUsername} proxyPassword={me.pakKey}
+  defaultPool="peer" facets={facets} carrierStock={carrierStock}
+/>
+```
+
+City and region are soft peer-pool hints: the gateway prefers a match and quietly widens to the country when none is free, so they never error and are hidden on `mbl` (modem stock has no stable city). Programmatic equivalent: `buildProxyString({ ..., city: 'brooklyn', state: 'ny' })`.
+
 Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation)` helpers for hand-rolled UIs. `buildProxyString`'s `ipType?: 'mobile' | 'residential' | 'datacenter'` option is available regardless of whether you use the built-in dropdown.
 
 **Session-type semantics** (the `sessionType` prop / `-sid-` token behavior):
@@ -345,6 +360,13 @@ All hooks return `{ data, loading, error, refetch }`. `usePoolStock` and `useInc
 endpoint counts for one country, backed by `GET <route>/stock/carriers?country=<cc>`.
 Polls every 30s. Use it to populate a carrier picker next to `<PoolSessionSpawner>`'s
 carrier/ASN controls.
+
+**`usePoolFacets(apiRoute, { country, city?, state?, carrier?, pool? }, { refreshIntervalMs? })`**
+(v0.13.0) - cross-filtered city + region + carrier facets for one country, backed by
+`GET <route>/stock/facets`. Feed the CURRENT selection back in and each list narrows the
+others. Pass the result as `<PoolSessionSpawner facets={…}>` to drive the City / Region
+pickers. Polls every 30s. (`createPoolApiHandlers` serves `/stock/facets` and
+`/stock/cities` automatically.)
 
 ### `<PakQuickstart>` - one-key onboarding card (v0.6.0+)
 

@@ -43,6 +43,7 @@ export {
   usePoolKey,
   usePoolStock,
   usePoolCarrierStock,
+  usePoolFacets,
   useIncidents,
   useCopyToClipboard,
   usePoolLeases,

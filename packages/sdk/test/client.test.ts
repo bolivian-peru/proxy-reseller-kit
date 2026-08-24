@@ -514,4 +514,70 @@ describe('ProxiesClient', () => {
     });
     expect(await client.pool.getIncidents()).toEqual([]);
   });
+
+  //  0.13.0: pool.getCities() + pool.getFacets() city/state/carrier discovery
+  it('pool.getCities() returns the { cities, regions } breakdown and passes country+pool', async () => {
+    const fetchMock = mockFetch(200, {
+      country: 'US',
+      pool: 'peer',
+      updatedAt: '2026-08-24T11:00:00Z',
+      cities: [{ city: 'brooklyn', label: 'Brooklyn', count: 6 }],
+      regions: [{ region: 'ca', count: 43 }],
+    });
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: false,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const res = await client.pool.getCities('us', { pool: 'peer' });
+    expect(res.cities[0]!.city).toBe('brooklyn');
+    expect(res.regions[0]!.region).toBe('ca');
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/gateway/pool/stock/cities?country=us&pool=peer');
+  });
+
+  it('pool.getCities() requires a country', async () => {
+    const client = new ProxiesClient({ apiKey: 'psx_x', retry: false, fetch: mockFetch(200, {}) as unknown as typeof fetch });
+    await expect(client.pool.getCities('')).rejects.toThrow(/country is required/);
+  });
+
+  it('pool.getCities() throws on broken upstream shape', async () => {
+    const fetchMock = mockFetch(200, { country: 'US', cities: 'nope' });
+    const client = new ProxiesClient({ apiKey: 'psx_x', retry: false, fetch: fetchMock as unknown as typeof fetch });
+    await expect(client.pool.getCities('us')).rejects.toThrow(/PoolCities response shape unexpected/);
+  });
+
+  it('pool.getFacets() forwards every cross-filter selection and returns the co-available lists', async () => {
+    const fetchMock = mockFetch(200, {
+      country: 'US',
+      pool: 'peer',
+      updatedAt: '2026-08-24T11:00:00Z',
+      cities: [{ city: 'losangeles', label: 'Los Angeles', count: 11 }],
+      states: [{ state: 'ca', count: 43 }],
+      carriers: [{ id: 'comcast|residential', asn: 7922, name: 'Comcast', ipType: 'residential', count: 65 }],
+      other: 287,
+      total: 580,
+      ipTypes: { mobile: 87, residential: 493, unclassified: 0 },
+      withoutCity: 1,
+      cityIneligible: 180,
+    });
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: false,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const res = await client.pool.getFacets({ country: 'us', state: 'ca', carrier: '7922' });
+    expect(res.carriers[0]!.id).toBe('comcast|residential');
+    expect(res.states[0]!.state).toBe('ca');
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('country=us');
+    expect(url).toContain('state=ca');
+    expect(url).toContain('carrier=7922');
+  });
+
+  it('pool.getFacets() throws on broken upstream shape', async () => {
+    const fetchMock = mockFetch(200, { country: 'US', cities: [], carriers: [] }); // missing states[]
+    const client = new ProxiesClient({ apiKey: 'psx_x', retry: false, fetch: fetchMock as unknown as typeof fetch });
+    await expect(client.pool.getFacets({ country: 'us' })).rejects.toThrow(/PoolFacets response shape unexpected/);
+  });
 });

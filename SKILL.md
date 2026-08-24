@@ -31,6 +31,11 @@ Two pools, selected via the `pool` token in the username DSL:
 
 **Quality bar.** Peers are throughput-graded; only those clearing the live floor (`PEER_THROUGHPUT_FLOOR_KBPS`, ~500 KB/s) are routable. Plenty for scraping / API / anti-bot work — the value is the clean, in-country IP, not raw bandwidth. The `mbl` pool is the ultra-stable carrier-modem tier — same $4/GB, smaller footprint (6 countries).
 
+**Targeting depth (all peer-pool).** Beyond country you can narrow on carrier, city and region — build the pickers from the discovery methods, never hardcode:
+- `client.pool.getCarrierStock(cc)` → carriers/ASNs. Route with `buildProxyUrl({ asn })` (hard) or `{ carrier }` (soft).
+- `client.pool.getCities(cc)` → `{ cities, regions }`. Route with `{ city }` / `{ state }` — **both soft**: the gateway prefers a match and silently widens to the country when none is free, never errors.
+- `client.pool.getFacets({ country, city?, state?, carrier? })` → **cross-filtered** lists: feed the current selection back so each picker narrows the others ("city smallens carrier and vice versa"). This is what keeps a three-picker UI in agreement with what the gateway will actually route. `<PoolSessionSpawner facets={…} carrierStock={…}>` wires all of it; the `usePoolFacets` / `usePoolCarrierStock` hooks fetch it. **(v0.13.0+)**
+
 ---
 
 ## Private Pool - quote-based reserved capacity (route, don't build)

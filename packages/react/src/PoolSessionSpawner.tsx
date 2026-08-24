@@ -17,6 +17,7 @@ import type {
   Protocol,
   RotationMode,
   CarrierStockEntry,
+  PoolFacets,
   Branding,
   PoolPortalClassNames,
 } from './types';
@@ -93,6 +94,17 @@ export interface PoolSessionSpawnerProps {
    * @since 0.8.0
    */
   carrierStock?: CarrierStockEntry[];
+  /**
+   * Live city + region facets for the selected country (peer pool), e.g. from
+   * `usePoolFacets(apiRoute, { country, city, state, carrier }).data`. When
+   * provided and the pool is `peer`, City and Region selects appear and the
+   * chosen values route as soft `-city-` / `-state-` hints. Because the facets
+   * endpoint is cross-filtered, feeding the current City/Region/Carrier
+   * selection back into the hook makes each picker narrow the others — the
+   * same "city smallens carrier and vice versa" behaviour as the first-party
+   * page. Counts only — never IPs. @since 0.13.0
+   */
+  facets?: PoolFacets;
   /** Default country selected on mount. */
   defaultCountry?: Country;
   /** Default pool selected on mount. */
@@ -432,6 +444,17 @@ export function buildProxyString(opts: {
   /** Soft carrier-name match (mbl / any pool) — e.g. "T-Mobile US". @since 0.9.0 */
   carrierName?: string;
   /**
+   * Soft city preference (peer pool) — e.g. `"brooklyn"`. Ranking hint only:
+   * the gateway widens to any city when none match, never errors. Slugified by
+   * the builder. @since 0.13.0
+   */
+  city?: string;
+  /**
+   * Soft region/state preference (peer pool) — e.g. `"ca"`. Ranking hint only,
+   * coarser than `city`; widens silently. Slugified by the builder. @since 0.13.0
+   */
+  state?: string;
+  /**
    * Failover scope. Emits `-failover-<v>` only when overriding the gateway
    * default (`samecountry`). @since 0.10.0
    */
@@ -477,6 +500,15 @@ export function buildProxyString(opts: {
   // stock to zero.
   if (opts.asn) urlOpts.asn = opts.asn;
   else if (opts.carrierName) urlOpts.carrier = opts.carrierName;
+
+  // City / region are soft peer-pool hints. Only meaningful on peer (modem
+  // stock has no stable city), so gate them on pool to avoid emitting a token
+  // the mbl selector can only ever widen away — keeps the credential clean and
+  // matches what the first-party page does.
+  if (opts.pool === 'peer') {
+    if (opts.city) urlOpts.city = opts.city;
+    if (opts.state) urlOpts.state = opts.state;
+  }
 
   return buildProxyUrl(opts.proxyUsername, opts.proxyPassword, urlOpts);
 }
@@ -539,6 +571,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
     proxyPassword,
     countries = DEFAULT_COUNTRIES,
     carrierStock = [],
+    facets,
     stock,
     defaultCountry = countries[0]!,
     defaultPool = 'mbl',
@@ -603,6 +636,22 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
     () => selectableCarriers.find((c) => carrierOptionKey(c) === carrierKey) ?? null,
     [selectableCarriers, carrierKey],
   );
+  // City / region selection — '' = any. Soft peer-pool hints, so they are only
+  // offered on peer and reset whenever the scope (country/pool) changes. Live
+  // options come from the cross-filtered `facets` prop (usePoolFacets), so the
+  // lists already reflect the other pickers' current selection — feed the
+  // selected city/state/carrier back into the hook and each narrows the others.
+  // '' is always an option (any), so a selection that the narrowed list no
+  // longer contains still round-trips as "any" rather than emitting a stale slug.
+  const [cityKey, setCityKey] = useState('');
+  const [stateKey, setStateKey] = useState('');
+  useEffect(() => {
+    setCityKey('');
+    setStateKey('');
+  }, [country, pool]);
+  const geoTargetable = pool === 'peer';
+  const cityOptions = useMemo(() => (facets?.cities ?? []), [facets]);
+  const stateOptions = useMemo(() => (facets?.states ?? []), [facets]);
   // Hard IP-class filter — peer/any pools only ('' = any class). mbl is mobile
   // by construction, so we reset the filter whenever mbl is selected.
   const [ipType, setIpType] = useState<'' | 'mobile' | 'residential' | 'datacenter'>('');
@@ -655,6 +704,10 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
           // both classes, and dropping the token hands back whatever the pool has.
           ipType: ipType || ipClassOf(selectedCarrier),
           strict,
+          // Soft city/region — peer-only. buildProxyString gates on pool too,
+          // so passing them on mbl is a no-op, but we keep the source honest.
+          city: geoTargetable ? cityKey || undefined : undefined,
+          state: geoTargetable ? stateKey || undefined : undefined,
         }),
       );
     }
@@ -664,7 +717,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
       count, country, pool, protocol, rotation, sessionType, failover, sessionPrefix,
       generatedAt: Date.now(),
     });
-  }, [proxyUsername, proxyPassword, count, country, pool, selectedCarrier, protocol, rotation, strict, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, ipType, onSpawn]);
+  }, [proxyUsername, proxyPassword, count, country, pool, selectedCarrier, protocol, rotation, strict, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, ipType, geoTargetable, cityKey, stateKey, onSpawn]);
 
   const handleCopyOne = useCallback((url: string, idx: number) => {
     void navigator.clipboard?.writeText(url);
@@ -833,6 +886,51 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
                 the pool has free.
               </span>
             )}
+          </label>
+        )}
+
+        {/* Region / State — soft peer-pool hint. Options come from the
+            cross-filtered `facets` prop (usePoolFacets), so the list narrows
+            with the city/carrier selection. Only shown for peer. Counts only. */}
+        {geoTargetable && stateOptions.length > 0 && (
+          <label className="psx-spawner-row">
+            <span>Region / State</span>
+            <select
+              value={stateKey}
+              onChange={(e) => setStateKey(e.target.value)}
+              className={cn('psx-select', classNames.select)}
+            >
+              <option value="">Any region</option>
+              {stateOptions.map((s) => (
+                <option key={s.state} value={s.state}>
+                  {s.state.toUpperCase()} — {s.count}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* City — soft peer-pool hint, same cross-filtered source as Region. */}
+        {geoTargetable && cityOptions.length > 0 && (
+          <label className="psx-spawner-row">
+            <span>City</span>
+            <select
+              value={cityKey}
+              onChange={(e) => setCityKey(e.target.value)}
+              className={cn('psx-select', classNames.select)}
+            >
+              <option value="">Any city</option>
+              {cityOptions.map((c) => (
+                <option key={c.city} value={c.city}>
+                  {c.label} — {c.count}
+                </option>
+              ))}
+            </select>
+            <span className="psx-spawner-hint">
+              City and region are soft preferences on the peer pool — the gateway
+              prefers a match and quietly widens to the country when none is free.
+              For a guaranteed carrier, use Carrier / ISP above.
+            </span>
           </label>
         )}
 

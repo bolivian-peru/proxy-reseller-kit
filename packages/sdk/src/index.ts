@@ -42,6 +42,11 @@ export type {
   CarrierStockAll,
   CarrierStockCountry,
   CarrierStockPool,
+  PoolCities,
+  PoolCityEntry,
+  PoolRegionEntry,
+  PoolFacets,
+  PoolFacetCarrier,
   Incident,
   ClientConfig,
 } from './types';

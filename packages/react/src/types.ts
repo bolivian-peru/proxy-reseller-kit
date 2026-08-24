@@ -6,6 +6,8 @@ import type {
   PoolStock,
   CarrierStock,
   CarrierStockEntry,
+  PoolFacets,
+  PoolCities,
   Incident,
 } from '@proxies-sx/pool-sdk';
 
@@ -17,6 +19,8 @@ export type {
   PoolStock,
   CarrierStock,
   CarrierStockEntry,
+  PoolFacets,
+  PoolCities,
   Incident,
 };
 

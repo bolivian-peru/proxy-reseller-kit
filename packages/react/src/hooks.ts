@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MeResponse, Pool, PoolStock, CarrierStock, Incident } from './types';
+import type { MeResponse, Pool, PoolStock, CarrierStock, PoolFacets, Incident } from './types';
 
 interface FetchState<T> {
   data: T | null;
@@ -148,6 +148,34 @@ export function usePoolCarrierStock(
 ): HookResult<CarrierStock> {
   return usePolling<CarrierStock>(
     `${apiRoute}/stock/carriers?country=${encodeURIComponent(country)}`,
+    options.refreshIntervalMs ?? 30_000,
+  );
+}
+
+/**
+ * Fetches cross-filtered city + region + carrier facets for a country (counts
+ * only). Proxies to `/v1/gateway/pool/stock/facets`. Feed the CURRENT city /
+ * state / carrier selection back in so each picker narrows the others — the
+ * "city smallens carrier and vice versa" behaviour. Re-fetches when any of
+ * `country / city / state / carrier` changes. Drives the City + Region selects
+ * on `<PoolSessionSpawner facets={…} />`.
+ *
+ * @param apiRoute Base path, e.g. `/api/pool`.
+ * @param sel      `{ country, city?, state?, carrier?, pool? }` — the live selection.
+ * @since 0.13.0
+ */
+export function usePoolFacets(
+  apiRoute: string,
+  sel: { country: string; city?: string; state?: string; carrier?: string; pool?: 'peer' | 'mbl' | 'all' },
+  options: { refreshIntervalMs?: number } = {},
+): HookResult<PoolFacets> {
+  const qs = new URLSearchParams({ country: sel.country });
+  if (sel.pool) qs.set('pool', sel.pool);
+  if (sel.city) qs.set('city', sel.city);
+  if (sel.state) qs.set('state', sel.state);
+  if (sel.carrier) qs.set('carrier', sel.carrier);
+  return usePolling<PoolFacets>(
+    `${apiRoute}/stock/facets?${qs.toString()}`,
     options.refreshIntervalMs ?? 30_000,
   );
 }

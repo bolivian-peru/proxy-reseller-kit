@@ -128,8 +128,8 @@ function slugToken(value: string): string {
  *   and never thrown on. Dropping it falls back to the gateway default of
  *   3600, which shortens a session the caller explicitly asked to lengthen.
  *   (`NaN` / `Infinity` have no clamp target and emit no token at all.)
- * - `carrier` / `isp` / `city` are **slugified** to one `[a-z0-9_]` token,
- *   because a raw value like `"T-Mobile US"` would split on its own hyphen.
+ * - `carrier` / `isp` / `city` / `state` are **slugified** to one `[a-z0-9_]`
+ *   token, because a raw value like `"T-Mobile US"` would split on its own hyphen.
  * - The only deliberate omissions are the gateway's own defaults —
  *   `rotation: 'none'`, `rotation: 'auto10'`, `failover: 'samecountry'` — plus
  *   `strict` under a rotation mode the gateway would not honor it in.
@@ -234,6 +234,7 @@ export function buildProxyUrl(
     asn,
     ipType,
     city,
+    state,
     sid,
     rotation,
     strict,
@@ -264,6 +265,11 @@ export function buildProxyUrl(
   // it can answer 502 E_NO_STOCK_COUNTRY instead of quietly serving mobile.
   if (ipType) tokens.push('iptype', ipType);
   if (city) tokens.push('city', slugToken(city));
+  // `state` is soft and peer-only, same class as `city` — slugified to one
+  // token and never gated on pool. On `mbl` the gateway simply has no region
+  // data to match, so it widens silently rather than erroring; that is the
+  // self-healing behaviour the SDK must not pre-empt by dropping the token.
+  if (state) tokens.push('state', slugToken(state));
   if (sid) {
     validateSid(sid);
     tokens.push('sid', sid);

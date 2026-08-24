@@ -260,6 +260,8 @@ The list endpoint also returns `isExpired: boolean` computed server-side
 |---|---|---|
 | `getStock()` | `PoolStock` | Live endpoint count per country |
 | `getCarrierStock(country)` | `CarrierStock` | Live routable **peer** stock by carrier/ASN for one country (counts only, no exit IPs). Pair an entry's `asn` with `buildProxyUrl({ asn })` to route to that carrier. |
+| `getCities(country, { pool? })` | `PoolCities` | Live routable stock by **city + region** for one country (`{ cities, regions }`, counts only). Pair a `cities[].city` with `buildProxyUrl({ city })` or a `regions[].region` with `buildProxyUrl({ state })`. Peer pool only. **(v0.13.0+)** |
+| `getFacets({ country, city?, state?, carrier?, pool? })` | `PoolFacets` | **Cross-filtered** city + region + carrier facets — each list reflects the other selections, so three pickers narrow each other and stay in agreement with what the gateway will route ("city smallens carrier and vice versa"). **(v0.13.0+)** |
 | `getIncidents()` | `Incident[]` | Active pool incidents |
 
 ### `proxies.buildProxyUrl(pakKey, opts?)`
@@ -289,7 +291,8 @@ import { buildProxyUrl } from '@proxies-sx/pool-sdk';
 | `isp` | `string` | `'tmobile'`, `'comcast'` — **hard** slugified match (peer pool). No match → `E_NO_STOCK_COUNTRY` 502. |
 | `asn` | `number` | `21928` (T-Mobile) — **hard** exact match. No match → 502. Most precise; pair with `getCarrierStock()`. |
 | `ipType` | `'mobile' \| 'residential' \| 'datacenter'` | **Hard** class filter, emits `-iptype-<v>`. `mbl` is mobile-only by construction, so this mainly matters for `pool: 'peer'`. Unclassified peers are excluded. No match → 502. |
-| `city` | `string` | `'nyc'`, `'berlin'` — **soft, ranking bonus only.** It never excludes anyone; no match silently yields any city in the country. Prefer `carrier`/`isp`/`asn` for real precision. |
+| `city` | `string` | `'nyc'`, `'berlin'` — **soft, ranking bonus only.** It never excludes anyone; no match silently yields any city in the country. Peer pool only. Discover with `getCities()` / `getFacets()`. Prefer `carrier`/`isp`/`asn` for real precision. |
+| `state` | `string` | `'ca'`, `'ny'` (US state code / region) — **soft, ranking bonus only**, coarser than `city`. No match silently yields any region in the country. Peer pool only. Discover with `getCities().regions` / `getFacets().states`. **(v0.13.0+)** |
 | `sid` | `string` | Session name, `[a-z0-9_]{1,64}`, **no hyphens** — validated at build time (throws `ProxiesConfigError`). **Required for `sticky`/`auto*` to persist across connections.** A sid *alone* is not sticky — with no `rotation` you still get the gateway default `auto10`. |
 | `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'hard'` | `'sticky'` pins the **device** and weights IP-stability. `'hard'` **pins like sticky** — NOT a new IP per request. **`'none'` emits no token, so the gateway default `auto10` applies (~10 min)** — it is not "no rotation". Needs a `sid` to persist. |
 | `strict` | `boolean` | Emits the bare `-strict` flag. Only active with `'sticky'`/`'hard'`: adds a hard IP-stability floor and heavier stability weighting. No-op for `auto*`/`ondemand`. |

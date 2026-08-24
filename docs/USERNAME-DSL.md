@@ -114,7 +114,8 @@ selection; `soft` means it only influences ranking.
 | `sid` | 1–64 chars `[a-z0-9_]`, no `-` | session identity | Unusable value → **the sid is dropped and you get no stickiness**, silently. Each connection then starts a fresh synthetic session. |
 | `ttl` | integer seconds, clamped **60 – 2 592 000** | session-row lifetime | Non-numeric → `3600`. Out of range → clamped. **Immutable for a live sid** — see [TTL is immutable](#ttl-is-immutable-per-session). |
 | `carrier` | slug, ≤64 chars, e.g. `att` | **soft** (see note) | Narrows the candidate set. **If that set is empty the gateway retries the country without the carrier and serves a different carrier as a normal 200.** Suppress with `-failover-samecarrier` or `-failover-strict`. |
-| `city` | slug, ≤64 chars, e.g. `nyc` | **soft** | Pure ranking bonus — it never excludes anyone. No match → **any city in the country**, silently. Prefer `carrier`/`isp`/`asn` for real precision. |
+| `city` | slug, ≤64 chars, e.g. `nyc` | **soft** | Pure ranking bonus — it never excludes anyone. No match → **any city in the country**, silently. Peer pool only (modem stock has no stable city). Prefer `carrier`/`isp`/`asn` for real precision. |
+| `state` | slug, ≤64 chars, e.g. `ca` (US state code / region) | **soft** | Ranking bonus, coarser than `city`. No match → **any region in the country**, silently. Peer pool only. Discover available regions via `client.pool.getCities(cc).regions` or the cross-filtered `getFacets({country}).states`. |
 | `iptype` | `mobile` · `residential` · `datacenter` | **hard** | No candidate → `E_NO_STOCK_COUNTRY` (502). Unclassified peers are excluded; a modem with no explicit class counts as `mobile`. |
 | `isp` | brand slug, e.g. `spectrum` | **hard**, slugified contains-match | No candidate → 502. Survives the carrier-degradation retry (it is not dropped). |
 | `asn` | 1–7 digits, e.g. `7018` | **hard**, exact | No candidate → 502. Survives the carrier-degradation retry. |

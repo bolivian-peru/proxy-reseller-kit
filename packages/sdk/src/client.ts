@@ -10,6 +10,8 @@ import type {
   CarrierStock,
   CarrierStockAll,
   CarrierStockPool,
+  PoolCities,
+  PoolFacets,
   Incident,
   IncidentsResponse,
   BuildProxyUrlOpts,
@@ -606,6 +608,104 @@ export class PoolApi {
       );
     }
     return raw as CarrierStock | CarrierStockAll;
+  }
+
+  /**
+   * Live routable stock by city and region for ONE country (counts only — never
+   * exit IPs). Powers a city / state picker: pair a `cities[].city` with
+   * {@link buildProxyUrl}'s `city`, or a `regions[].region` with its `state`.
+   * Both are **soft** routing hints (peer pool), so a picker built on this is a
+   * ranking preference, not a hard filter — offer {@link getCarrierStock} +
+   * `asn`/`isp` when a customer needs guaranteed precision. Cached 30s.
+   *
+   * Peer-only by design: carrier modems (`mbl`) drift across cities on carrier
+   * NAT, so city/region data is meaningful only for the residential/peer fleet.
+   * `pool` defaults to `peer`; `mbl` / `all` are accepted but usually sparse.
+   *
+   * Runtime-validates the envelope, same as {@link getStock}.
+   *
+   * @example
+   * ```ts
+   * const { cities, regions } = await client.pool.getCities('us');
+   * // cities:  [{ city: 'brooklyn', label: 'Brooklyn', count: 6 }, …]
+   * // regions: [{ region: 'ca', count: 43 }, { region: 'fl', count: 35 }, …]
+   * const url = buildProxyUrl(me, pak, { country: 'us', pool: 'peer', city: 'brooklyn' });
+   * ```
+   */
+  async getCities(country: string, opts?: { pool?: CarrierStockPool }): Promise<PoolCities> {
+    if (!country) {
+      throw new ProxiesError('getCities: country is required (2-letter ISO code, e.g. "us")');
+    }
+    const qs = new URLSearchParams({ country });
+    if (opts?.pool) qs.set('pool', opts.pool);
+    const raw = await this.client.request<unknown>(`/gateway/pool/stock/cities?${qs.toString()}`);
+    if (
+      !raw ||
+      typeof raw !== 'object' ||
+      !Array.isArray((raw as { cities?: unknown }).cities) ||
+      !Array.isArray((raw as { regions?: unknown }).regions)
+    ) {
+      throw new ProxiesError(
+        'PoolCities response shape unexpected — possible upstream change. ' +
+          'Got: ' +
+          JSON.stringify(raw).slice(0, 200),
+      );
+    }
+    return raw as PoolCities;
+  }
+
+  /**
+   * Cross-filtered city + carrier + region facets for one country — the pickers
+   * narrow each other. Pass the OTHER pickers' current selection so each list
+   * reflects what is actually co-available: `city` narrows the carrier list to
+   * carriers present in that city, `carrier` narrows the city list to cities
+   * that carrier serves, `state` narrows both to that region. This is what
+   * makes a "city smallens carrier and vice versa" UI match the backend exactly,
+   * rather than each dropdown showing counts that ignore the others. Counts
+   * only; peer-pool by default; cached 15s.
+   *
+   * Runtime-validates the envelope, same as {@link getStock}.
+   *
+   * @example Progressive narrowing
+   * ```ts
+   * const all = await client.pool.getFacets({ country: 'us' });
+   * // all.cities, all.states, all.carriers each reflect the whole country
+   * const inCA = await client.pool.getFacets({ country: 'us', state: 'ca' });
+   * // inCA.cities + inCA.carriers now only what co-exists in California
+   * const onComcast = await client.pool.getFacets({ country: 'us', carrier: '7922' });
+   * // onComcast.cities now only cities where Comcast (ASN 7922) has stock
+   * ```
+   */
+  async getFacets(opts: {
+    country: string;
+    pool?: CarrierStockPool;
+    city?: string;
+    carrier?: string;
+    state?: string;
+  }): Promise<PoolFacets> {
+    if (!opts?.country) {
+      throw new ProxiesError('getFacets: country is required (2-letter ISO code, e.g. "us")');
+    }
+    const qs = new URLSearchParams({ country: opts.country });
+    if (opts.pool) qs.set('pool', opts.pool);
+    if (opts.city) qs.set('city', opts.city);
+    if (opts.carrier) qs.set('carrier', opts.carrier);
+    if (opts.state) qs.set('state', opts.state);
+    const raw = await this.client.request<unknown>(`/gateway/pool/stock/facets?${qs.toString()}`);
+    if (
+      !raw ||
+      typeof raw !== 'object' ||
+      !Array.isArray((raw as { cities?: unknown }).cities) ||
+      !Array.isArray((raw as { carriers?: unknown }).carriers) ||
+      !Array.isArray((raw as { states?: unknown }).states)
+    ) {
+      throw new ProxiesError(
+        'PoolFacets response shape unexpected — possible upstream change. ' +
+          'Got: ' +
+          JSON.stringify(raw).slice(0, 200),
+      );
+    }
+    return raw as PoolFacets;
   }
 
   /**
