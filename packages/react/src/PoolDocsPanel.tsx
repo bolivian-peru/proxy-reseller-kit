@@ -181,7 +181,7 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
         routing per-request. The full username has the shape:
       </p>
       <pre className="psx-docs-code-block">
-        {'<account>-<pool>-<country>[-sid-<id>][-rot-<mode>][-strict][-carrier-<name>][-city-<name>][-iptype-<class>][-isp-<slug>][-asn-<n>][-failover-<policy>][-ttl-<seconds>][-pin-<type>-<id>]'}
+        {'<account>-<pool>-<country>[-sid-<id>][-rot-<mode>][-strict][-carrier-<name>][-city-<name>][-state-<name>][-iptype-<class>][-isp-<slug>][-asn-<n>][-failover-<policy>][-ttl-<seconds>][-pin-<type>-<id>]'}
       </pre>
 
       <h4 className="psx-docs-h4">Required</h4>
@@ -304,6 +304,15 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
           <tr>
             <td><code>-city-{'{name}'}</code></td>
             <td>City-level targeting where available. Falls back to country if no city match.</td>
+          </tr>
+          <tr>
+            <td><code>-state-{'{name}'}</code></td>
+            <td>
+              US-state / region targeting (peer pool), e.g. <code>california</code>,{' '}
+              <code>texas</code>, <code>new_york</code>. Soft like city: slugified to one
+              token; on <code>mbl</code> the gateway has no region data and widens to the
+              country rather than erroring.
+            </td>
           </tr>
           <tr>
             <td><code>-iptype-{'{class}'}</code></td>

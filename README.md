@@ -117,7 +117,7 @@ SOCKS5) for isolation and predictable capacity: either **dedicated `-mbl-` modem
 pulled out of the shared pool and exclusively yours for the term, or **committed
 `-peer-` capacity** - a guaranteed share of the community network under your own
 credentials (not exclusive hardware; peers stay community-shared by nature). Same
-`pak_` keys, same username DSL (`-sid-`, `-rot-`, `-city-`, `-carrier-`), just
+`pak_` keys, same username DSL (`-sid-`, `-rot-`, `-city-`, `-state-`, `-carrier-`), just
 scoped to your allocation - switching the pool token is the whole integration.
 
 Traffic pricing is identical to the shared pool: $4.00/GB with the standard volume
