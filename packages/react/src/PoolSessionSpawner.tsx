@@ -255,7 +255,7 @@ const FAILOVER_HINTS: Record<FailoverPolicy, string> = {
 const IP_TYPE_HINTS: Record<string, string> = {
   '': 'No class filter — routes on every verified and unclassified endpoint (the largest pool).',
   mobile:
-    'Hard filter: only endpoints verified as cellular-carrier IPs. Mobile depth is thinner than residential — check the country count above before committing.',
+    'Hard filter: endpoints reported as mobile; this does not verify physical SIM use. Mobile depth is thinner than residential — check the country count above before committing.',
   residential:
     'Hard filter: only home / ISP IPs. These hold an exit IP far longer than mobile does, so this is the pairing for sticky held-IP workflows.',
   datacenter:
@@ -344,6 +344,17 @@ function routableCount(stock: PoolStock | undefined, country: Country, pool: Poo
  * unique on its own — the merge key is, which makes it the one correct choice
  * here too.
  */
+/** Display server evidence without inferring a category from the reported IP class. */
+export function carrierCategoryLabel(entry: CarrierStockEntry): string {
+  switch (entry.classification?.type) {
+    case 'mobile': return 'mobile network';
+    case 'residential': return 'residential network';
+    case 'business': return 'business network';
+    case 'datacenter': return 'datacenter';
+    default: return 'category unknown';
+  }
+}
+
 function carrierOptionKey(entry: CarrierStockEntry): string {
   return `${entry.name}|${entry.ipType}`;
 }
@@ -636,6 +647,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
     () => selectableCarriers.find((c) => carrierOptionKey(c) === carrierKey) ?? null,
     [selectableCarriers, carrierKey],
   );
+  const carrierUnavailable = !!carrierKey && (!selectedCarrier || selectedCarrier.count <= 0);
   // City / region selection — '' = any. Soft peer-pool hints, so they are only
   // offered on peer and reset whenever the scope (country/pool) changes. Live
   // options come from the cross-filtered `facets` prop (usePoolFacets), so the
@@ -687,7 +699,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
   const handleGenerate = useCallback(() => {
     // No country means no routing target: the emitted username would be
     // `…-mbl--sid-…`, which the gateway reads as country ANY and heals silently.
-    if (!proxyUsername || !proxyPassword || !country) return;
+    if (!proxyUsername || !proxyPassword || !country || carrierUnavailable) return;
     const urls: string[] = [];
     for (let i = 1; i <= count; i++) {
       urls.push(
@@ -717,7 +729,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
       count, country, pool, protocol, rotation, sessionType, failover, sessionPrefix,
       generatedAt: Date.now(),
     });
-  }, [proxyUsername, proxyPassword, count, country, pool, selectedCarrier, protocol, rotation, strict, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, ipType, geoTargetable, cityKey, stateKey, onSpawn]);
+  }, [proxyUsername, proxyPassword, count, country, pool, selectedCarrier, carrierUnavailable, protocol, rotation, strict, failover, sessionType, sessionPrefix, gatewayHost, ttlSeconds, ipType, geoTargetable, cityKey, stateKey, onSpawn]);
 
   const handleCopyOne = useCallback((url: string, idx: number) => {
     void navigator.clipboard?.writeText(url);
@@ -843,14 +855,14 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             peer/any. Emits `-iptype-<v>`; unclassified peers are excluded. */}
         {pool !== 'mbl' && (
           <label className="psx-spawner-row">
-            <span>IP class</span>
+            <span>Reported IP class</span>
             <select
               value={ipType}
               onChange={(e) => setIpType(e.target.value as typeof ipType)}
               className={cn('psx-select', classNames.select)}
             >
               <option value="">Any — mobile or residential</option>
-              <option value="mobile">Mobile only — cellular-carrier IPs</option>
+              <option value="mobile">Reported mobile</option>
               <option value="residential">Residential only — home / ISP IPs</option>
               <option value="datacenter">Datacenter only — hosting IPs</option>
             </select>
@@ -863,7 +875,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
             route it as a soft `-carrier-<name>` match. Live stock supplied by
             the host via the `carrierStock` prop (see `usePoolCarrierStock`).
             Counts only — never IPs. */}
-        {selectableCarriers.length > 0 && (
+        {(selectableCarriers.length > 0 || carrierKey) && (
           <label className="psx-spawner-row">
             <span>Carrier / ISP</span>
             <select
@@ -871,13 +883,15 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
               onChange={(e) => setCarrierKey(e.target.value)}
               className={cn('psx-select', classNames.select)}
             >
-              <option value="">Any carrier</option>
+              <option value="">All carriers / ISPs</option>
+              {carrierUnavailable && <option value={carrierKey} disabled>Selected carrier unavailable — {carrierKey}</option>}
               {selectableCarriers.map((c) => (
                 <option key={carrierOptionKey(c)} value={carrierOptionKey(c)}>
-                  {c.name} ({c.ipType}) — {c.count}
+                  {c.name} ({carrierCategoryLabel(c)}; reported {c.ipType}) — {c.count}
                 </option>
               ))}
             </select>
+            {carrierUnavailable && <span role="status" className="psx-spawner-hint">Your carrier selection is kept. Choose an available provider or explicitly choose all carriers to continue.</span>}
             {selectedCarrier && !ipType && ipClassOf(selectedCarrier) && (
               <span className="psx-spawner-hint">
                 This carrier is listed as {selectedCarrier.ipType}, so the generated
@@ -1052,7 +1066,7 @@ export function PoolSessionSpawner(props: PoolSessionSpawnerProps): JSX.Element 
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={!country}
+          disabled={!country || carrierUnavailable}
           className={cn('psx-button', 'psx-spawner-generate', classNames.button)}
         >
           Generate {count} proxy URL{count > 1 ? 's' : ''}

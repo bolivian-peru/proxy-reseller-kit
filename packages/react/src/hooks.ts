@@ -144,10 +144,12 @@ export function usePoolStock(
 export function usePoolCarrierStock(
   apiRoute: string,
   country: string,
-  options: { refreshIntervalMs?: number } = {},
+  options: { refreshIntervalMs?: number; pool?: 'peer' | 'mbl' | 'all' | 'any' } = {},
 ): HookResult<CarrierStock> {
+  const qs = new URLSearchParams({ country });
+  if (options.pool) qs.set('pool', options.pool === 'any' ? 'all' : options.pool);
   return usePolling<CarrierStock>(
-    `${apiRoute}/stock/carriers?country=${encodeURIComponent(country)}`,
+    `${apiRoute}/stock/carriers?${qs.toString()}`,
     options.refreshIntervalMs ?? 30_000,
   );
 }
@@ -166,11 +168,11 @@ export function usePoolCarrierStock(
  */
 export function usePoolFacets(
   apiRoute: string,
-  sel: { country: string; city?: string; state?: string; carrier?: string; pool?: 'peer' | 'mbl' | 'all' },
+  sel: { country: string; city?: string; state?: string; carrier?: string; pool?: 'peer' | 'mbl' | 'all' | 'any' },
   options: { refreshIntervalMs?: number } = {},
 ): HookResult<PoolFacets> {
   const qs = new URLSearchParams({ country: sel.country });
-  if (sel.pool) qs.set('pool', sel.pool);
+  if (sel.pool) qs.set('pool', sel.pool === 'any' ? 'all' : sel.pool);
   if (sel.city) qs.set('city', sel.city);
   if (sel.state) qs.set('state', sel.state);
   if (sel.carrier) qs.set('carrier', sel.carrier);

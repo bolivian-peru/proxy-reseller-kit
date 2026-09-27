@@ -582,11 +582,15 @@ export interface PoolStock {
 
 /** One carrier/ASN bucket of routable peer stock (counts only — never IPs). */
 export interface CarrierStockEntry {
+  /** Optional evidence category from the stock API; absent evidence remains unknown. */
+  classification?: { type: 'mobile' | 'residential' | 'business' | 'datacenter' | 'unknown'; basis: string };
+  /** Exact ASN counts when several networks are grouped under one provider. */
+  asns?: { asn: number; count: number }[];
   /** Numeric ASN, or `null` if the AS number is unknown. Pass to {@link BuildProxyUrlOpts.asn}. */
   asn: number | null;
   /** Carrier/ISP display name, e.g. `"T-Mobile"`. Slugify for {@link BuildProxyUrlOpts.isp}. */
   name: string;
-  /** Access type of this carrier's endpoints. */
+  /** Reported routing class; not proof of the device's physical connection. */
   ipType: 'mobile' | 'residential' | 'datacenter' | string;
   /** Routable endpoints available right now for this carrier in the country. */
   count: number;
@@ -704,17 +708,9 @@ export interface PoolCities {
  *
  * @since 0.13.0
  */
-export interface PoolFacetCarrier {
+export interface PoolFacetCarrier extends CarrierStockEntry {
   /** Stable selector id, e.g. `"comcast|residential"`. Echo verbatim as the facets `carrier` arg. */
   id: string;
-  /** Numeric ASN, or `null` if unknown. Pass to {@link BuildProxyUrlOpts.asn}. */
-  asn: number | null;
-  /** Carrier/ISP display name, e.g. `"Comcast"`. */
-  name: string;
-  /** Access type of this carrier's endpoints. */
-  ipType: 'mobile' | 'residential' | 'datacenter' | string;
-  /** Routable endpoints for this carrier under the current cross-filter. */
-  count: number;
 }
 
 /**

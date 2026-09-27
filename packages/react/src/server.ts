@@ -265,12 +265,18 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
   };
 
   const handleCarrierStock = async (req: Request): Promise<Response> => {
-    const country = new URL(req.url).searchParams.get('country') ?? '';
+    const sp = new URL(req.url).searchParams;
+    const country = sp.get('country') ?? '';
     if (!country) {
       return json({ error: 'country_required' }, { status: 400 });
     }
     try {
-      const stock = await proxies.pool.getCarrierStock(country);
+      const requestedPool = sp.get('pool');
+      const pool = requestedPool === 'any' ? 'all' : requestedPool;
+      const stock = await proxies.pool.getCarrierStock({
+        country,
+        pool: pool === 'peer' || pool === 'mbl' || pool === 'all' ? pool : undefined,
+      });
       return json(stock, { headers: { 'Cache-Control': 'public, max-age=30' } });
     } catch (err) {
       const apiErr = err as ProxiesApiError;
@@ -287,7 +293,8 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
     if (!country) {
       return json({ error: 'country_required' }, { status: 400 });
     }
-    const pool = sp.get('pool');
+    const requestedPool = sp.get('pool');
+    const pool = requestedPool === 'any' ? 'all' : requestedPool;
     try {
       const cities = await proxies.pool.getCities(
         country,
@@ -309,7 +316,8 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
     if (!country) {
       return json({ error: 'country_required' }, { status: 400 });
     }
-    const pool = sp.get('pool');
+    const requestedPool = sp.get('pool');
+    const pool = requestedPool === 'any' ? 'all' : requestedPool;
     try {
       const facets = await proxies.pool.getFacets({
         country,

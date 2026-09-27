@@ -23,6 +23,8 @@ function makeClientStub(overrides: Partial<{ listKeys: unknown[]; stock: unknown
     },
     pool: {
       getStock: vi.fn(async () => overrides.stock ?? { updatedAt: '', countries: [] }),
+      getCarrierStock: vi.fn(async () => ({ country: 'us', total: 3, other: 0, carriers: [] })),
+      getFacets: vi.fn(async () => ({ country: 'us', carriers: [], total: 3 })),
       getIncidents: vi.fn(async () => overrides.incidents ?? []),
     },
     sessions: {
@@ -173,5 +175,27 @@ describe('createPoolApiHandlers', () => {
     });
     const res = await GET(new Request('http://x/api/pool/something-else'));
     expect(res.status).toBe(404);
+  });
+});
+
+
+describe('carrier stock source scope', () => {
+  it.each([
+    ['', undefined], ['peer', 'peer'], ['mbl', 'mbl'], ['all', 'all'], ['any', 'all'], ['unknown', undefined],
+  ])('forwards %s without changing the omitted peer default', async (requested, expected) => {
+    const proxies = makeClientStub();
+    const { GET } = createPoolApiHandlers({ proxies, getSessionUserId: () => null, getUserKeyId: () => null });
+    const response = await GET(new Request(`https://fixture.test/api/pool/stock/carriers?country=us${requested ? `&pool=${requested}` : ''}`));
+    expect(response.status).toBe(200);
+    expect(proxies.pool.getCarrierStock).toHaveBeenCalledWith({ country: 'us', pool: expected });
+    expect((await response.json()).total).toBe(3);
+  });
+
+  it('maps any to all for facets while retaining exact requested provider and geography', async () => {
+    const proxies = makeClientStub();
+    const { GET } = createPoolApiHandlers({ proxies, getSessionUserId: () => null, getUserKeyId: () => null });
+    const response = await GET(new Request('https://fixture.test/api/pool/stock/facets?country=us&pool=any&carrier=as64501%7Cresidential&state=ny&city=example'));
+    expect(response.status).toBe(200);
+    expect(proxies.pool.getFacets).toHaveBeenCalledWith({ country: 'us', pool: 'all', carrier: 'as64501|residential', state: 'ny', city: 'example' });
   });
 });

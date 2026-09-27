@@ -356,8 +356,9 @@ function MyDashboard() {
 
 All hooks return `{ data, loading, error, refetch }`. `usePoolStock` and `useIncidents` poll every 30s/60s respectively; override with `{ refreshIntervalMs }`.
 
-**`usePoolCarrierStock(apiRoute, country, { refreshIntervalMs? })`** (v0.9.0) - per-carrier
+**`usePoolCarrierStock(apiRoute, country, { refreshIntervalMs?, pool? })`** (v0.9.0) - per-carrier
 endpoint counts for one country, backed by `GET <route>/stock/carriers?country=<cc>`.
+Version 0.13.1 adds `pool: 'peer' | 'mbl' | 'all' | 'any'`; omitted scope stays peer for compatibility. `any` maps to the stock API's `all`, while proxy usernames keep `-any-`. The connected Private Pool picker requests modem stock for an `mbl` pool and combined stock otherwise. All-carrier totals are aggregates, not unidentified devices; `ipType` is a reported class, not proof of a physical connection. Upgrade the React package and rebuild your host app; 0.13.0 does not forward the carrier-stock pool scope. A missing selected provider now blocks Generate/Reserve until it returns or the customer explicitly chooses another option. These UI guards do not change gateway failover or guarantee a particular physical connection.
 Polls every 30s. Use it to populate a carrier picker next to `<PoolSessionSpawner>`'s
 carrier/ASN controls.
 

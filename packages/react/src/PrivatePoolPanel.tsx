@@ -32,7 +32,7 @@ import {
   useState,
 } from 'react';
 import { buildProxyUrl } from '@proxies-sx/pool-sdk';
-import { PoolSessionSpawner, type PoolSessionSpawnerProps } from './PoolSessionSpawner';
+import { PoolSessionSpawner, carrierCategoryLabel, type PoolSessionSpawnerProps } from './PoolSessionSpawner';
 import {
   usePoolCarrierStock,
   usePoolLeases,
@@ -231,12 +231,12 @@ const IP_CLASS_OPTS: { value: '' | 'mobile' | 'residential'; label: string; hint
   {
     value: 'mobile',
     label: 'Mobile only',
-    hint: 'Cellular-carrier exit IPs. Highest trust, but carrier CGNAT may re-issue the exit IP under you.',
+    hint: 'Reported mobile class. This does not certify physical SIM use or a fixed IP.',
   },
   {
     value: 'residential',
     label: 'Residential only',
-    hint: 'Home / ISP exit IPs. These hold the same address for hours to days — the closest thing to a fixed IP.',
+    hint: 'Reported residential class. This does not certify household access or a fixed IP.',
   },
 ];
 
@@ -356,11 +356,14 @@ function ReservedIps(props: ReservedIpsProps): JSX.Element {
   // Live carrier stock for the chosen country (counts only, never exit IPs).
   const carrierStock = usePoolCarrierStock(apiRoute, country.toLowerCase(), {
     refreshIntervalMs: 60_000,
+    pool: gateway?.poolToken === 'mbl' ? 'mbl' : 'all',
   });
   const carriers = useMemo(
     () => (carrierStock.data?.carriers ?? []).filter((c) => c.count > 0),
     [carrierStock.data],
   );
+
+  const carrierUnavailable = !!carrier && (carrierStock.loading || !!carrierStock.error || !carriers.some(c => c.name === carrier));
 
   const failoverHint = FAILOVER_OPTS.find((f) => f.value === failover)?.hint ?? '';
   const ipClassHint = IP_CLASS_OPTS.find((c) => c.value === ipType)?.hint ?? '';
@@ -371,6 +374,7 @@ function ReservedIps(props: ReservedIpsProps): JSX.Element {
     leases.data.poolHeld >= leases.data.maxLeases;
 
   const handleReserve = useCallback(async () => {
+    if (carrierUnavailable) { setReserveNote('Your selected carrier is unavailable. Choose an available provider or explicitly choose all carriers.'); return; }
     setReserveNote(null);
     let held = 0;
     let lastError = '';
@@ -403,7 +407,7 @@ function ReservedIps(props: ReservedIpsProps): JSX.Element {
       return;
     }
     setReserveNote(lastError || 'Could not reserve an IP right now.');
-  }, [actions, carrier, country, failover, idleTtlSec, ipType, leases, quantity]);
+  }, [actions, carrier, carrierUnavailable, country, failover, idleTtlSec, ipType, leases, quantity]);
 
   const handleAction = useCallback(
     async (run: () => Promise<unknown>) => {
@@ -481,22 +485,23 @@ function ReservedIps(props: ReservedIpsProps): JSX.Element {
             onChange={(e) => setCarrier(e.target.value)}
             className={cn('psx-select', classNames.select)}
           >
-            <option value="">Any carrier</option>
+            <option value="">All carriers / ISPs</option>
+            {carrierUnavailable && <option value={carrier} disabled>Selected carrier unavailable — {carrier}</option>}
             {carriers.map((c) => (
               <option key={`${c.name}-${c.asn ?? 'na'}`} value={c.name}>
-                {c.name} ({c.ipType}) — {c.count}
+                {c.name} ({carrierCategoryLabel(c)}; reported {c.ipType}) — {c.count}
               </option>
             ))}
           </select>
           <span className="psx-spawner-hint">
             {carrierStock.loading
               ? 'Reading live stock…'
-              : `Live routable stock in ${country || 'this country'} — counts only, never addresses. Your pool may be able to hold fewer than shown.`}
+              : `Total across providers in ${country || 'this country'}; this is not an unidentified bucket. Your pool may be able to hold fewer than shown.`}
           </span>
         </label>
 
         <label className="psx-spawner-row">
-          <span>IP class</span>
+          <span>Reported IP class</span>
           <select
             value={ipType}
             onChange={(e) => setIpType(e.target.value as typeof ipType)}
@@ -568,7 +573,7 @@ function ReservedIps(props: ReservedIpsProps): JSX.Element {
         <button
           type="button"
           onClick={() => void handleReserve()}
-          disabled={!enabled || atCap || actions.acquiring || !country}
+          disabled={!enabled || atCap || actions.acquiring || !country || carrierUnavailable}
           className={cn('psx-button', 'psx-button-primary', classNames.button)}
         >
           {actions.acquiring ? 'Reserving…' : `Reserve ${quantity} IP${quantity === 1 ? '' : 's'}`}
