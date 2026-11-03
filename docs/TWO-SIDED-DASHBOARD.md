@@ -1,7 +1,7 @@
 # Two-Sided Dashboard Pattern — Reseller Best Practice
 
 > **For:** Engineers (and AI agents) building a SaaS dashboard on top of the Proxies.sx Pool Gateway.
-> **Authoritative pattern.** Used in production by Coronium and what we recommend to every reseller.
+> **Authoritative pattern.** Used in production by a reseller on this platform and what we recommend to every reseller.
 >
 > Drop this whole file into Claude Code (or read it as a human). It's structured so an agent can use it as a self-contained spec — every concrete detail you need is here.
 
@@ -86,6 +86,8 @@ The single biggest reason to keep them separate: **the failure modes are catastr
                        │  poolKeys.get(id)         │
                        │  poolKeys.topUp(id, ...)  │
                        │  poolKeys.regenerate(id)  │
+                       │  poolKeys.usage(id)       │
+                       │  poolKeys.usageSummary()  │
                        │  poolKeys.delete(id)      │
                        │  sessions.list()          │
                        │  sessions.close(key)      │
@@ -121,7 +123,7 @@ Reseller operations staff. Capabilities you build:
 3. **Mint / regenerate / revoke pak_** on a customer's behalf (impersonation). Useful for support workflows where the customer can't do it themselves.
 4. **Top up customer balance.** Admin credit grants — gives them N GB without a payment.
 5. **Set custom rates per customer.** "VIP customer Foo gets $2/GB instead of standard $4."
-6. **Aggregate stats.** Total customers, active customers, total traffic, MRR, churn.
+6. **Aggregate stats.** Total customers, active customers, total traffic (`poolKeys.usageSummary()` — daily GB across every key plus a per-key breakdown, 90-day window), MRR, churn.
 7. **Audit log.** Every admin action recorded with operator id + timestamp.
 8. **Per-customer impersonation.** Click a customer → see their dashboard exactly as they see it. Useful for debugging customer-reported issues.
 
@@ -214,7 +216,7 @@ export const { GET, POST, DELETE } = createPoolApiHandlers({
 
 **The trust boundary:** `psx_` API key lives only in `proxies` (server-side singleton). The browser never sees it. `getSessionUserId` enforces auth. `getUserKeyId` enforces ownership. The customer can ONLY interact with their own pak_id.
 
-### Page composition (the Coronium-style pattern)
+### Page composition (the reference pattern)
 
 ```tsx
 'use client';
@@ -314,13 +316,13 @@ export const proxies = new ProxiesClient({
 
 ---
 
-## Reference: Coronium's deployment
+## Reference: a production deployment
 
-For a real example, Coronium ships:
+For a real example, one reseller on this platform ships:
 
-- **`admin.coronium.io/beta`** → admin panel, Customer Tools tab. Lets staff impersonate a customer, mint/topup their pak_, audit their pool usage.
-- **`dashboard.coronium.io/en/pool`** → customer dashboard. Uses all five pool-portal-react components composed in the layout above.
-- **Backend**: `coronium-backend` Express app exposes `/api/v1/admin/pool/*` (cookie-auth admin) and `/api/v1/account/pool/*` + `/api/v3/pool/*` (cookie/JWT customer). Both wrap the same `ProxiesClient`.
+- **`admin.<brand>/…`** → admin panel, Customer Tools tab. Lets staff impersonate a customer, mint/topup their pak_, audit their pool usage.
+- **`dashboard.<brand>/pool`** → customer dashboard. Uses all five pool-portal-react components composed in the layout above.
+- **Backend**: an Express app exposes `/api/v1/admin/pool/*` (cookie-auth admin) and `/api/v1/account/pool/*` (cookie/JWT customer). Both wrap the same `ProxiesClient`.
 
 The split has soaked since 2026‑05‑01 with no admin-vs-customer permission bugs.
 
@@ -349,7 +351,7 @@ If a user asks to "build a Pool dashboard for my reseller business" and you're a
 | Top up own balance | ❌ | ✅ |
 | Top up any customer's balance | ✅ | ❌ |
 | List own sessions | ❌ | ✅ via `<ActiveSessionsTable>` |
-| List ALL customers' sessions | ✅ (via gateway `/sessions/active`) | ❌ |
+| List ALL customers' sessions | ✅ (`sessions.list()` with no `pakId`) | ❌ |
 | Close own session | ❌ | ✅ via SDK `sessions.close()` |
 | Close any customer's session | ✅ | ❌ |
 | View own usage | ❌ | ✅ |
@@ -372,4 +374,4 @@ If a user asks to "build a Pool dashboard for my reseller business" and you're a
 
 ---
 
-*Pattern in production at Coronium. Authoritative. Update this doc when you discover new constraints — don't fork it into your own README.*
+*Pattern in production. Authoritative. Update this doc when you discover new constraints — don't fork it into your own README.*

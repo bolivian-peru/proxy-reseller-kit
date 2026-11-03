@@ -5,6 +5,51 @@ All notable changes to this package are documented here. The format is based on
 semver from 0.3.0 onwards (the public surface is everything exported from
 `dist/index.d.ts`).
 
+## 0.14.0 — live-API sync: usage endpoints, hard location filters, no exit IPs (Nov 2026)
+
+Synced against the live platform (backend release r84 `73b911d6`, gateway
+`d2e9f99e`) on 2026-11-03. Type changes are listed first because they are the
+breaking ones on a 0.x line.
+
+### Changed (breaking types)
+
+- **`Incident`** now mirrors the live `GET /gateway/incidents` row:
+  `{ id, severity: 'info' | 'warning' | 'critical', message, since }`. The old
+  `title` / `description` / `startedAt` / `affects` fields never existed on the
+  wire. `IncidentsResponse` gains `stale?`.
+- **`ActiveSession.currentIp` removed.** The platform allow-lists the session
+  fields it returns and an exit IP is never one of them; the field was always
+  `undefined`. `ActiveSessionsResponse` gains `truncated?`.
+- **`BuildProxyUrlOpts.carrier` / `city` / `state` are documented as hard
+  filters.** On the live gateway all three refuse with `E_NO_STOCK_COUNTRY`
+  when nothing matches and are never dropped on a retry; `city` / `state`
+  match peers only, so they refuse on `pool: 'mbl'`. Emission is unchanged.
+
+### Added
+
+- **`poolKeys.usage(keyId, { days? })`** — `GET /reseller/pool-keys/:id/usage`:
+  per-day `{ date, mbIn, mbOut, mb }` series for one key, gap-filled, 1–365
+  days, ownership-scoped. Type `PakUsageSeries`.
+- **`poolKeys.usageSummary({ days? })`** — `GET /reseller/analytics/pak-usage`:
+  daily GB across all keys plus a per-key breakdown (90-day rollup). Needs the
+  `traffic:read` scope. Type `PakUsageSummary`.
+- **`PoolStock`** types the rest of the live response: `connected` /
+  `connectedTotals` (relay memberships, not sellable capacity), the
+  country-tier `pricing` block (`PoolPricing`, `CountryTier`), `reservedIp`
+  terms, `ipTypes` and `stale`.
+- `IncidentsResponse`, `PoolPricing`, `CountryTier`, `PakUsageSeries`,
+  `PakUsageSummary` exported.
+
+### Docs
+
+- API-key scopes corrected: the pool-keys routes DO carry a `ScopesGuard` —
+  `customers:read` for reads, `customers:write` for writes; `ports:read` /
+  `ports:write` for sessions; `traffic:read` for `usageSummary`. Earlier
+  revisions said `ports:*` alone was enough.
+- `-session-<id>` is accepted by the live gateway as an alias of `-sid-`.
+- Error table gains `E_BALANCE_EXHAUSTED` (reseller account out of GB),
+  `E_GATEWAY_CAPACITY`, `E_WRONG_PORT`.
+
 ## 0.11.0 — full carrier catalogue + mobile/residential discovery (Jul 2026)
 
 - **`pool.getCarrierStock()` now scopes on two axes.** Previously it required a
@@ -43,7 +88,7 @@ semver from 0.3.0 onwards (the public surface is everything exported from
 - **`buildProxyUrl` validates `sid` at build time** (`^[a-z0-9_]{1,64}$`) and throws
   `ProxiesConfigError` on violation — fail fast in your code instead of a runtime
   CONNECT error at the gateway. Short sids like `t1` are valid (the gateway's old
-  8-char minimum was removed server-side; this closes the Atheris `-sid-t1` class
+  8-char minimum was removed server-side; this closes a reseller's `-sid-t1` class
   of bugs from both ends).
 - Published to npm — first registry release since 0.5.1; 0.6.x–0.8.0 below shipped
   only as GitHub tarballs.
@@ -242,7 +287,7 @@ that auto-topup an over-cap key without explicit re-enable.
 
 ## 0.4.0 — Sessions API (multi-port spawner UX)
 
-Coronium audit follow-up (2026‑05‑01): expose live gateway session
+Reseller audit follow-up (2026‑05‑01): expose live gateway session
 state so resellers can build the same multi-port spawner / active-
 sessions-table UX as `client.proxies.sx/pool-proxy`.
 
@@ -280,7 +325,7 @@ new `sessions` namespace.
 
 ## 0.3.1 — PoolStock shape fix (P0)
 
-Surfaced by Coronium's live integration audit (2026‑05‑01). The
+Surfaced by a reseller's live integration audit (2026‑05‑01). The
 declared `PoolStock` type in `dist/index.d.ts` was unrelated to what
 the running production server returns — every consumer iterating
 `stock.countries` got `undefined`. Fixed.
@@ -321,7 +366,7 @@ counts (or `peer` for residential).
 
 ## 0.3.0 — Production-readiness pass
 
-Driven by paying-reseller feedback (Coronium audit, 2026‑04‑30). Removes the
+Driven by paying-reseller feedback (audit, 2026‑04‑30). Removes the
 need for host-app retry wrappers and locks down the double-mint footgun on
 write retries.
 

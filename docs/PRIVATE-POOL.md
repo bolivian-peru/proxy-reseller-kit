@@ -91,6 +91,12 @@ billed only as used from the same GB balance that covers both pools:
 > ladders look alike and are easy to conflate — only the per-order one moves
 > the $/GB.
 
+**Country tiers.** Since 2026-10-12 a GB that *exits* in a lower-tier country
+uses only a fraction of a GB of balance (`burnRate` 1 / 0.375 / 0.1875 for the
+Premium / Plus / Standard tiers). The tier list and whether it is in force come
+from `pricing` in `GET /v1/gateway/pool/stock` — read it, do not copy it. A
+`pak_` cap still counts raw GB carried.
+
 **Reservation fee: monthly, custom-quoted** per country and pool size. This is the
 only Private-Pool-specific cost, and it is confirmed in the quote - requesting a
 pool never charges anything.
@@ -105,8 +111,11 @@ For enterprise volumes, both the reservation fee and the per-GB wholesale rate a
 
 ## The request flow
 
-Private Pool is **quote-based, not instant checkout** - reserving real devices needs
-a live capacity check first. The flow:
+Two ways in. A pool **funded from your existing account GB** is instant: the
+`/private-pool` page's "build from balance" path mints the pool's credential on
+the spot and meters it against your account balance (no purchase, no quote).
+An allocation of **reserved hardware** is quote-based — reserving real devices
+needs a live capacity check first. That flow:
 
 1. **Configure** at [client.proxies.sx/private-pool](https://client.proxies.sx/private-pool):
    pool type (modem or peer), pool size (10-200+ devices), countries, term, and an
@@ -136,15 +145,16 @@ curl -x "http://psx_ACCOUNT-mbl-us-sid-worker01-rot-sticky:pak_KEY@gw.proxies.sx
 curl -x "http://psx_ACCOUNT-peer-br-rot-auto10:pak_KEY@gw.proxies.sx:7000" https://api.ipify.org
 ```
 
-`-sid-<name>` names the session, `-rot-<mode>` sets rotation, `-city-` / `-carrier-`
-are **soft** hints that silently widen when nothing matches, and `-iptype-` /
-`-isp-` / `-asn-` are **hard** filters that return 502 instead. Complete
-reference: [`USERNAME-DSL.md`](./USERNAME-DSL.md).
+`-sid-<name>` names the session, `-rot-<mode>` sets rotation, and every
+targeting token — `-carrier-`, `-city-`, `-state-`, `-iptype-`, `-isp-`,
+`-asn-` — is a **hard** filter that returns 502 when nothing matches (city and
+state match peers only). Complete reference:
+[`USERNAME-DSL.md`](./USERNAME-DSL.md).
 
 Three things to get right in any generated string:
 
-- **Use `-sid-`, not `-session-`.** The latter is not a real token; it is
-  silently skipped and you get no stickiness.
+- **Use `-sid-`.** The gateway rewrites `-session-<id>` to `sid` for you, but
+  generated strings should carry the canonical token.
 - **Sticky needs both tokens.** `-sid-` alone still soft-rotates on the gateway
   default `auto10` (~10 min). Pair it with `-rot-sticky`.
 - **Sticky pins the device, not the IP.** See
@@ -167,8 +177,9 @@ requested from a special endpoint. Step-by-step build guide, including exactly
 which guarantees the gateway enforces and which are yours to honour:
 **[`PRIVATE-POOL-BUILD.md`](./PRIVATE-POOL-BUILD.md)**.
 
-**Or relay it to us** for allocations that need real reserved hardware or
-Reserved-IP leases (neither is in the reseller API). Then it is quote-based
+**Or relay it to us** for allocations that need real reserved hardware
+(Reserved-IP leases, by contrast, you can run yourself from a Private Pool on
+your own account — see [`RESERVED-IPS.md`](./RESERVED-IPS.md)). Then it is quote-based
 rather than self-serve, and you surface it as a **"request a quote" /
 "contact us"** action rather than a checkout button:
 
