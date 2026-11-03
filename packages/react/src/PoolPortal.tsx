@@ -323,10 +323,7 @@ export function PoolPortal(props: PoolPortalProps): JSX.Element {
       {/* Incident banner */}
       {showIncidents && incident && (
         <div className={cx('psx-banner', 'psx-banner-warn', classNames?.banner)} role="status">
-          <strong>{incident.title}</strong>
-          {incident.description && (
-            <div style={{ fontSize: 12, marginTop: 2 }}>{incident.description}</div>
-          )}
+          {incident.message}
         </div>
       )}
 

@@ -124,7 +124,8 @@ function HowItWorks({ classNames }: { classNames: PoolPortalClassNames }): JSX.E
             <strong>Auth.</strong> The gateway parses your username (e.g.{' '}
             <code>psx_xxx-mbl-us-sid-bot07</code>) into routing tokens, then validates
             the password — either your proxy-password or a <code>pak_</code> access key.
-            Cached for 30 s on success, 10 s on failure.
+            The result is cached for 30 s, so a rotated or disabled key can keep
+            opening new connections for up to that long.
           </div>
         </li>
         <li>
@@ -236,10 +237,9 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
               </span>
               <br />
               <span className="psx-docs-muted">
-                The token is <code>sid</code>, not <code>session</code>.{' '}
-                <code>-session-{'<id>'}</code> is silently ignored (unknown
-                token) so you get a fresh synthetic session per connection and no
-                stickiness. Always use <code>-sid-{'<id>'}</code>.
+                The canonical token is <code>sid</code>. The gateway also accepts{' '}
+                <code>-session-{'<id>'}</code> as an alias and rewrites it, but
+                generated strings should always use <code>-sid-{'<id>'}</code>.
               </span>
             </td>
           </tr>
@@ -298,20 +298,24 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
             <td>
               Target a specific carrier — <code>att</code>, <code>tmobile</code>,
               <code> vodafone</code>, <code>orange</code>, <code>ee</code>,
-              <code> telekom</code>, …
+              <code> telekom</code>, … Hard filter: an exact match on the
+              device's carrier or ISP name, never widened; no match → 502.
             </td>
           </tr>
           <tr>
             <td><code>-city-{'{name}'}</code></td>
-            <td>City-level targeting where available. Falls back to country if no city match.</td>
+            <td>
+              City targeting on the peer pool (slug from <code>/stock/cities</code>).
+              Hard filter: no routable device in that city → 502. Modems never
+              match a city, so it refuses on <code>mbl</code>.
+            </td>
           </tr>
           <tr>
             <td><code>-state-{'{name}'}</code></td>
             <td>
-              US-state / region targeting (peer pool), e.g. <code>california</code>,{' '}
-              <code>texas</code>, <code>new_york</code>. Soft like city: slugified to one
-              token; on <code>mbl</code> the gateway has no region data and widens to the
-              country rather than erroring.
+              US-state / region targeting (peer pool) by ISO subdivision code, e.g.{' '}
+              <code>ca</code>, <code>tx</code>, <code>ny</code>. Hard like city: no
+              routable device in that region → 502, and it refuses on <code>mbl</code>.
             </td>
           </tr>
           <tr>

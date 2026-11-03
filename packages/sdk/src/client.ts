@@ -6,6 +6,8 @@ import type {
   PoolAccessKey,
   PoolAccessKeyAuditEvent,
   AuditQueryOpts,
+  PakUsageSeries,
+  PakUsageSummary,
   PoolStock,
   CarrierStock,
   CarrierStockAll,
@@ -522,6 +524,49 @@ export class PoolKeysApi {
       `/reseller/pool-keys/${encodeURIComponent(keyId)}/audit${tail ? '?' + tail : ''}`,
     );
   }
+
+  /**
+   * Per-customer bandwidth time-series for ONE key: daily in/out MB buckets
+   * over the last `days` days (default 30, max 365), gap-filled with zeroes.
+   * Ownership-scoped — 404 if the key is not yours — so a customer dashboard
+   * can call it with that customer's own `keyId` and chart exactly their
+   * usage, never the reseller-wide total. Needs `customers:read`.
+   *
+   * @example
+   * ```ts
+   * const { series, totalGB } = await proxies.poolKeys.usage(keyId, { days: 30 });
+   * // series: [{ date: '2026-10-05', mbIn: 120.5, mbOut: 8.1, mb: 128.6 }, …]
+   * ```
+   *
+   * @since 0.14.0
+   */
+  async usage(keyId: string, opts: { days?: number } = {}): Promise<PakUsageSeries> {
+    if (!keyId) throw new ProxiesConfigError('poolKeys.usage: keyId is required');
+    const qs = usageWindowQuery(opts.days, 'poolKeys.usage');
+    return this.client.request<PakUsageSeries>(
+      `/reseller/pool-keys/${encodeURIComponent(keyId)}/usage${qs}`,
+    );
+  }
+
+  /**
+   * Reseller-wide pool-key bandwidth: a daily GB series across ALL of your
+   * keys plus a per-key breakdown, from the same 90-day rollup that feeds
+   * {@link usage}. This is the number to reconcile your own billing against.
+   * Needs the `traffic:read` scope (it lives under `/reseller/analytics`).
+   *
+   * @example
+   * ```ts
+   * const month = await proxies.poolKeys.usageSummary({ days: 30 });
+   * console.log(month.totalGB, 'GB across', month.activeKeys, 'keys');
+   * for (const k of month.byKey) console.log(k.label, k.gb);
+   * ```
+   *
+   * @since 0.14.0
+   */
+  usageSummary(opts: { days?: number } = {}): Promise<PakUsageSummary> {
+    const qs = usageWindowQuery(opts.days, 'poolKeys.usageSummary');
+    return this.client.request<PakUsageSummary>(`/reseller/analytics/pak-usage${qs}`);
+  }
 }
 
 /** Public, unauthenticated pool-level endpoints. */
@@ -614,9 +659,8 @@ export class PoolApi {
    * Live routable stock by city and region for ONE country (counts only — never
    * exit IPs). Powers a city / state picker: pair a `cities[].city` with
    * {@link buildProxyUrl}'s `city`, or a `regions[].region` with its `state`.
-   * Both are **soft** routing hints (peer pool), so a picker built on this is a
-   * ranking preference, not a hard filter — offer {@link getCarrierStock} +
-   * `asn`/`isp` when a customer needs guaranteed precision. Cached 30s.
+   * Both are **hard** peer-only filters at the gateway (no match → 502), so
+   * only offer a city or region that this call reports stock for. Cached 30s.
    *
    * Peer-only by design: carrier modems (`mbl`) drift across cities on carrier
    * NAT, so city/region data is meaningful only for the residential/peer fleet.
@@ -709,10 +753,11 @@ export class PoolApi {
   }
 
   /**
-   * Active incidents affecting the gateway, if any. Cached 60s.
+   * Active incidents affecting the gateway, if any. Cached 60s. Each entry
+   * carries a ready-to-render `message`; an empty array means all nominal.
    *
-   * The live endpoint returns `{ incidents, generatedAt }` — this method
-   * unwraps the envelope so you always get a plain `Incident[]`.
+   * The live endpoint returns `{ incidents, generatedAt, stale }` — this
+   * method unwraps the envelope so you always get a plain `Incident[]`.
    */
   async getIncidents(): Promise<Incident[]> {
     const res = await this.client.request<IncidentsResponse>('/gateway/incidents');
@@ -752,7 +797,7 @@ export class SessionsApi {
    * for (const s of sessions) {
    *   if (s.isSynthesizedSid) continue;            // hide internal
    *   const url = s.proxyUrl.replace('<PASSWORD>', myPak);
-   *   console.log(s.country, s.currentIp, '→', url);
+   *   console.log(s.country, s.carrier, '→', url);
    * }
    * ```
    *
@@ -804,6 +849,15 @@ export class SessionsApi {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** `?days=N` for the two usage endpoints, or '' when unset. Rejects a non-positive window. */
+function usageWindowQuery(days: number | undefined, method: string): string {
+  if (days === undefined) return '';
+  if (!Number.isFinite(days) || days <= 0) {
+    throw new ProxiesConfigError(`${method}: days must be a positive number (server clamps to 1..365)`);
+  }
+  return `?days=${Math.floor(days)}`;
 }
 
 /**

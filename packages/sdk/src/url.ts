@@ -113,9 +113,9 @@ function slugToken(value: string): string {
  * connections when you pass a stable `sid` — it is the session's "port
  * name". Without one, every connection starts a fresh session and you get a
  * new endpoint. Always pass the SAME `sid` for requests that should share an IP.
- * The token is `sid`, not `session`. `-session-<id>` is silently ignored
- * (unknown token) so you get a fresh synthetic session per connection and no
- * stickiness. Always use `-sid-<id>` (this helper always emits `sid`).
+ * The token is `sid`. The live gateway also accepts the `-session-<id>`
+ * spelling as an alias and records a correction, but `sid` is the canonical
+ * form and the only one this helper emits.
  *
  * **Emission contract — this function is the reference implementation.** Any
  * wrapper that builds a proxy URL (a portal form, a React generator, a CLI)
@@ -130,6 +130,10 @@ function slugToken(value: string): string {
  *   (`NaN` / `Infinity` have no clamp target and emit no token at all.)
  * - `carrier` / `isp` / `city` / `state` are **slugified** to one `[a-z0-9_]`
  *   token, because a raw value like `"T-Mobile US"` would split on its own hyphen.
+ *   All four are hard filters at the gateway; `city` / `state` match peers only,
+ *   so on `pool: 'mbl'` they refuse with `E_NO_STOCK_COUNTRY`. They are still
+ *   emitted — the gateway answers an unsatisfiable request honestly rather than
+ *   this builder quietly changing it.
  * - The only deliberate omissions are the gateway's own defaults —
  *   `rotation: 'none'`, `rotation: 'auto10'`, `failover: 'samecountry'` — plus
  *   `strict` under a rotation mode the gateway would not honor it in.
@@ -252,10 +256,10 @@ export function buildProxyUrl(
   // like "T-Mobile US" cannot split on its own hyphen before the gateway sees it.
   if (carrier) tokens.push('carrier', slugToken(carrier));
   // Hard carrier targeting (peer pool). `isp` is a slugified prefix match
-  // against the endpoint's ISP name; `asn` is an exact AS-number match. Both
-  // are honored by the gateway selector — use these (not the soft `carrier`)
-  // when you need to pin a specific carrier, e.g. `isp: 'tmobile'` or
-  // `asn: 21928`. Live per-carrier stock: `client.pool.getCarrierStock(cc)`.
+  // against the endpoint's ISP name; `asn` is an exact AS-number match; the
+  // `carrier` token above is an exact slug match on the endpoint's carrier or
+  // ISP name. All three are hard and never widened on a retry — prefer `asn`
+  // when you have it. Live per-carrier stock: `client.pool.getCarrierStock(cc)`.
   if (isp) tokens.push('isp', slugToken(isp));
   if (asn) tokens.push('asn', String(asn));
   // Hard IP-class filter (`-iptype-mobile|residential|datacenter`). Emitted
@@ -265,10 +269,10 @@ export function buildProxyUrl(
   // it can answer 502 E_NO_STOCK_COUNTRY instead of quietly serving mobile.
   if (ipType) tokens.push('iptype', ipType);
   if (city) tokens.push('city', slugToken(city));
-  // `state` is soft and peer-only, same class as `city` — slugified to one
-  // token and never gated on pool. On `mbl` the gateway simply has no region
-  // data to match, so it widens silently rather than erroring; that is the
-  // self-healing behaviour the SDK must not pre-empt by dropping the token.
+  // `state` is a hard peer-only filter, same class as `city` — slugified to
+  // one token and never gated on pool. On `mbl` no endpoint can match, so the
+  // gateway refuses with E_NO_STOCK_COUNTRY; that honest refusal is the
+  // caller's to receive, not the SDK's to pre-empt by dropping the token.
   if (state) tokens.push('state', slugToken(state));
   if (sid) {
     validateSid(sid);

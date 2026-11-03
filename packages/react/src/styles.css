@@ -506,10 +506,6 @@
   font-size: 11px;
   margin-left: 4px;
 }
-.psx-sessions-ip {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
-}
 .psx-sessions-row-actions {
   display: flex;
   gap: 6px;

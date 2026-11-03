@@ -432,6 +432,42 @@ describe('ProxiesClient', () => {
     expect(url).not.toContain('action=');
   });
 
+  //  0.14.0: per-key usage series + reseller-wide usage summary
+  it('usage() hits /reseller/pool-keys/:id/usage with an optional days window', async () => {
+    const live = {
+      keyId: 'k1', days: 7, totalMB: 128.6, totalGB: 0.1256,
+      series: [{ date: '2026-10-28', mbIn: 120.5, mbOut: 8.1, mb: 128.6 }],
+    };
+    const fetchMock = mockFetch(200, live);
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    const usage = await client.poolKeys.usage('a/b', { days: 7 });
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('https://api.proxies.sx/v1/reseller/pool-keys/a%2Fb/usage?days=7');
+    expect(usage.series[0]!.mb).toBe(128.6);
+
+    await client.poolKeys.usage('k1');
+    expect(fetchMock.mock.calls[1]![0]).toBe('https://api.proxies.sx/v1/reseller/pool-keys/k1/usage');
+  });
+
+  it('usage() rejects a missing keyId or a non-positive window client-side', async () => {
+    const client = new ProxiesClient({ apiKey: 'psx_x' });
+    await expect(client.poolKeys.usage('')).rejects.toThrow(/keyId is required/);
+    await expect(client.poolKeys.usage('k1', { days: 0 })).rejects.toThrow(/days must be a positive number/);
+  });
+
+  it('usageSummary() hits /reseller/analytics/pak-usage', async () => {
+    const live = {
+      days: 30, totalGB: 12.5, activeKeys: 1,
+      series: [{ date: '2026-10-05', gb: 12.5 }],
+      byKey: [{ keyId: 'k1', label: 'customer:alice', keyPrefix: 'pak_00000000', gb: 12.5, lastUsedAt: null }],
+    };
+    const fetchMock = mockFetch(200, live);
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    const summary = await client.poolKeys.usageSummary({ days: 30 });
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://api.proxies.sx/v1/reseller/analytics/pak-usage?days=30');
+    expect(summary.byKey[0]!.keyPrefix).toBe('pak_00000000');
+  });
+
   it('auditForKey() requires keyId', async () => {
     const client = new ProxiesClient({ apiKey: 'psx_x' });
     await expect(client.poolKeys.auditForKey('')).rejects.toThrow(
@@ -448,7 +484,7 @@ describe('ProxiesClient', () => {
 
   // ────────────────────────────────────────────────────────────────────
   //  0.3.1: pool.getStock() shape lock + runtime validator
-  //  Coronium audit 2026-05-01 — type was unrelated to the live shape.
+  //  Reseller audit 2026-05-01 — type was unrelated to the live shape.
   // ────────────────────────────────────────────────────────────────────
 
   it('pool.getStock() returns the live { pools, totals, generatedAt } shape', async () => {
@@ -488,11 +524,13 @@ describe('ProxiesClient', () => {
   });
 
   it('pool.getIncidents() unwraps the { incidents, generatedAt } envelope to Incident[]', async () => {
+    // Live shape (2026-11-03): id / severity / message / since — no title.
     const fetchMock = mockFetch(200, {
       incidents: [
-        { id: 'inc_1', severity: 'minor', title: 'Elevated latency in PL', startedAt: '2026-07-23T00:00:00Z', affects: ['pl'] },
+        { id: 'no-stock-pl', severity: 'warning', message: 'No PL stock currently online. Try another country or check back shortly.', since: '2026-07-23T00:00:00Z' },
       ],
       generatedAt: '2026-07-23T00:01:00Z',
+      stale: false,
     });
     const client = new ProxiesClient({
       apiKey: 'psx_x',
@@ -502,7 +540,8 @@ describe('ProxiesClient', () => {
     const incidents = await client.pool.getIncidents();
     expect(Array.isArray(incidents)).toBe(true);
     expect(incidents).toHaveLength(1);
-    expect(incidents[0]!.id).toBe('inc_1');
+    expect(incidents[0]!.id).toBe('no-stock-pl');
+    expect(incidents[0]!.message).toMatch(/No PL stock/);
   });
 
   it('pool.getIncidents() returns [] when the envelope carries no incidents', async () => {
