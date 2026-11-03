@@ -163,6 +163,13 @@ describe('carrier source hooks', () => {
   const originalFetch = globalThis.fetch;
   afterEach(() => { cleanup(); globalThis.fetch = originalFetch; });
 
+  // The panel asks for carrier stock before `/leases` has told it the pool's
+  // country and scope, so its first request carries `country=`. The live
+  // handler rejects that; a fixture that answered it with real stock let the
+  // assertions run against the wrong request (fetch resolves in that order on
+  // Node 20).
+  const countryRequired = () => new Response(JSON.stringify({ error: 'country_required' }), { status: 400 });
+
   it('refreshes when source changes and translates gateway any to combined stock', async () => {
     const fetcher = vi.fn(async (input: string | URL) => {
       const url = new URL(String(input), 'https://fixture.test');
@@ -190,6 +197,7 @@ describe('carrier source hooks', () => {
     const fetcher = vi.fn(async (input: string | URL) => {
       const url = new URL(String(input), 'https://fixture.test');
       if (url.pathname.endsWith('/leases')) return new Response(JSON.stringify({ enabled: true, maxLeases: 10, poolHeld: 0, leases: [], gateway: { proxyUsername: 'psx_fixture', poolToken: token, countries: ['us'], host: 'fixture.test', httpPort: 7000, socksPort: 7001 } }));
+      if (url.searchParams.get('country') !== 'us') return countryRequired();
       if (url.pathname.endsWith('/stock/carriers')) return new Response(JSON.stringify({ country: 'us', total: 35, other: 0, carriers: [{ name: 'Example Mobile', asn: null, count: 35, ipType: 'mobile', classification: { type: 'mobile', basis: 'modem' } }] }));
       throw new Error('Unexpected fixture route');
     });
@@ -208,6 +216,7 @@ describe('carrier source hooks', () => {
         return new Response(JSON.stringify({ message: 'Fixture captured' }), { status: 409 });
       }
       if (url.pathname.endsWith('/leases')) return new Response(JSON.stringify({ enabled: true, maxLeases: 10, poolHeld: 0, leases: [], gateway: { proxyUsername: 'psx_fixture', poolToken: 'mbl', countries: ['us'], host: 'fixture.test', httpPort: 7000, socksPort: 7001 } }));
+      if (url.searchParams.get('country') !== 'us') return countryRequired();
       return new Response(JSON.stringify({ country: 'us', total: 3, other: 0, carriers: url.pathname.startsWith('/empty') ? [] : [{ name: 'Example Mobile', asn: null, count: 3, ipType: 'mobile' }] }));
     }) as typeof fetch;
     const props = { pak: 'fixture', proxyUsername: 'psx_fixture' };
