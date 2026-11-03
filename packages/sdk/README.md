@@ -62,7 +62,7 @@ That's the whole flow. Everything else is bookkeeping.
 
 ```ts
 interface ClientConfig {
-  apiKey: string;              // Required. psx_... from client.proxies.sx/account
+  apiKey: string;              // Required. psx_... from client.proxies.sx/account (reseller role; scopes below)
   proxyUsername?: string;      // e.g. "psx_abc123" — required to call buildProxyUrl
   baseUrl?: string;            // Default: "https://api.proxies.sx/v1"
   gatewayHost?: string;        // Default: "gw.proxies.sx"
@@ -83,6 +83,20 @@ NOT retry on `4xx` (other than `429`) — those are programmer errors.
 Honors the `Retry-After` header on `429`. **Don't wrap your own retry**
 on top — it causes thundering herd. To disable, pass `retry: false`.
 
+**Scopes the key needs** (the account must already hold the reseller role —
+Proxies.sx grants it; it is not self-serve):
+
+| Scope | Unlocks |
+|---|---|
+| `customers:read` | `poolKeys.list/get/reveal/audit/auditForKey/usage` |
+| `customers:write` | `poolKeys.create/update/topUp/regenerate/delete` |
+| `ports:read` | `sessions.list` |
+| `ports:write` | `sessions.close/closeAll` |
+| `traffic:read` | `poolKeys.usageSummary` |
+
+A missing scope is a `403` whose body carries `code: "scope_missing"` and the
+scope to add.
+
 ### `proxies.poolKeys`
 
 | Method | Returns | Description |
@@ -95,7 +109,9 @@ on top — it causes thundering herd. To disable, pass `retry: false`.
 | `regenerate(keyId, { idempotencyKey? }?)` | `PoolAccessKey` | Rotate the secret value (invalidates old). Returns full record from 0.3.0+ |
 | `reveal(keyId)` (v0.5.0+) | `PoolAccessKey` | Audit-logged unmask. Records a `reveal` event server-side. Use in customer-facing dashboards instead of displaying `key` from `list()` |
 | `audit({ action?, before?, limit? }?)` (v0.5.0+) | `PoolAccessKeyAuditEvent[]` | Forensic log across ALL of your keys (90-day TTL). Filter by action, paginate via `before` |
-| `auditForKey(keyId, { before?, limit? }?)` (v0.5.0+) | `PoolAccessKeyAuditEvent[]` | Forensic log for a single key |
+| `auditForKey(keyId, { before?, limit? }?)` (v0.5.0+) | `PoolAccessKeyAuditEvent[]` | Forensic log for a single key (`limit` max 200) |
+| `usage(keyId, { days? }?)` (v0.14.0+) | `PakUsageSeries` | Per-day `{ date, mbIn, mbOut, mb }` series for ONE key, 1–365 days, gap-filled. Ownership-scoped → the customer's own chart |
+| `usageSummary({ days? }?)` (v0.14.0+) | `PakUsageSummary` | Daily GB across ALL your keys + per-key breakdown (90-day rollup). Needs `traffic:read` |
 | `delete(keyId)` | `void` | Permanently delete |
 
 #### Private Pool — quality tier (v0.9.0+)
@@ -149,6 +165,25 @@ const fresh = await proxies.poolKeys.reveal(keyId);
 showSecretBriefly(fresh.key);   // and audit log records who/when/where
 ```
 
+#### Usage series (v0.14.0+)
+
+```ts
+// The customer's own chart — scoped: 404 if keyId is not yours
+const { series, totalGB } = await proxies.poolKeys.usage(customer.pakKeyId, { days: 30 });
+// series[i] = { date: '2026-10-05', mbIn: 120.5, mbOut: 8.1, mb: 128.6 }
+
+// Your reconciliation number — every key, one call
+const month = await proxies.poolKeys.usageSummary({ days: 30 });
+// { days, totalGB, activeKeys, series: [{ date, gb }], byKey: [{ keyId, label, keyPrefix, gb, lastUsedAt }] }
+```
+
+Both count **raw** GB carried by the key. The platform's country-tier pricing
+(`pool.getStock().pricing`) only changes how much of *your* balance a GB burns.
+
+**No `pak.*` webhooks exist** on the platform today — `/v1/reseller/webhooks`
+emits port and sub-account events only — so poll `list()` / `audit()` /
+`usageSummary()` for cap and expiry changes.
+
 #### `psx_` API-key callers bypass FreshAuthGuard
 
 The platform requires recent auth (JWT < 5 min OR `X-Confirm-Password`) for `POST /pool-keys` and `POST /:keyId/regenerate` from interactive sessions. **Server-side `psx_` callers (this SDK) bypass it entirely** — no code change needed. Compensating controls: per-key rate limit + audit log.
@@ -170,7 +205,7 @@ const { sessions } = await proxies.sessions.list();
 for (const s of sessions) {
   if (s.isSynthesizedSid) continue;            // hide internal auto_/socks5_ ids
   const url = s.proxyUrl.replace('<PASSWORD>', myPak);
-  console.log(s.country, s.currentIp, s.ttl + 's left →', url);
+  console.log(s.country, s.carrier, s.ttl + 's left →', url);
 }
 await proxies.sessions.close('gw:session:psx_xxx:bot07');
 ```
@@ -185,10 +220,12 @@ await proxies.sessions.close('gw:session:psx_xxx:bot07');
 > sessions. If you are still on 0.5.x, upgrade (`npm i @proxies-sx/pool-sdk@latest`)
 > rather than exposing those routes.
 
-`ActiveSession` carries `country`, `pool`, `currentIp`, `bytesIn/Out`,
+`ActiveSession` carries `country`, `pool`, `carrier`, `bytesIn/Out`,
 `requestCount`, `ttl`, `expiresAt`, `rotation`, `proxyUrl`, `socks5Url`,
-`isSynthesizedSid` (plus `pakKeyId` in 0.6.0+). See [CHANGELOG.md](./CHANGELOG.md#040--sessions-api-multi-port-spawner-ux)
-for full type details.
+`isSynthesizedSid` and `pakKeyId`. It carries **no exit IP** — the platform
+never returns one for a session (0.14.0 removed the `currentIp` field, which
+was always empty). The response may also set `truncated: true` when an
+account's session index was too large to read fully.
 
 #### Idempotency on writes (v0.3.0+)
 
@@ -258,11 +295,11 @@ The list endpoint also returns `isExpired: boolean` computed server-side
 
 | Method | Returns | Description |
 |---|---|---|
-| `getStock()` | `PoolStock` | Live endpoint count per country |
-| `getCarrierStock(country)` | `CarrierStock` | Live routable **peer** stock by carrier/ASN for one country (counts only, no exit IPs). Pair an entry's `asn` with `buildProxyUrl({ asn })` to route to that carrier. |
-| `getCities(country, { pool? })` | `PoolCities` | Live routable stock by **city + region** for one country (`{ cities, regions }`, counts only). Pair a `cities[].city` with `buildProxyUrl({ city })` or a `regions[].region` with `buildProxyUrl({ state })`. Peer pool only. **(v0.13.0+)** |
+| `getStock()` | `PoolStock` | Live routable endpoint count per country, plus `connected` (relay memberships, not sellable capacity), the country-tier `pricing` block, `reservedIp` terms and `ipTypes` (v0.14.0 types) |
+| `getCarrierStock({ country?, pool? })` | `CarrierStock` / `CarrierStockAll` | Live routable stock by carrier/ASN — one country or the whole catalogue, `peer` / `mbl` / `all` (counts only, no exit IPs). Pair an entry's `asn` with `buildProxyUrl({ asn })` to route to that carrier. |
+| `getCities(country, { pool? })` | `PoolCities` | Live routable stock by **city + region** for one country (`{ cities, regions }`, counts only). Pair a `cities[].city` with `buildProxyUrl({ city })` or a `regions[].region` with `buildProxyUrl({ state })`. Peer pool only; both are hard filters, so offer only what has stock. **(v0.13.0+)** |
 | `getFacets({ country, city?, state?, carrier?, pool? })` | `PoolFacets` | **Cross-filtered** city + region + carrier facets — each list reflects the other selections, so three pickers narrow each other and stay in agreement with what the gateway will route ("city smallens carrier and vice versa"). **(v0.13.0+)** |
-| `getIncidents()` | `Incident[]` | Active pool incidents |
+| `getIncidents()` | `Incident[]` | Active pool incidents — `{ id, severity, message, since }`, empty when all nominal |
 
 ### `proxies.buildProxyUrl(pakKey, opts?)`
 
@@ -280,19 +317,19 @@ import { buildProxyUrl } from '@proxies-sx/pool-sdk';
 
 > **Complete token semantics — including what each filter does when nothing
 > matches — live in [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.md).**
-> Several tokens silently widen instead of erroring; the table below flags
-> which, but the DSL doc is the authority.
+> Every targeting token is a hard filter on the live gateway; the DSL doc is
+> the authority.
 
 | Field | Type | Notes |
 |---|---|---|
 | `pool` | `'mbl' \| 'peer' \| 'any' \| 'best'` | `'peer'` = the flagship network (~82–120 countries, mixed mobile + residential). `'mbl'` = our carrier modems, exactly 6 countries. |
 | `country` | `'us' \| 'gb' \| 'fr' \| 'nl' \| 'pl' \| 'ge'` and more | Those 6 are the **`mbl`** set; `peer` spans far more. **`'ge'` is Georgia** — Germany is `'de'`, which has no `mbl` stock (`mbl-de` always fails; use `pool: 'peer'`). |
-| `carrier` | `string` | `'att'`, `'tmobile'` — **soft.** If nothing matches, the gateway **retries without it and serves a different carrier as a `200`.** Set `failover: 'samecarrier'` or `'strict'` to make it binding. |
+| `carrier` | `string` | `'att'`, `'tmobile'` — **hard** exact slug match on the device's carrier or ISP name, never widened. No match → `E_NO_STOCK_COUNTRY` 502. Prefer `asn` when you have it. |
 | `isp` | `string` | `'tmobile'`, `'comcast'` — **hard** slugified match (peer pool). No match → `E_NO_STOCK_COUNTRY` 502. |
 | `asn` | `number` | `21928` (T-Mobile) — **hard** exact match. No match → 502. Most precise; pair with `getCarrierStock()`. |
 | `ipType` | `'mobile' \| 'residential' \| 'datacenter'` | **Hard** class filter, emits `-iptype-<v>`. `mbl` is mobile-only by construction, so this mainly matters for `pool: 'peer'`. Unclassified peers are excluded. No match → 502. |
-| `city` | `string` | `'nyc'`, `'berlin'` — **soft, ranking bonus only.** It never excludes anyone; no match silently yields any city in the country. Peer pool only. Discover with `getCities()` / `getFacets()`. Prefer `carrier`/`isp`/`asn` for real precision. |
-| `state` | `string` | `'ca'`, `'ny'` (US state code / region) — **soft, ranking bonus only**, coarser than `city`. No match silently yields any region in the country. Peer pool only. Discover with `getCities().regions` / `getFacets().states`. **(v0.13.0+)** |
+| `city` | `string` | `'brooklyn'` (slug from `getCities()` / `getFacets()`) — **hard, peer-only.** No routable peer in that city → 502; modems never match, so `pool: 'mbl'` + `city` always refuses. |
+| `state` | `string` | `'ca'`, `'ny'` (ISO subdivision code) — **hard, peer-only**, coarser than `city`. No routable peer in that region → 502; refuses on `mbl`. Discover with `getCities().regions` / `getFacets().states`. **(v0.13.0+)** |
 | `sid` | `string` | Session name, `[a-z0-9_]{1,64}`, **no hyphens** — validated at build time (throws `ProxiesConfigError`). **Required for `sticky`/`auto*` to persist across connections.** A sid *alone* is not sticky — with no `rotation` you still get the gateway default `auto10`. |
 | `rotation` | `'none' \| 'auto5' \| 'auto10' \| 'auto20' \| 'auto60' \| 'ondemand' \| 'sticky' \| 'hard'` | `'sticky'` pins the **device** and weights IP-stability. `'hard'` **pins like sticky** — NOT a new IP per request. **`'none'` emits no token, so the gateway default `auto10` applies (~10 min)** — it is not "no rotation". Needs a `sid` to persist. |
 | `strict` | `boolean` | Emits the bare `-strict` flag. Only active with `'sticky'`/`'hard'`: adds a hard IP-stability floor and heavier stability weighting. No-op for `auto*`/`ondemand`. |
@@ -385,8 +422,8 @@ const url = proxies.buildProxyUrl(pakKey, { pool: 'peer', country: 'us', asn: mo
 
 Prefer `asn` over `isp` when you have it: `asn` is an exact match, `isp` is a
 slugified prefix match. Both are **hard** filters — if nothing matches, the
-gateway returns `E_NO_STOCK_COUNTRY` (502) rather than silently widening, unlike
-the soft `carrier`/`city` tokens.
+gateway returns `E_NO_STOCK_COUNTRY` (502). So are `carrier`, `city` and
+`state`; nothing is widened on a retry.
 
 Want the whole network split by access type in one pass:
 
@@ -555,6 +592,10 @@ This SDK is a thin wrapper around a public REST API. Any language with an HTTP c
 | `PATCH` | `/v1/reseller/pool-keys/:keyId` | Update label / cap / enabled / expiresAt |
 | `POST` | `/v1/reseller/pool-keys/:keyId/topup` | Atomic cap-and/or-expiry extension (v0.3.0+) |
 | `POST` | `/v1/reseller/pool-keys/:keyId/regenerate` | Rotate the secret. The old value keeps working for **up to 30 s** (gateway auth cache) and does not drop live tunnels — see [Security](#security) |
+| `POST` | `/v1/reseller/pool-keys/:keyId/reveal` | Audit-logged unmask |
+| `GET` | `/v1/reseller/pool-keys/audit` · `/:keyId/audit` | 90-day forensic log (all keys / one key) |
+| `GET` | `/v1/reseller/pool-keys/:keyId/usage?days=30` | Per-day MB series for one key |
+| `GET` | `/v1/reseller/analytics/pak-usage?days=30` | Daily GB across all keys + per-key breakdown (`traffic:read`) |
 | `DELETE` | `/v1/reseller/pool-keys/:keyId` | Permanently delete |
 
 **Idempotency:** `POST` and `PATCH` endpoints accept an `Idempotency-Key`
@@ -587,11 +628,11 @@ Token summary (separated by `-`) — **full reference, including what each filte
 does when nothing matches, in [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.md)**:
 
 - `peer` / `mbl` / `any` — pool. `peer` is the flagship network (~82–120 countries); `mbl` is our carrier-modem tier, exactly `us` `gb` `fr` `nl` `pl` `ge`. **`ge` is Georgia**; Germany is `de` and has no `mbl` stock.
-- `sid-<id>` — session name, `[a-z0-9_]{1,64}`, no hyphens. **Required for stickiness to persist across connections**, but not sufficient on its own. The token is `sid`, not `session` — `-session-<id>` is silently skipped.
+- `sid-<id>` — session name, `[a-z0-9_]{1,64}`, no hyphens. **Required for stickiness to persist across connections**, but not sufficient on its own. The canonical token is `sid`; the gateway rewrites `-session-<id>` to it.
 - `rot-sticky` / `rot-auto5|10|20|60` / `rot-ondemand` / `rot-hard` — `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, NOT a new IP per request); `auto*` re-pick every N min. **Omit the token and the gateway default `auto10` applies** — omitting is not "no rotation".
 - `strict` — bare flag; hardens `sticky`/`hard` with an IP-stability floor.
-- `iptype-<class>` / `isp-<slug>` / `asn-<n>` — **hard** filters; no match returns 502.
-- `carrier-<name>` / `city-<name>` — **soft**; they can silently widen. Pair `carrier` with `failover-samecarrier` to make it binding.
+- `iptype-<class>` / `isp-<slug>` / `asn-<n>` / `carrier-<name>` — **hard** filters; no match returns 502.
+- `city-<slug>` / `state-<code>` — **hard, peer-only**; no match returns 502 and they always refuse on `mbl`.
 - `failover-<policy>` / `ttl-<seconds>` / `pin-<type>-<id>` — substitution scope, session-row TTL (immutable once the session exists), and endpoint pinning.
 
 ### Examples in other languages
@@ -648,11 +689,13 @@ req.body = { label: 'customer:alice', trafficCapGB: 10 }.to_json
 resp = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
 ```
 
-**Spec:** the endpoint table above is the complete pool-keys surface. There is no
-public OpenAPI document for it — `/docs/api`, `/docs/api-json`, `/docs/seller` and
-`/docs/seller-json` are basic-auth gated and return `403` anonymously. The publicly
-readable spec is [api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway)
-(Pool Gateway API — Private Pool leases, x402 pool; JSON at `/docs/gateway-json`).
+**Spec:** the endpoint table above is the complete pool-keys surface. The public
+reseller spec at [api.proxies.sx/v1/reseller/docs/openapi](https://api.proxies.sx/v1/reseller/docs/openapi)
+(LLM companion: `/v1/reseller/docs/llm`) covers the sub-account / port / pricebook /
+webhook / analytics surface and does not list these routes; the interactive Swagger
+UIs (`/docs/api`, `/docs/seller`) answer `401` anonymously. Also public:
+[api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway) (Pool Gateway API —
+Private Pool leases, x402 pool; JSON at `/docs/gateway-json`).
 
 ---
 

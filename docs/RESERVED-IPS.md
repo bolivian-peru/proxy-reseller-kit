@@ -102,11 +102,11 @@ scoped to the calling user's own pool. Traced to
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/:poolId/leases` | List this pool's reserved IPs |
-| `POST` | `/:poolId/leases` | Acquire one. Body: `country`, `ipType?`, `carrier?`, `idleTtlSec?`, `failover?` |
+| `POST` | `/:poolId/leases` | Acquire one. Body: `country`, `ipType?`, `carrier?`, `asn?`, `city?`, `state?`, `idleTtlSec?`, `failover?` |
 | `POST` | `/leases/:leaseId/rotate` | Move the lease to a different device in the same country, now |
 | `POST` | `/leases/:leaseId/extend` | Change the idle keep-window |
 | `DELETE` | `/leases/:leaseId` | Release back to the pool |
-| `PATCH` | `/leases/:leaseId/rotation-mode` | `off` (hold — the default) or `auto5`/`auto10`/`auto20`/`auto60` |
+| `PATCH` | `/leases/:leaseId/rotation-mode` | Body `{ mode, failover? }` — `off` (hold, the default) or `auto5`/`auto10`/`auto20`/`auto60` |
 | `POST` | `/leases/:leaseId/rotation-token` | Issue or regenerate a public rotate link (old link stops working) |
 | `DELETE` | `/leases/:leaseId/rotation-token` | Revoke that link |
 
@@ -117,8 +117,12 @@ also carries a per-lease hourly budget — exceeding it returns `409` with a
 ### Idle window
 
 A lease is held while it is *in use* and for `idleTtlSec` after the last byte.
-The ceiling is **12 hours**. If a customer's workload pauses longer than the
-window, the lease lapses and the device returns to the shared pool — and
+The window is clamped to **10 minutes – 24 hours** and defaults to 24 hours.
+Separately, a reservation on a **peer** device ends `peerMaxAgeHours` after it
+was made (24 h at the time of writing — read `reservedIp` from
+`GET /v1/gateway/pool/stock`); modem reservations never age out. If a customer's
+workload pauses longer than the window, the lease lapses and the device
+returns to the shared pool — and
 because a lapsed lease is `released`, their credential then fails closed rather
 than silently routing elsewhere. That is the correct behaviour, but it will
 read as an outage to a customer who was not told about the window. Set
@@ -160,9 +164,10 @@ instant-checkout SKU. Collect country, IP class, and expected concurrency, then
 provision leases against your own pool and hand the customer the generated
 credential.
 
-Traffic bills exactly like the shared pool — **$4.00/GB, discounted to
-$2.40/GB on a single order of 250 GB+, duration free** — from the same GB
-balance. Anything above that is your retail margin.
+Traffic bills exactly like the shared pool — **$4.00/GB list, discounted to
+$2.40/GB on a single order of 250 GB+, duration free, with the country-tier
+burn when `pricing.live` is on** — from the same GB balance. Anything above
+that is your retail margin.
 
 The discount tier is set by the quantity on **one purchase**, not by a monthly
 running total (`VOLUME_DISCOUNTS` in `src/billing/slot-tier.service.ts` —
@@ -175,9 +180,12 @@ loses the difference on every GB. Full table:
 
 These are not style preferences; breaking them generates refunds.
 
-- **Never print, log, or display a peer exit IP.** Availability is counts per
-  country, always. IP-reputation vendors scrape exposed inventories and
-  pre-blacklist them, which poisons the pool for every customer on it.
+- **Never print, log, or display a peer exit IP.** The lease list returns the
+  held device's current exit IP (`observedIp`) to *you*, the pool owner, while
+  the hold is live; the kit's server handlers strip it before anything reaches
+  a customer's browser, and your own code must do the same. Availability is
+  counts per country, always. IP-reputation vendors scrape exposed inventories
+  and pre-blacklist them, which poisons the pool for every customer on it.
 - **A lease reserves a device, not an address.** A mobile carrier can still
   re-NAT a held modem. Residential peers hold addresses far longer, which is
   why `ipType: 'residential'` is usually the right choice for a Reserved IP

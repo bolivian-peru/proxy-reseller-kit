@@ -5,7 +5,7 @@
 > **Pairs with:** `create-pool-portal` (Phase 2 CLI scaffold, also unbuilt)
 > **Tracking:** [`docs/BACKLOG.md`](./docs/BACKLOG.md) → "0.7.x — Distribution"
 
-This document is the durable plan for shipping `proxy-reseller-kit` as a [GitHub spec-kit](https://github.com/github/spec-kit) extension. We don't act on it today — Coronium and Atheris are already integrated, and the form factor only pays off when we want the 3rd / 4th / Nth reseller to onboard with zero hand-holding. Capture the design now while the analysis is fresh, revisit when the trigger conditions below are met.
+This document is the durable plan for shipping `proxy-reseller-kit` as a [GitHub spec-kit](https://github.com/github/spec-kit) extension. We don't act on it today — two production resellers are already integrated, and the form factor only pays off when we want the 3rd / 4th / Nth reseller to onboard with zero hand-holding. Capture the design now while the analysis is fresh, revisit when the trigger conditions below are met.
 
 ---
 
@@ -30,7 +30,7 @@ This is exactly the harness shape we need for `create-pool-portal`. We've been i
 **Analysis now** — spec-kit is moving fast. The community catalog grew from ~10 extensions to ~80 in 4 months. Every month we wait, more domain-bundle competitors might claim our slot ("WhiteLabelProxyKit" or similar). The catalog has a *first-mover effect on the search ranking within the ecosystem* — early extensions get more stars, more PRs, more visibility. Worth knowing what we'd ship.
 
 **Action deferred** — three reasons:
-1. **No paying-reseller demand yet.** Coronium and Atheris cloned the starter app manually. Nobody has asked "is this on spec-kit?"
+1. **No paying-reseller demand yet.** both production resellers cloned the starter app manually. Nobody has asked "is this on spec-kit?"
 2. **`create-pool-portal` doesn't exist yet.** The extension is a thin orchestrator over that scaffold. Building the orchestrator before the thing it orchestrates is backwards.
 3. **The 0.5.0 → 0.6.x roadmap has higher-impact work.** Block 2 webhooks (pak.* events), Block 3 bulk operations + `usageHistory`, stale-session auto-close. Those move revenue. A spec-kit extension moves discovery — important but second-order.
 
@@ -134,7 +134,7 @@ Estimated 2-3 dev-weeks total. Order matters — earlier items unblock later.
 2. **Skeleton extension package** (~half-day). `extension.json` manifest, `commands/` directory with stubbed `.md` files, basic `tests/` setup. Just enough that `specify extension add` finds and installs it locally.
 3. **`/poolkit.scaffold` first** (~2 days). Highest-impact command. Gets the agent through "I want to start a reseller business" → working app on disk. Test against a fresh empty directory + running through the spec-kit harness end-to-end.
 4. **`/poolkit.audit-integration` next** (~1 day). Read-only diagnostic. Easy to write because the canonical-patterns reference is `apps/starter/` itself. High value for existing resellers.
-5. **`/poolkit.upgrade` next** (~1-2 days). Detects-and-fixes for pre-0.5.0 patterns. The detection logic is what's already documented in [`CORONIUM-ATHERIS-MAY-2026-SECURITY-UPDATE.md`](../CORONIUM-ATHERIS-MAY-2026-SECURITY-UPDATE.md) — we just encode it as agent instructions.
+5. **`/poolkit.upgrade` next** (~1-2 days). Detects-and-fixes for pre-0.5.0 patterns. The detection logic is what's already documented in the May 2026 security-update notes — we just encode it as agent instructions.
 6. **`/poolkit.add-payment` after** (~2 days). Modular — Stripe variant first, USDT/Paddle later. Most resellers will already have payment via the starter; this is for the long-tail.
 7. **`/poolkit.add-pak-key-flow`** (~2 days). For non-Next.js stacks. Generates Express / Fastify / Hono templates. Lower priority — most resellers we've seen are on Next.js.
 8. **`/poolkit.add-webhook`** — depends on Block 2 (pak.* webhooks) shipping. Wait.
@@ -232,7 +232,7 @@ If after 12 months we're below half these targets, the extension has failed prod
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-05-03 | Plan created, work deferred | Coronium + Atheris already integrated; `create-pool-portal` doesn't exist yet; higher-revenue work in 0.5.x/0.6.x. Capture the design while fresh, revisit when triggers fire. |
+| 2026-05-03 | Plan created, work deferred | both production resellers already integrated; `create-pool-portal` doesn't exist yet; higher-revenue work in 0.5.x/0.6.x. Capture the design while fresh, revisit when triggers fire. |
 | 2026-05-03 | Will live in monorepo (`packages/spec-kit-extension/`), not sibling repo | Keep extension in lock-step with SDK, React, starter; avoid two-PR overhead for cross-cutting changes. Reconsider if it grows past ~3000 LOC. |
 | 2026-05-03 | Extension AND preset will be shipped as siblings, not bundled | Independent in spec-kit; lets users adopt one without the other. Preset overrides default templates; extension adds new commands. |
 | 2026-05-03 | Repo renamed `pool-starter` → `proxy-reseller-kit` | SEO on the "proxy reseller" search term; benefits the extension catalog listing too. |

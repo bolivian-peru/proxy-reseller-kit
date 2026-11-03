@@ -4,7 +4,8 @@
 > Every other file in this kit links here instead of restating the token list.
 > Verified against the gateway parser (`routing/username-parser.ts`), the
 > endpoint selector (`redis/endpoint-pool.ts`), and the selection script
-> (`redis/lua/select-endpoint.lua`).
+> (`redis/lua/select-endpoint.lua`) of the gateway build that is live
+> (release `d2e9f99e`, 2026-10-21; re-checked 2026-11-03).
 
 Your customer's HTTP or SOCKS5 client connects to a single endpoint:
 
@@ -35,8 +36,8 @@ http://psx_acme-peer-us-sid-cust_8f3a21bd-rot-sticky:pak_a1b2c3@gw.proxies.sx:70
 
 ## How the parser behaves (read this before the table)
 
-The username is **lowercased and split on `-`**. Two consequences that cause
-most integration bugs:
+The username is **lowercased, stripped of whitespace, and split on `-`**. Two
+consequences that cause most integration bugs:
 
 1. **No token value may itself contain a `-`.** `T-Mobile US` must be sent as
    `tmobile`. The SDK slugifies `carrier` / `isp` / `city` for you.
@@ -45,11 +46,14 @@ most integration bugs:
    what it fixed in an ops-only `corrections[]` log the customer never sees.
    The only hard failures are a missing username or one longer than 256 chars.
 
-The practical danger is the flip side of that forgiveness: **a filter you got
-wrong does not error — it silently widens.** An unknown token is skipped, an
-unparseable value falls back to a default, and a filter that matches no stock
-may be dropped and retried without it. The "If nothing matches" column below is
-the most important column in this document.
+The practical danger is the flip side of that forgiveness: **a token you got
+wrong does not error — it is repaired or dropped.** An unknown token is skipped
+and an unparseable value falls back to a default, so a typo in a token name
+looks like success. The filters themselves are the opposite: every targeting
+token the parser accepts is a **hard** filter that is never dropped on a retry
+("explicit filters are a purchase contract; an empty matching pool is an honest
+refusal"), so a filter that matches no stock returns `E_NO_STOCK_COUNTRY`. The
+"If nothing matches" column below is the most important column in this document.
 
 **Corollary for SDK authors:** the client must never be *stricter* than the
 gateway. Rejecting something the gateway would have accepted turns a working
@@ -88,13 +92,22 @@ Aliases are accepted and corrected silently: `mobile`/`modem`/`lte`/`4g`/`5g` �
 > **`ge` is GEORGIA, not Germany.** Germany is `de`, and `de` has **no `mbl`
 > stock** — `mbl-de` always fails. Use `peer-de`.
 
-Both pools bill identically: **$4.00/GB, volume-discounted to $2.40/GB on a
-single order of 250 GB+. Duration is free — you pay for traffic only.**
+Both pools bill identically: **$4.00/GB list, volume-discounted to $2.40/GB on
+a single order of 250 GB+. Duration is free — you pay for traffic only.**
+Wholesale terms agreed with Proxies.sx for your account are not in this kit;
+the list price is what the public endpoints publish.
 
 > The discount tier comes from the quantity on **one purchase**, not from a
 > monthly total — nothing accumulates across the month. 25 orders of 10 GB earn
 > **0%**; one order of 250 GB earns 40%. Full table and the margin trap it
 > creates: [`PRIVATE-POOL.md`](./PRIVATE-POOL.md#pricing).
+
+> **Country tiers (live since 2026-10-12).** A GB of traffic that *exits* in a
+> lower-tier country uses only a fraction of a GB of balance: `pricing.tiers[]`
+> in `GET /v1/gateway/pool/stock` lists the tiers (`burnRate` 1 / 0.375 /
+> 0.1875 — Premium, Plus, Standard) and which countries are in each; `pricing.live`
+> says whether the burn is in force. A `pak_` cap still counts **raw** GB carried.
+> Read it from the endpoint; the country lists change without an SDK release.
 
 **Per-pool stock differs per country.** A country can have modems but no peers,
 or the reverse. Filter your country picker by the selected pool using the live
@@ -105,27 +118,30 @@ per-country `modem` / `peer` counts — see [Verify it works](#verify-it-works).
 ## Every token
 
 Eleven optional tokens, three `pin` sub-types, and the `any` wildcard — the
-fifteen words the parser recognises. `hard` means the endpoint is excluded from
-selection; `soft` means it only influences ranking.
+fifteen words the parser recognises. Every targeting token is **hard**: a
+non-matching endpoint is excluded from selection, and the gateway never drops
+a filter on a retry.
 
-| Token | Value shape | Hard / soft | **If nothing matches** |
+| Token | Value shape | Kind | **If nothing matches** |
 |---|---|---|---|
 | `rot` | one of the rotation modes below | behaviour | Unrecognised value → **`auto10`**, silently. There is no error. |
-| `sid` | 1–64 chars `[a-z0-9_]`, no `-` | session identity | Unusable value → **the sid is dropped and you get no stickiness**, silently. Each connection then starts a fresh synthetic session. |
+| `sid` | 1–64 chars `[a-z0-9_]`, no `-` | session identity | Unusable value → **the sid is dropped and you get no stickiness**, silently. Each connection then starts a fresh synthetic session. `-session-<id>` is accepted as an alias and rewritten to `sid`. |
 | `ttl` | integer seconds, clamped **60 – 2 592 000** | session-row lifetime | Non-numeric → `3600`. Out of range → clamped. **Immutable for a live sid** — see [TTL is immutable](#ttl-is-immutable-per-session). |
-| `carrier` | slug, ≤64 chars, e.g. `att` | **soft** (see note) | Narrows the candidate set. **If that set is empty the gateway retries the country without the carrier and serves a different carrier as a normal 200.** Suppress with `-failover-samecarrier` or `-failover-strict`. |
-| `city` | slug, ≤64 chars, e.g. `nyc` | **soft** | Pure ranking bonus — it never excludes anyone. No match → **any city in the country**, silently. Peer pool only (modem stock has no stable city). Prefer `carrier`/`isp`/`asn` for real precision. |
-| `state` | slug, ≤64 chars, e.g. `ca` (US state code / region) | **soft** | Ranking bonus, coarser than `city`. No match → **any region in the country**, silently. Peer pool only. Discover available regions via `client.pool.getCities(cc).regions` or the cross-filtered `getFacets({country}).states`. |
-| `iptype` | `mobile` · `residential` · `datacenter` | **hard** | No candidate → `E_NO_STOCK_COUNTRY` (502). Unclassified peers are excluded; a modem with no explicit class counts as `mobile`. |
-| `isp` | brand slug, e.g. `spectrum` | **hard**, slugified contains-match | No candidate → 502. Survives the carrier-degradation retry (it is not dropped). |
-| `asn` | 1–7 digits, e.g. `7018` | **hard**, exact | No candidate → 502. Survives the carrier-degradation retry. |
+| `carrier` | slug, ≤64 chars, e.g. `att` | **hard**, exact slug match on the device's carrier *or* ISP name | No candidate → `E_NO_STOCK_COUNTRY` (502). Never widened. Prefer `asn` when you have it. |
+| `city` | slug, ≤64 chars, e.g. `brooklyn` (from `/stock/cities`) | **hard**, peer only | No routable peer in that city → 502. Modems never match a city, so `mbl` + `city` always refuses. |
+| `state` | ISO subdivision code, e.g. `ca`, `ny` | **hard**, peer only | No routable peer in that region → 502; refuses on `mbl`. Discover regions via `client.pool.getCities(cc).regions` or the cross-filtered `getFacets({country}).states`. |
+| `iptype` | `mobile` · `residential` · `datacenter` | **hard** | No candidate → 502. Unclassified peers are excluded; a modem with no explicit class counts as `mobile`. |
+| `isp` | brand slug, e.g. `spectrum` | **hard**, slugified contains-match | No candidate → 502. |
+| `asn` | 1–7 digits, e.g. `7018` | **hard**, exact | No candidate → 502. |
 | `failover` | `any` · `samecountry` · `samecarrier` · `samenode` · `strict` | policy, default `samecountry` | Unrecognised → `samecountry`. `strict` disables all substitution and fails clean instead. |
 | `pin` | `-pin-<type>-<id>` — consumes **two** parts | **hard** | See [Pinning](#pinning-port-device-lease). An unknown *type* is **dropped entirely and silently**. |
 | `strict` | **bare flag — no value** | modifier | Only active with `rot sticky`/`hard`; a no-op for every other mode. See [Strict sticky](#strict-sticky). |
 
-Unknown tokens are skipped for forward compatibility. This is why
-`-session-<id>` does nothing: the token is **`sid`**, not `session`. It is
-consumed as an unknown word, you get no stickiness, and nothing warns you.
+Unknown tokens are skipped for forward compatibility, with a correction
+recorded on the gateway side that the customer never sees. `-session-<id>` is
+the one spelling the live gateway rewrites to `sid` for you; any other typo in
+a token name (`-sticky-` instead of `-rot-sticky`, `-country-us`) is silently
+dropped.
 
 ### Rotation modes
 
@@ -270,6 +286,9 @@ psx_acme-peer-us-sid-cust_8f3a21bd-rot-sticky-strict
 # Carrier modems, UK, rotate every 5 minutes
 psx_acme-mbl-gb-rot-auto5
 
+# Residential peers in New York state only — hard, refuses if none are online
+psx_acme-peer-us-state-ny-iptype-residential-sid-cust_8f3a21bd-rot-sticky
+
 # Residential peers only, on one specific network, fail rather than substitute
 psx_acme-peer-us-iptype-residential-asn-7922-failover-strict
 
@@ -344,17 +363,21 @@ Returned as `CODE: message (req: uuid)`.
 | Code | Status | Meaning |
 |---|---|---|
 | `E_AUTH_REQUIRED` | 407 | No `Proxy-Authorization` header. |
-| `E_AUTH_INVALID` | 407 | Credentials rejected — wrong username shape, unknown account, disabled or insufficient key. |
-| `E_CAP_EXCEEDED` | 407 | The `pak_` hit its GB cap. Branch on this code rather than parsing the message. |
+| `E_AUTH_INVALID` | 407 | Credentials rejected — wrong username shape, unknown account, disabled or expired key. |
+| `E_CAP_EXCEEDED` | 407 | The `pak_` hit its GB cap (`cap_exceeded`). Branch on this code rather than parsing the message. |
+| `E_BALANCE_EXHAUSTED` | 407 | The key is valid but **your reseller account** has no shared GB left — every key under it refuses until you top up. Not a per-key condition. |
 | `E_USERNAME_PARSE` | 400 | Username missing or > 256 chars — the only parse failures that exist. |
 | `E_RATE_LIMITED_AUTH` | 429 | Too many failed auths (per-IP 10/min → 30 s ban, 30/min → 5 min; per-account 25/min, 60/min). |
-| `E_RATE_LIMITED_CONN` | 429 | Over the concurrent-connection ceiling — **500 per account**. |
-| `E_SESSION_LIMIT` | 429 | Over the concurrent-session ceiling — **250 per account**. |
+| `E_RATE_LIMITED_CONN` | 429 | Over the concurrent-connection ceiling — **500 per account** (all your keys share it; raised per account on request). |
+| `E_SESSION_LIMIT` | 429 | Over the concurrent-session ceiling — **250 per account**, shared by every `-sid-` across all your keys. |
+| `E_GATEWAY_CAPACITY` | 503 | The gateway's shared socket ceiling, not your account's — retry shortly. |
+| `E_WRONG_PORT` | 400 | An HTTP request on the SOCKS5 port (7001) or a SOCKS handshake on 7000. |
 | `E_NO_STOCK_COUNTRY` | 502 | Nothing online matched the filters. The message suggests a nearest alternative. |
 | `E_STOCK_DEGRADED` | 502 | Endpoint selected, then went away mid-request. |
 | `E_SSRF_BLOCKED` | 403 | Target is private, localhost, or cloud metadata. |
 | `E_INTERNAL` | 503 | Unexpected — file a ticket with the `req:` id. |
 
-If you are debugging a filter that "does nothing", the absence of an error is
-the signal: re-read the "If nothing matches" column. Silent widening looks
-exactly like success.
+If you are debugging a token that "does nothing", check its spelling first:
+an unknown token name is skipped without an error, so a misspelt filter looks
+exactly like success. A correctly spelt filter that cannot be satisfied is the
+opposite case — it refuses with `E_NO_STOCK_COUNTRY` rather than widening.

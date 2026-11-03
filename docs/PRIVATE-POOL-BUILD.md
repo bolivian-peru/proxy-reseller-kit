@@ -218,17 +218,12 @@ const key = await client.poolKeys.get(pool.pakId);
 const usedGB = key.trafficUsedMB / 1024;
 const pctUsed = (usedGB / key.trafficCapGB) * 100;
 
-// Per-day series for the chart.
-// NOTE: not yet wrapped by the SDK — call the endpoint directly.
-// Returns { days, series: [{ date, mbIn, mbOut, mb }] }, oldest → newest,
-// gap-filled with zeroes so the x-axis is continuous. ?days= up to 365.
-// Ownership-scoped: 404s unless the key belongs to you, so it is safe to
-// call with an individual customer's keyId.
-const res = await fetch(
-  `https://api.proxies.sx/v1/reseller/pool-keys/${pool.pakId}/usage?days=30`,
-  { headers: { 'X-API-Key': process.env.PROXIES_SX_API_KEY! } },
-);
-const usage = await res.json();
+// Per-day series for the chart (SDK 0.14.0+). Oldest → newest, gap-filled
+// with zeroes so the x-axis is continuous; ?days= up to 365. Ownership-scoped:
+// 404s unless the key belongs to you, so it is safe to call with an
+// individual customer's keyId.
+const usage = await client.poolKeys.usage(pool.pakId, { days: 30 });
+// usage.series: [{ date, mbIn, mbOut, mb }], usage.totalGB
 
 // Top-up (atomic $inc server-side — never read-modify-write)
 await client.poolKeys.topUp(pool.pakId, {
@@ -301,20 +296,24 @@ format. A 50-proxy pool copied one line at a time is where the trial dies.
 
 ---
 
-## 6. What you cannot build today
+## 6. Reserved IPs live on your own account's Private Pool
 
-**Reserved-IP leases are not in the reseller API.** Lease creation lives on the
-customer-scoped `/v1/private-pool/*` surface, which acts on the *calling account*
-— there is no reseller route to mint a lease on a customer's behalf.
+**Reserved-IP leases are not part of the `pool-keys` API.** They live on the
+account-scoped `/v1/private-pool/*` surface: leases are carved from a Private
+Pool that *you* own on client.proxies.sx, and the platform authorizes the pool
+owner, not your customers. Your `psx_` API key can call those routes, and
+`createPoolApiHandlers({ privatePool })` in `@proxies-sx/pool-portal-react`
+wraps them with the per-customer scoping the platform cannot do (which lease
+belongs to which of your customers is your database's knowledge). Full
+semantics, including the offline-substitution caveat:
+[`RESERVED-IPS.md`](./RESERVED-IPS.md).
 
-You *can* emit a lease pin if you somehow hold a lease id
-(`buildProxyUrl(..., { pin: { type: 'lease', id } })` is typed and supported),
-but you cannot create, rotate, or extend one through the reseller API.
-
-If a customer needs a genuinely held IP, escalate it to us as a custom
-allocation rather than approximating it with sticky — sticky pins the *device*,
-and the carrier can still re-NAT the exit IP. Promising a held IP on top of
-sticky is the fastest way to lose an enterprise customer.
+What you cannot do is mint a lease under a self-serve `pak_` from this guide:
+a lease needs a pool record. If a customer needs a genuinely held IP and you
+have no Private Pool yet, build one from balance on client.proxies.sx first —
+never approximate it with sticky. Sticky pins the *device*, and the carrier can
+still re-NAT the exit IP; promising a held IP on top of sticky is the fastest
+way to lose an enterprise customer.
 
 ---
 

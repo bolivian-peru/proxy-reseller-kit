@@ -54,7 +54,8 @@ export interface ActiveSessionsTableProps {
  * `GET <apiRoute>/my-sessions` at `refreshIntervalMs` (default 5 s).
  *
  * Each row exposes:
- * - The exit IP (updates as rotation fires).
+ * - Country, pool, session id and rotation mode (never the exit IP — the
+ *   platform does not return one for any session).
  * - Per-session traffic (bytes in/out, request count).
  * - TTL countdown (when Redis will auto-evict).
  * - Copy-URL button (substitutes `<PASSWORD>` with `proxyPassword`).
@@ -252,7 +253,6 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
             <tr>
               <th scope="col">Country</th>
               <th scope="col">Sid</th>
-              <th scope="col">IP</th>
               <th scope="col">Rotation</th>
               <th scope="col">Started</th>
               <th scope="col">TTL</th>
@@ -280,7 +280,6 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
                     {s.pool && <span className="psx-sessions-pool">/{s.pool}</span>}
                   </td>
                   <td><code>{s.sessionId || '—'}</code></td>
-                  <td><code className="psx-sessions-ip">{s.currentIp || '—'}</code></td>
                   <td>{s.rotation || 'auto10'}</td>
                   <td title={isoTimestamp(s.createdAt)}>{relativeTime(s.createdAt)}</td>
                   <td title={expiryTitle(s.expiresAt)}>{formatTtl(s.ttl)}</td>
@@ -316,7 +315,7 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
       )}
 
       <p className="psx-sessions-help">
-        Sessions auto-close on TTL — closing manually is only needed if you want the IP released
+        Sessions auto-close on TTL — closing manually is only needed if you want the device released
         before the timer fires. Synthesized-sid sessions (5-min TTL) are hidden.
       </p>
     </div>

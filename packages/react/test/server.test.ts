@@ -27,6 +27,21 @@ function makeClientStub(overrides: Partial<{ listKeys: unknown[]; stock: unknown
       getFacets: vi.fn(async () => ({ country: 'us', carriers: [], total: 3 })),
       getIncidents: vi.fn(async () => overrides.incidents ?? []),
     },
+    request: vi.fn(async (path: string) => {
+      if (path.endsWith('/leases')) {
+        return {
+          enabled: true,
+          maxLeases: 5,
+          held: 2,
+          leases: [
+            { leaseId: 'l23d4e83c5b', country: 'US', ipType: 'residential', carrier: 'Comcast', deviceOnline: true, observedIp: '203.0.113.7', strings: [{ http: 'masked' }] },
+            { leaseId: 'lother00000', country: 'US', ipType: 'mobile', carrier: 'T-Mobile', deviceOnline: true, observedIp: '203.0.113.8' },
+          ],
+        };
+      }
+      if (path === '/private-pool/pools') return [];
+      throw new Error(`unexpected request ${path}`);
+    }),
     sessions: {
       list: vi.fn(async (_opts?: { pakId?: string }) => ({ sessions: [], count: 0 })),
       close: vi.fn(async (_key: string, _opts?: { pakId?: string }) => ({ success: true, message: 'ok' })),
@@ -95,6 +110,51 @@ describe('createPoolApiHandlers', () => {
     expect(body.pakKey).toBe('pak_secret');
     expect(body.usage.capGB).toBe(10);
     expect(body.gatewayHost).toBe('edge-eu.proxies.sx');
+  });
+
+  it('GET /usage returns the caller key usage series and forwards ?days=', async () => {
+    const proxies = makeClientStub();
+    proxies.poolKeys.usage = vi.fn(async (keyId: string, opts?: { days?: number }) => ({
+      keyId, days: opts?.days ?? 30, totalMB: 10, totalGB: 0.0098,
+      series: [{ date: '2026-10-05', mbIn: 8, mbOut: 2, mb: 10 }],
+    }));
+    const { GET } = createPoolApiHandlers({
+      proxies,
+      getSessionUserId: () => 'user_1',
+      getUserKeyId: () => 'k1',
+    });
+    const res = await GET(new Request('http://x/api/pool/usage?days=7'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(proxies.poolKeys.usage).toHaveBeenCalledWith('k1', { days: 7 });
+    expect((await res.json()).series[0].mb).toBe(10);
+
+    const noDays = await GET(new Request('http://x/api/pool/usage'));
+    expect(noDays.status).toBe(200);
+    expect(proxies.poolKeys.usage).toHaveBeenLastCalledWith('k1', {});
+    const { GET: noKey } = createPoolApiHandlers({ proxies, getSessionUserId: () => 'u', getUserKeyId: () => null });
+    expect((await noKey(new Request('http://x/api/pool/usage'))).status).toBe(404);
+  });
+
+  it('GET /leases never forwards a device exit IP to the browser', async () => {
+    const { GET } = createPoolApiHandlers({
+      proxies: makeClientStub(),
+      getSessionUserId: () => 'user_1',
+      getUserKeyId: () => 'k1',
+      privatePool: {
+        poolId: 'pool_1',
+        listUserLeaseIds: () => ['l23d4e83c5b'],
+        onLeaseAcquired: () => undefined,
+      },
+    });
+    const res = await GET(new Request('http://x/api/pool/leases'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.leases).toHaveLength(1);
+    expect(body.leases[0].leaseId).toBe('l23d4e83c5b');
+    expect(body.leases[0]).not.toHaveProperty('observedIp');
+    expect(body.leases[0]).not.toHaveProperty('strings');
+    expect(JSON.stringify(body)).not.toContain('203.0.113');
   });
 
   it('GET /stock returns public stock', async () => {

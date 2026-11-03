@@ -2,6 +2,42 @@
 
 All notable changes to this package are documented here.
 
+## 0.14.0 — live-API sync (Nov 2026)
+
+Synced against the live platform (backend r84, gateway `d2e9f99e`) on
+2026-11-03. Depends on `@proxies-sx/pool-sdk ^0.14.0`.
+
+### Changed
+
+- **`<PoolPortal>` incident banner** renders the live `message` field; the
+  previous `title` / `description` never existed on the wire, so the banner
+  rendered empty.
+- **`<ActiveSessionsTable>`** drops its IP column: the platform returns no exit
+  IP for a session, so the column always showed `—`.
+- **`<PrivatePoolPanel>`** lease rows show the lease id, country / region /
+  city and carrier instead of `ipMasked`, which the platform does not return.
+  `PoolLease.ipMasked` is removed; `city`, `region` and
+  `nextRotationEligibleAt` are added.
+- **`createPoolApiHandlers`** strips `observedIp` (the held device's exit IP,
+  returned to the pool owner only) from every lease row before it reaches the
+  browser, alongside the existing `strings` strip. A device exit IP never
+  leaves the server.
+- **`AcquireLeaseInput`** gains `asn`, `city`, `state` (forwarded to the
+  platform); `idleTtlSec` is documented with the live clamp (600–86400 s,
+  default 86400).
+- City / region / carrier copy in `<PoolSessionSpawner>` and `<PoolDocsPanel>`
+  now describes them as hard filters (the live gateway refuses, it does not
+  widen). The spawner still omits city / state on `mbl`, where they could only
+  refuse.
+- `<PoolDocsPanel>`: auth results are cached 30 s for failures too; `-session-`
+  is an accepted alias of `-sid-`.
+
+### Added
+
+- **`GET <route>/usage?days=N`** server handler — the signed-in customer's
+  per-day usage series via `poolKeys.usage()`, scoped through `getUserKeyId`
+  exactly like `/me`.
+
 ## 0.12.1 — pick up pool-sdk 0.11.0 (Jul 2026)
 
 No change to this package's own code. The dependency range on
@@ -180,7 +216,7 @@ to `^0.5.0` so apps consuming this package can use the new
 
 ## 0.4.1 — Pool docs panel + live stock grid
 
-Driven by Coronium's customer-page redesign request: drop in a
+Driven by a reseller's customer-page redesign request: drop in a
 technical reference + live country stock with one component each.
 
 ### Added
@@ -207,7 +243,7 @@ Additive only. SDK peer dep stays at `^0.4.0`.
 
 ## 0.4.0 — Multi-port spawner + active-sessions table
 
-Coronium-driven UX parity with `client.proxies.sx/pool-proxy`.
+Reseller-driven UX parity with `client.proxies.sx/pool-proxy`.
 Resellers shipping `<PoolPortal>` can now drop in two new components
 and ship the same multi-port-generation + live-session-management
 experience without writing it from scratch (~600 LOC saved per
@@ -247,7 +283,7 @@ Existing `createPoolApiHandlers` GET/POST routes unchanged.
 
 ## 0.3.0 — Pool stock fix + SDK 0.3.1 alignment
 
-Surfaced by Coronium's live integration audit (2026‑05‑01). The
+Surfaced by a reseller's live integration audit (2026‑05‑01). The
 `<StockIndicator>` inside `<PoolPortal>` was reading the old
 `stock.countries.find(...)` shape that never matched the live API —
 which meant **every dashboard built on this component was rendering a

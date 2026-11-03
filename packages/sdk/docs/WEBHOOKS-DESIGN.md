@@ -1,6 +1,6 @@
 # Block 2 Design — Pool Access Key Webhooks (`pak.*` events)
 
-> Plan to migrate Coronium (and future resellers) from 30-min `list()`
+> Plan to migrate resellers from 30-min `list()`
 > polling to push notifications. Authored 2026‑05‑01. Targets SDK 0.4.0.
 
 ---
@@ -266,13 +266,13 @@ Estimated effort: 3-4 days incl. tests.
 
 ---
 
-## Migration path for Coronium
+## Migration path for a reseller
 
-1. **Today** — Coronium polls `list()` every 30 min. Works.
-2. **0.4.0 ships** — Coronium adds a webhook endpoint at
-   `https://api.coronium.io/api/v3/webhooks/proxies`, configures it in
+1. **Today** — the reseller polls `list()` every 30 min. Works.
+2. **0.4.0 ships** — the reseller adds a webhook endpoint on their API,
+   configures it in
    the proxies.sx admin with a fresh signing secret.
-3. Coronium uses `verifyWebhookSignature()` in their handler, dispatches
+3. They use `verifyWebhookSignature()` in their handler, dispatches
    to internal handlers by `event.type`.
 4. Polling cadence drops from 30 min → 6 h (still useful as a
    reconciliation safety net for the 0.x% of webhooks that get lost).
@@ -284,7 +284,7 @@ Estimated effort: 3-4 days incl. tests.
 ## Open questions to resolve before implementation
 
 - **Threshold for `pool.incident.*`** — do we emit on `severity: minor`
-  or only `major` and above? Coronium feedback wanted minor included for
+  or only `major` and above? reseller feedback wanted minor included for
   status pages. Default: emit minor + above. (Resellers can filter
   client-side.)
 - **`pak.disabled` for `reason: 'expiry'` AND `pak.expired`** — both fire
@@ -298,5 +298,5 @@ Estimated effort: 3-4 days incl. tests.
 
 ---
 
-*Status: design — not yet implemented. Ship after 0.3.0 has soaked at*
-*Coronium for 1-2 weeks.*
+*Status: design — not yet implemented. The platform's `/v1/reseller/webhooks`*
+*still emits port and sub-account events only (verified 2026-11-03).*

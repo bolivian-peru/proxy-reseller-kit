@@ -32,19 +32,20 @@ Two pools, selected via the `pool` token in the username DSL:
 **Quality bar.** Peers are throughput-graded; only those clearing the live floor (`PEER_THROUGHPUT_FLOOR_KBPS`, ~500 KB/s) are routable. Plenty for scraping / API / anti-bot work — the value is the clean, in-country IP, not raw bandwidth. The `mbl` pool is the ultra-stable carrier-modem tier — same $4/GB, smaller footprint (6 countries).
 
 **Targeting depth (all peer-pool).** Beyond country you can narrow on carrier, city and region — build the pickers from the discovery methods, never hardcode:
-- `client.pool.getCarrierStock(cc)` → carriers/ASNs. Route with `buildProxyUrl({ asn })` (hard) or `{ carrier }` (soft).
-- `client.pool.getCities(cc)` → `{ cities, regions }`. Route with `{ city }` / `{ state }` — **both soft**: the gateway prefers a match and silently widens to the country when none is free, never errors.
+- `client.pool.getCarrierStock(cc)` → carriers/ASNs. Route with `buildProxyUrl({ asn })` (exact) or `{ carrier }` (name slug). Both are hard filters.
+- `client.pool.getCities(cc)` → `{ cities, regions }`. Route with `{ city }` / `{ state }` — **both hard, peer-only**: no routable peer there → `E_NO_STOCK_COUNTRY`, and on `mbl` they always refuse. Only offer what the counts show.
 - `client.pool.getFacets({ country, city?, state?, carrier? })` → **cross-filtered** lists: feed the current selection back so each picker narrows the others ("city smallens carrier and vice versa"). This is what keeps a three-picker UI in agreement with what the gateway will actually route. `<PoolSessionSpawner facets={…} carrierStock={…}>` wires all of it; the `usePoolFacets` / `usePoolCarrierStock` hooks fetch it. **(v0.13.0+)**
 
 ---
 
-## Private Pool - quote-based reserved capacity (route, don't build)
+## Private Pool - reserved capacity (route, don't build)
 
 If a user wants **isolation, exclusive devices, committed capacity, or an enterprise
 tier** beyond self-serve `pak_` minting, do NOT build an instant-checkout flow - point
-them to the quote-based Private Pool: **https://client.proxies.sx/private-pool**.
-Reserving real devices requires a capacity check; availability + price are confirmed
-within about one business day, then provisioned. Requesting a quote never charges.
+them to Private Pool: **https://client.proxies.sx/private-pool**. A pool funded from
+the account's existing GB balance is built there instantly; an allocation of reserved
+hardware is quote-based — a capacity check, then availability + price confirmed within
+about one business day, then provisioned. Requesting a quote never charges.
 
 - **Two pool types, same gateway** (`gw.proxies.sx:7000` HTTP / `:7001` SOCKS5), same
   `pak_` keys, same DSL (`-sid-`, `-rot-`, `-city-`, `-carrier-` all work, scoped to
@@ -167,7 +168,7 @@ For any non-trivial reseller deployment you want **TWO separate dashboards**:
 
 **Confirm with the user:** "Admin side, customer side, or both?" If they say "both" — build the customer side first (it's faster with the React components), then layer admin on their existing admin framework.
 
-See [`docs/TWO-SIDED-DASHBOARD.md`](./docs/TWO-SIDED-DASHBOARD.md) for the full pattern with concrete examples and a Coronium-style reference architecture.
+See [`docs/TWO-SIDED-DASHBOARD.md`](./docs/TWO-SIDED-DASHBOARD.md) for the full pattern with concrete examples and a production reference architecture.
 
 ### Q2 — What's the integration shape for the side(s) you're building?
 
@@ -209,24 +210,30 @@ Confirm both Q1 (side) and Q2 (path) with the user before generating code.
 The user needs ONE thing first: a Proxies.sx reseller API key.
 
 - Sign up / log in at [client.proxies.sx](https://client.proxies.sx)
+- Get the **reseller role** on the account. It is granted by Proxies.sx, not
+  self-serve (the self-serve switch is off on the platform: the account page
+  answers "Reseller access requires approval"). Email support with the account
+  email; an admin sets the role.
 - Visit [client.proxies.sx/account](https://client.proxies.sx/account)
-- Click "Create API key" with scopes **`ports:read` + `ports:write`**
+- Click "Create API key" with scopes **`customers:read`, `customers:write`,
+  `ports:read`, `ports:write`, `traffic:read`**
 - Save the `psx_...` value — **server-side only, never expose to the browser**
 
-Those two scopes look wrong and are right. `customers:write` reads like the
-obvious choice for a reseller key and it grants nothing this kit uses — worse, it
-**403s** the live-sessions surface. The reason:
+Which scope gates what (verified against the live controllers, 2026-11-03):
 
 | Surface | Scope required |
 |---|---|
-| `/v1/reseller/pool-keys/*` (mint, list, get, top-up, regenerate, reveal, audit, delete) | **none** — no `ScopesGuard`; the reseller *role* is the gate |
+| `GET /v1/reseller/pool-keys[/…]` (list, get, audit, usage), `POST …/reveal` | `customers:read` |
+| `POST/PATCH/DELETE /v1/reseller/pool-keys[/…]` (mint, update, top-up, regenerate, delete) | `customers:write` |
 | `GET /v1/gateway/pool/my-sessions` | `ports:read` |
 | `DELETE /v1/gateway/pool/my-sessions[/:sessionKey]` | `ports:write` |
-| `GET /v1/gateway/pool/stock`, `/v1/gateway/incidents` | none — public |
+| `GET /v1/reseller/analytics/pak-usage` | `traffic:read` |
+| `GET /v1/gateway/pool/stock`, `/stock/*`, `/v1/gateway/incidents` | none — public |
 
-`hasScope()` matches exact strings or a `prefix:*` wildcard; there is no
-`customers` → `ports` mapping, so a `customers:write`-only key fails every
-`sessions.*` SDK call and the `<ActiveSessionsTable>` component.
+Every `/v1/reseller/*` route also requires the reseller role on the account —
+a key with every scope on a plain customer account still gets `403`. A missing
+scope is a `403` whose body carries `code: "scope_missing"` and names the scope
+to add. Scope matching is exact-string or a `prefix:*` wildcard.
 
 The user will also have a "reseller username" of the form `psx_<id>` shown in the same dashboard. That value is safe to reference in proxy URLs (it's the public part of the proxy auth) — it's NOT the secret API key.
 
@@ -404,8 +411,10 @@ await proxies.poolKeys.regenerate(keyId);          // rotate the secret (old pak
 await proxies.poolKeys.reveal(keyId);              // audit-logged unmask (v0.5.0+)
 await proxies.poolKeys.audit({ limit: 50 });       // 90-day forensic log across all keys (v0.5.0+)
 await proxies.poolKeys.auditForKey(keyId);         // forensic log for one key (v0.5.0+)
+await proxies.poolKeys.usage(keyId, { days: 30 }); // per-day MB series for ONE key — the customer's chart (v0.14.0+)
+await proxies.poolKeys.usageSummary({ days: 30 }); // daily GB across ALL keys + per-key breakdown — your sales number (v0.14.0+, traffic:read)
 await proxies.poolKeys.delete(keyId);              // permanent
-await proxies.pool.getStock();                     // live endpoint count by country
+await proxies.pool.getStock();                     // live endpoint count by country (+ country-tier pricing block)
 await proxies.pool.getIncidents();                 // active pool incidents
 ```
 
@@ -490,8 +499,10 @@ Use when the user's backend is **not JavaScript**. The SDK is a thin wrapper aro
 | `POST` | `/v1/reseller/pool-keys/{keyId}/regenerate` | Rotate secret. The old `pak_` keeps authenticating for **up to 30 s** (gateway auth cache) — not an instant kill-switch, see [Revocation timing](#revocation-timing-regenerate-is-not-instant). Returns full record from v0.3.0. **Sensitive.** |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/reveal` | Audit-logged unmask (returns full pak_ + records `reveal` event). Use this in customer-facing UIs instead of displaying the key from `list`. |
 | `DELETE` | `/v1/reseller/pool-keys/{keyId}` | Delete permanently |
-| `GET` | `/v1/reseller/pool-keys/audit` | 90-day forensic log across all keys. Filter via `?action=...`, paginate via `?before=<ISO>&limit=N` |
-| `GET` | `/v1/reseller/pool-keys/{keyId}/audit` | 90-day forensic log scoped to one key |
+| `GET` | `/v1/reseller/pool-keys/audit` | 90-day forensic log across all keys. Filter via `?action=...`, paginate via `?before=<ISO>&limit=N` (max 500) |
+| `GET` | `/v1/reseller/pool-keys/{keyId}/audit` | 90-day forensic log scoped to one key (`limit` max 200) |
+| `GET` | `/v1/reseller/pool-keys/{keyId}/usage?days=30` | Per-day `{ date, mbIn, mbOut, mb }` series for one key (1–365 days, gap-filled). Ownership-scoped → safe to drive a customer's own chart |
+| `GET` | `/v1/reseller/analytics/pak-usage?days=30` | Daily GB across ALL keys + per-key breakdown (needs `traffic:read`) |
 
 **Three universal headers:**
 
@@ -540,12 +551,14 @@ Cap the key to exactly what the customer paid for; that is what makes the auto-s
 
 Base URL: `https://api.proxies.sx/v1`.
 
-**There is no public OpenAPI document for `/reseller/pool-keys/*`** — `/docs/api`,
-`/docs/api-json`, `/docs/seller` and `/docs/seller-json` are all basic-auth gated and
-return **403** to an anonymous caller (verified 2026-07-27). The table above is the
-reference; don't send a user to a spec URL that will 401 them. What *is* public:
-<https://api.proxies.sx/docs/gateway> (Pool Gateway API — Private Pool leases, x402
-pool; JSON at `/docs/gateway-json`).
+**The table above is the reference for `/reseller/pool-keys/*`.** The public
+reseller spec at <https://api.proxies.sx/v1/reseller/docs/openapi> (and its LLM
+companion `/v1/reseller/docs/llm`) covers the sub-account / port / pricebook /
+webhook / analytics surface and does **not** list the pool-keys routes; the
+interactive Swagger UIs (`/docs/api`, `/docs/seller`) answer **401** anonymously
+(verified 2026-11-03), so don't send a user there. Also public:
+<https://api.proxies.sx/docs/gateway> (Pool Gateway API — Private Pool leases,
+x402 pool; JSON at `/docs/gateway-json`).
 
 ### Mint a key — minimum viable curl
 
@@ -648,11 +661,11 @@ username fails auth. Use `buildProxyUrl(proxyUsername, pakKey, opts)`.
 |---|---|---|
 | Pool | `peer`, `mbl`, `any` | `peer` = **the flagship network** (~82–120 countries, mixed mobile + residential). `mbl` = our carrier modems, **exactly 6 countries: US GB FR NL PL GE**. `any`/`best` = no pool filter. |
 | Country | `us`, `gb`, `fr`, `nl`, `pl`, `ge` | ISO alpha-2. Those 6 are the `mbl` set; `peer` spans far more. **`ge` is GEORGIA** — Germany is `de` and has **no `mbl` stock** (`mbl-de` always fails; use `peer-de`). An unrecognised country silently becomes `any` (global). |
-| `sid-{id}` | `sid-cust_8f3a21bd` | Session name. 1–64 chars `[a-z0-9_]`, no `-`. **Required for `sticky`/`auto*` to persist across connections** — without it every connection starts a fresh synthetic session. **A sid alone is NOT sticky**: with no `-rot-`, the default `auto10` still rotates it. The token is `sid`, not `session` — `-session-<id>` is silently skipped. |
+| `sid-{id}` | `sid-cust_8f3a21bd` | Session name. 1–64 chars `[a-z0-9_]`, no `-`. **Required for `sticky`/`auto*` to persist across connections** — without it every connection starts a fresh synthetic session. **A sid alone is NOT sticky**: with no `-rot-`, the default `auto10` still rotates it. The canonical token is `sid`; the gateway rewrites `-session-<id>` to it. |
 | `rot-{mode}` | `rot-sticky`, `rot-auto5` | `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, **not** a new IP per request). `auto5/10/20/60` re-pick every N min. `ondemand` re-picks per connection. **Omitting `-rot-` applies the gateway default `auto10`** (~10 min) — it is not "no rotation". Unrecognised value → `auto10`, silently. |
 | `strict` | `rot-sticky-strict` | **Bare flag, no value.** Only active with `sticky`/`hard`: adds a hard IP-stability floor and heavier stability weighting. No-op elsewhere. |
-| `carrier-{name}` | `carrier-att` | **Soft.** If no endpoint matches, the gateway **retries without it and serves a different carrier as a normal 200.** Make it binding with `failover-samecarrier` or `failover-strict`. |
-| `city-{name}` | `city-nyc` | **Soft — ranking bonus only**, it never excludes anyone. No match → any city in the country, silently. Prefer carrier/isp/asn for real precision. |
+| `carrier-{name}` | `carrier-att` | **Hard** exact slug match on the device's carrier or ISP name, never widened. No match → `E_NO_STOCK_COUNTRY` 502. Prefer `asn` when you have it. |
+| `city-{name}` / `state-{code}` | `city-brooklyn`, `state-ny` | **Hard, peer-only.** No routable peer there → 502; modems never match, so they refuse on `mbl`. Offer only what `getCities()` / `getFacets()` report. |
 | `iptype-{class}` | `iptype-residential` | **Hard** IP-class filter. No match → `E_NO_STOCK_COUNTRY` 502. |
 | `isp-{slug}` | `isp-spectrum` | **Hard** slugified match (peer pool). No match → 502. |
 | `asn-{number}` | `asn-7018` | **Hard** exact ASN match. No match → 502. Most precise carrier filter. |
@@ -702,7 +715,7 @@ The REST API returns standard HTTP codes. Map them like this:
 | `200` / `201` | Success | Use the response body |
 | `400` | Validation error | Show error details to the user, don't retry |
 | `401` | API key invalid or revoked | Re-mint key from `client.proxies.sx/account` |
-| `403` | Scope insufficient, or the account isn't a reseller | On `/gateway/pool/my-sessions`, add `ports:read` (GET) / `ports:write` (DELETE). On `/reseller/pool-keys/*` no scope is missing — the account lacks the `reseller` role; ask support to grant it |
+| `403` | Scope insufficient, or the account isn't a reseller | Read the body: `code: "scope_missing"` names the scope to add (`customers:read`/`customers:write` for pool-keys, `ports:read`/`ports:write` for sessions, `traffic:read` for pak-usage). "only available to resellers" means the account lacks the `reseller` role — ask support to grant it |
 | `404` | Key doesn't exist | Stop — don't loop |
 | `429` | Rate-limited | Back off (exponential, start at 1s) |
 | `500–599` | Server error | Retry up to 3× with exponential backoff |
@@ -890,9 +903,13 @@ Wholesale rates from Proxies.sx have volume tiers. Do not hardcode dollar amount
 
 For larger resellers, wholesale and volume pricing is negotiable with the Proxies.sx team. The published $4/GB base and volume tiers are the self-serve floor, not a ceiling on the discount. If the user plans meaningful volume, tell them to contact admin at client.proxies.sx to arrange a custom wholesale rate.
 
-To get current rates programmatically:
-- `GET https://api.proxies.sx/v1/x402/pricing` (public, no auth)
+To get current list rates programmatically:
+- `GET https://api.proxies.sx/v1/billing/public-pricing` (public, no auth) — base price + the per-order volume discounts
+- `GET https://api.proxies.sx/v1/gateway/pool/stock` → `pricing` — the same, plus the **country tiers**: when `pricing.live` is true a GB exiting in a tier-2/3 country burns only `burnRate` GB of balance. The country lists move; never copy them into code.
+- `GET https://api.proxies.sx/v1/x402/pool/pricing` (public) — the USDC catalogue agents see
 - Or check the user's [client.proxies.sx](https://client.proxies.sx) dashboard
+
+A reseller's own wholesale terms are agreed with Proxies.sx and are not published by any endpoint — describe them as "your wholesale rate per agreement", never as a number.
 
 The user sets their **retail** price (whatever they charge their own customers) — that lives in their own app config (`apps/starter/src/config.ts` in the starter, or wherever they put it). Our wholesale price affects their margin, not their pricing UI.
 
@@ -915,7 +932,7 @@ When the user needs more than this skill provides, point them to the right file 
 | `apps/starter/CLAUDE.md` | Per-task instructions for AI agents customizing the starter (change brand, add country, add admin page, change DB schema) |
 | `CLAUDE.md` | Repo-wide architecture + invariants for AI agents working ON the SDK code itself |
 | `docs/X402-RESELLER-INTEGRATION.md` | Accept USDC from AI agents — full drop-in handler, flow diagram, reseller economics |
-| `docs/TWO-SIDED-DASHBOARD.md` | Admin-side vs customer-side architecture, with a Coronium-style reference |
+| `docs/TWO-SIDED-DASHBOARD.md` | Admin-side vs customer-side architecture, with a production reference |
 | `SECURITY.md` | Production hardening checklist |
 
 **Wiki** ([github.com/bolivian-peru/proxy-reseller-kit/wiki](https://github.com/bolivian-peru/proxy-reseller-kit/wiki)) — operational and conceptual depth that doesn't live in the code. Point the user (or read yourself) when the question is *operational* or *conceptual* rather than *API-shaped*:
@@ -993,4 +1010,5 @@ country, never IPs).
 - [ ] Stripe webhook signature is verified (if using Stripe)
 - [ ] User can mint a `pak_*`, build a proxy URL, and route real traffic through it
 - [ ] User knows how to regenerate a leaked `pak_*`
-- [ ] No specific pricing numbers were hardcoded — UI either reads `/v1/x402/pricing` or shows the user's own retail tiers
+- [ ] No specific pricing numbers were hardcoded — UI either reads `/v1/billing/public-pricing` / `/v1/gateway/pool/stock` or shows the user's own retail tiers
+- [ ] Nothing in the UI, logs or API responses shows a device exit IP (sessions carry none; lease rows are stripped by the handlers)

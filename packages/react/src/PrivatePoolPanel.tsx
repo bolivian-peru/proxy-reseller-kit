@@ -176,13 +176,14 @@ export function PrivatePoolPanel(props: PrivatePoolPanelProps): JSX.Element {
  * would let a host mount it against a pool whose `pak` can't pin its leases.
  */
 
-/** Idle windows the platform accepts (it clamps to [600, 43200] regardless). */
+/** Idle windows the platform accepts (it clamps to [600, 86400] regardless). */
 const IDLE_OPTS: { value: number; label: string }[] = [
   { value: 900, label: '15 minutes' },
   { value: 1800, label: '30 minutes' },
   { value: 3600, label: '1 hour' },
   { value: 21600, label: '6 hours' },
   { value: 43200, label: '12 hours' },
+  { value: 86400, label: '24 hours' },
 ];
 
 /**
@@ -694,9 +695,12 @@ function LeaseRow(props: LeaseRowProps): JSX.Element {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-        <code style={{ fontWeight: 600 }}>{lease.ipMasked ?? 'x.x.x.x'}</code>
+        <code style={{ fontWeight: 600 }}>{lease.leaseId}</code>
         <span className="psx-spawner-hint">
-          {lease.country} · {lease.carrier ?? 'unknown carrier'} · {lease.ipType}
+          {lease.country}
+          {lease.region ? ` / ${lease.region}` : ''}
+          {lease.city ? ` · ${lease.city}` : ''}
+          {' · '}{lease.carrier ?? 'unknown carrier'} · {lease.ipType}
         </span>
         <span className="psx-spawner-hint" style={{ marginLeft: 'auto' }}>
           {statusLine(lease)}

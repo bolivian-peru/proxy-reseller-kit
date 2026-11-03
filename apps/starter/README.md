@@ -21,7 +21,7 @@ Total lines of app code: **under 1000** including comments. You can read it all 
 - Node 20+
 - pnpm 9+ (install: `corepack enable && corepack prepare pnpm@9 --activate`)
 - Docker (optional — only if you want compose-managed Postgres)
-- A [Proxies.sx](https://client.proxies.sx) reseller account with an API key (`psx_...`)
+- A [Proxies.sx](https://client.proxies.sx) account with reseller access (granted by Proxies.sx on request) and an API key (`psx_...`) carrying `customers:read`, `customers:write`, `ports:read`, `ports:write`, `traffic:read`
 - A [Stripe](https://dashboard.stripe.com) account (test mode is fine)
 
 ### 1. Clone + install

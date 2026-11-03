@@ -62,7 +62,7 @@ describe('buildProxyString rotation + ttl guards (parity with the live parser)',
   });
 });
 
-describe('buildProxyString city/state geo tokens (v0.13.0, peer-only soft hints)', () => {
+describe('buildProxyString city/state geo tokens (v0.13.0, peer-only hard filters)', () => {
   it('emits -city- and -state- on the peer pool', () => {
     const u = username(
       buildProxyString({ ...base, pool: 'peer', city: 'brooklyn', state: 'ny' }),
@@ -71,7 +71,7 @@ describe('buildProxyString city/state geo tokens (v0.13.0, peer-only soft hints)
     expect(u).toContain('-state-ny');
   });
 
-  it('drops city/state on mbl (modem stock has no stable city — no dead token)', () => {
+  it('drops city/state on mbl (modems never match a location filter — the token would only refuse)', () => {
     const u = username(buildProxyString({ ...base, pool: 'mbl', city: 'brooklyn', state: 'ny' }));
     expect(u).not.toContain('-city-');
     expect(u).not.toContain('-state-');

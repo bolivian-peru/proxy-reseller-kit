@@ -14,18 +14,18 @@
 
 Upstream service: **Proxies.sx Pool Gateway** at `gw.proxies.sx:7000` (HTTP) and `:7001` (SOCKS5). The **peer** network is the flagship pool — mixed mobile + residential IPs across ~82–120 countries. The **mbl** (production ProxySmart modem) tier is the supportive tier: exactly 6 countries — **US, GB, FR, NL, PL, GE (Georgia — *not* Germany; `de` has no `mbl` stock)**. Both bill at $4/GB, volume-discounted to $2.40/GB at 250 GB+; duration is free. Live rates in the `client.proxies.sx` dashboard — don't hardcode prices anywhere.
 
-Reseller API: `https://api.proxies.sx/v1/reseller/pool-keys`. Auth with an API key (`psx_*`) minted at `client.proxies.sx/account` with scopes **`ports:read` + `ports:write`**.
-
-Those two scopes are what the SDK actually needs, and the reason is worth knowing because the naming is counter-intuitive:
+Reseller API: `https://api.proxies.sx/v1/reseller/pool-keys`. Auth with an API key (`psx_*`) minted at `client.proxies.sx/account` on an account that holds the **reseller role** (granted by Proxies.sx — `RESELLER_SELF_SERVE_ENABLED` is off on the platform, so self-activation answers "Reseller access requires approval"). Scopes the kit needs: **`customers:read`, `customers:write`, `ports:read`, `ports:write`, `traffic:read`**.
 
 | Surface | Guard | Scope required |
 |---|---|---|
-| `/v1/reseller/pool-keys/*` (mint, list, top-up, regenerate, reveal, audit, delete) | `JwtOrApiKeyAuthGuard` + `ResellerOnlyGuard` | **none** — no `ScopesGuard` is applied; the reseller *role* is the gate |
-| `GET /v1/gateway/pool/my-sessions` | + `ScopesGuard` | `ports:read` |
-| `DELETE /v1/gateway/pool/my-sessions[/:sessionKey]` | + `ScopesGuard` | `ports:write` |
-| `GET /v1/gateway/pool/stock`, `/v1/gateway/incidents` | none | public |
+| `GET /v1/reseller/pool-keys[/…]` (list, get, audit, usage) and `POST …/reveal` | `JwtOrApiKeyAuthGuard` + `ScopesGuard` + `ResellerOnlyGuard` | `customers:read` |
+| `POST/PATCH/DELETE /v1/reseller/pool-keys[/…]` (mint, update, top-up, regenerate, delete) | same | `customers:write` |
+| `GET /v1/gateway/pool/my-sessions` | `JwtOrApiKeyAuthGuard` + `RolesGuard` + `ScopesGuard` | `ports:read` |
+| `DELETE /v1/gateway/pool/my-sessions[/:sessionKey]` | same | `ports:write` |
+| `GET /v1/reseller/analytics/pak-usage` | `JwtOrApiKeyAuthGuard` + `ScopesGuard` + `ResellerOnlyGuard` | `traffic:read` |
+| `GET /v1/gateway/pool/stock`, `/stock/*`, `/v1/gateway/incidents` | none | public |
 
-So `customers:write` — which reads like the obvious choice and which older revisions of this file recommended — grants nothing the kit uses and **403s the live-sessions surface**. `hasScope()` (`src/auth/api-key.service.ts`) matches exact strings or a `prefix:*` wildcard; there is no `customers` → `ports` mapping, so a `customers:write`-only key fails `ActiveSessionsTable` and every `sessions.*` SDK call.
+Earlier revisions of this file said the pool-keys routes carried no `ScopesGuard`; the live controller (`src/reseller/reseller-pool-access-key.controller.ts`, verified 2026-11-03) applies it on every route. `hasScope()` (`src/auth/api-key.service.ts`) matches exact strings or a `prefix:*` wildcard; a missing scope is a `403` with `code: "scope_missing"` naming the scope. JWT (portal) sessions bypass scopes entirely, which is why a flow that works in the browser can still 403 from a key.
 
 **The username DSL has exactly one source of truth in this repo: [`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md).** It was previously copy-pasted into five files, which drifted into contradicting each other and the gateway. When gateway routing behaviour changes, update that file and let the others keep linking to it. Do not reintroduce a second full token table.
 
@@ -92,7 +92,7 @@ When a user asks to build "a Pool dashboard" or "a reseller portal," **ask which
 
 If they say "both," build customer side first (the React components do most of the work) and layer admin on top of their existing admin app. **Never reuse customer components for admin pages** — they're shaped for one-customer-self-service, admin needs N-customer tables.
 
-Full pattern (with concrete examples + Coronium reference architecture): [`docs/TWO-SIDED-DASHBOARD.md`](./docs/TWO-SIDED-DASHBOARD.md).
+Full pattern (with concrete examples + a production reference architecture): [`docs/TWO-SIDED-DASHBOARD.md`](./docs/TWO-SIDED-DASHBOARD.md).
 
 ---
 
@@ -112,7 +112,7 @@ default to these patterns:
 
 For migration of existing 0.2.0 integrations, see [`docs/MIGRATION-0.3.0.md`](./docs/MIGRATION-0.3.0.md).
 
-For webhooks (Block 2, target 0.4.0), see [`packages/sdk/docs/WEBHOOKS-DESIGN.md`](./packages/sdk/docs/WEBHOOKS-DESIGN.md).
+Webhooks: the platform's `/v1/reseller/webhooks` emits port and sub-account events only — there are **no `pak.*` events live** (verified 2026-11-03), so a per-GB reseller polls `poolKeys.list()` / `audit()` / `usageSummary()`. The `pak.*` design is still a design: [`packages/sdk/docs/WEBHOOKS-DESIGN.md`](./packages/sdk/docs/WEBHOOKS-DESIGN.md).
 
 ## Common agent tasks
 
@@ -214,7 +214,7 @@ order the build.
 
 **`psx_` API key callers bypass fresh-auth.** The platform's `FreshAuthGuard` only fires on interactive JWT sessions. SDK consumers using a server-stored `psx_` API key never see `FRESH_AUTH_REQUIRED` 401s and don't need to handle them. This is intentional — server-side automation can't re-authenticate interactively.
 
-**Compensating controls** (so the SDK isn't the weak link): per-key rate limit (passport-strategy enforced), a role gate (`ResellerOnlyGuard` — pool-keys routes carry no `ScopesGuard`, so the reseller role *is* the authorization check there; scopes only bite on the `/gateway/pool/my-sessions` surface, see the table above), and a 90-day audit log on every mutation that records `ip`, `userAgent`, `requestId`, and `authMethod: 'apiKey'`.
+**Compensating controls** (so the SDK isn't the weak link): per-key rate limit (passport-strategy enforced, plus 30 req/min on mint and reveal), the scope gate (`customers:read` / `customers:write`, see the table above), the role gate (`ResellerOnlyGuard`), and a 90-day audit log on every mutation that records `ip`, `userAgent`, `requestId`, and `authMethod: 'apiKey'`.
 
 **Auto-suspend on cap**: when a `pak_`'s `trafficUsedMB / 1024 >= trafficCapGB`, the platform flips `enabled = false` automatically and records `auto_suspended_cap_exceeded`. The SDK's `topUp()` extends the cap but does NOT auto re-enable — callers must explicitly `update(id, { enabled: true })` to bring a suspended key back online. This is by design: a leaked key that auto-recovered would defeat the suspend.
 
@@ -222,8 +222,10 @@ order the build.
 - `client.poolKeys.reveal(id)` — audit-logged unmask (`POST /pool-keys/:id/reveal`). Returns same shape as `get()`.
 - `client.poolKeys.audit({ action?, before?, limit? })` — forensic log across all keys (`GET /pool-keys/audit`).
 - `client.poolKeys.auditForKey(id, { before?, limit? })` — same scoped to one key (`GET /pool-keys/:id/audit`).
+- `client.poolKeys.usage(id, { days? })` — per-key daily MB series (`GET /pool-keys/:id/usage`, 0.14.0).
+- `client.poolKeys.usageSummary({ days? })` — daily GB across all keys + per-key breakdown (`GET /reseller/analytics/pak-usage`, 0.14.0, `traffic:read`).
 
-All three are typed in `src/types.ts` (`PoolAccessKeyAuditEvent`, `AuditQueryOpts`) with TSDoc examples in `src/client.ts`.
+All are typed in `src/types.ts` (`PoolAccessKeyAuditEvent`, `AuditQueryOpts`, `PakUsageSeries`, `PakUsageSummary`) with TSDoc examples in `src/client.ts`.
 
 ## Documentation map (keep these in sync when behavior changes)
 
@@ -242,7 +244,9 @@ The kit's knowledge lives in three tiers. When you change behavior, update the t
 - `rot: 'none'`/omitted ⇒ the gateway default **`auto10`**, not "no rotation" and not "fresh IP per request". `hard` ≡ `sticky`.
 - `-sid-` alone is not sticky, and `-rot-sticky` alone does not persist. **Both** tokens.
 - Sticky pins the **device**, not the IP.
-- `carrier` and `city` are **soft** — they silently widen when nothing matches. `iptype`/`isp`/`asn` are hard and return 502.
+- `carrier`, `city`, `state`, `iptype`, `isp` and `asn` are all **hard** filters on the live gateway (release `d2e9f99e`) — no match returns 502, nothing is widened on a retry. `city`/`state` match peers only, so they refuse on `mbl`. (0.13.x docs called `carrier`/`city` soft; that was wrong.)
+- Sessions carry **no exit IP**: `GET /gateway/pool/my-sessions` allow-lists its fields and `currentIp` is not one of them. Lease rows do carry `observedIp` for the pool owner, and the kit's handlers strip it before the browser. No kit surface may show a device exit IP.
+- Incidents are `{ id, severity: 'info'|'warning'|'critical', message, since }` inside `{ incidents, generatedAt, stale }` — there is no `title`.
 - `ttl` is immutable once a session row exists.
 - `ge` is Georgia. `mbl-de` always fails.
 - Peer is the flagship network; `mbl` is the supportive 6-country tier.

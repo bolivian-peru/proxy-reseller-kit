@@ -28,6 +28,8 @@ export type {
   PakAuditAction,
   PoolAccessKeyAuditEvent,
   AuditQueryOpts,
+  PakUsageSeries,
+  PakUsageSummary,
   RetryConfig,
   ActiveSession,
   ActiveSessionsResponse,
@@ -37,6 +39,8 @@ export type {
   // the same shape of gap as a cross-package contract with no owner.
   PinConfig,
   PoolStock,
+  PoolPricing,
+  CountryTier,
   CarrierStock,
   CarrierStockEntry,
   CarrierStockAll,
@@ -48,6 +52,7 @@ export type {
   PoolFacets,
   PoolFacetCarrier,
   Incident,
+  IncidentsResponse,
   ClientConfig,
 } from './types';
 

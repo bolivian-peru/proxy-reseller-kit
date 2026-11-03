@@ -81,7 +81,7 @@ Customer's browser
 createPoolApiHandlers()  (your /api/pool/[...path]/route.ts)
       │ getSessionUserId() → who is this?
       │ getUserKeyId()     → which pak_ do they own?
-      │ proxies.poolKeys.list() → fetch usage from api.proxies.sx
+      │ proxies.poolKeys.get(keyId) → fetch usage from api.proxies.sx
       ▼
 Respond with { proxyUsername, pakKey, usage }
 ```
@@ -186,7 +186,7 @@ Count slider (1–100), country / pool / protocol / rotation / failover / sid-mo
 
 **IP class filter (v0.11.0+).** When `pool` is `peer` or `any`, an "IP class" dropdown appears with `Any` / `Mobile only` / `Residential only` / `Datacenter only` — it emits `-iptype-<v>` and hard-filters the peer pool to that verified exit class (unclassified peers are excluded). The `mbl` pool is mobile-only by construction, so the control is hidden whenever `mbl` is selected. Programmatic equivalent: `buildProxyString({ ..., ipType: 'mobile' })`.
 
-**City + Region pickers (v0.13.0+).** Pass a `facets` prop (from `usePoolFacets`) and, on the peer pool, "Region / State" and "City" dropdowns appear — emitting the **soft** `-state-` / `-city-` tokens. Because the facets endpoint is cross-filtered, feeding the current City/Region/Carrier selection back into the hook makes each picker narrow the others (the same "city smallens carrier and vice versa" behaviour as `client.proxies.sx/pool-proxy`):
+**City + Region pickers (v0.13.0+).** Pass a `facets` prop (from `usePoolFacets`) and, on the peer pool, "Region / State" and "City" dropdowns appear — emitting the `-state-` / `-city-` tokens (hard, peer-only filters). Because the facets endpoint is cross-filtered, feeding the current City/Region/Carrier selection back into the hook makes each picker narrow the others (the same "city smallens carrier and vice versa" behaviour as `client.proxies.sx/pool-proxy`):
 
 ```tsx
 const [country, setCountry] = useState<Country>('us');
@@ -199,7 +199,7 @@ const carrierStock = usePoolCarrierStock('/api/pool', country).data?.carriers;
 />
 ```
 
-City and region are soft peer-pool hints: the gateway prefers a match and quietly widens to the country when none is free, so they never error and are hidden on `mbl` (modem stock has no stable city). Programmatic equivalent: `buildProxyString({ ..., city: 'brooklyn', state: 'ny' })`.
+City and region are hard peer-only filters on the live gateway: a credential routes only while a routable peer is online there (`E_NO_STOCK_COUNTRY` otherwise), which is why the pickers are built from live counts and hidden on `mbl` (a modem never matches a location). Programmatic equivalent: `buildProxyString({ ..., city: 'brooklyn', state: 'ny' })`.
 
 Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation)` helpers for hand-rolled UIs. `buildProxyString`'s `ipType?: 'mobile' | 'residential' | 'datacenter'` option is available regardless of whether you use the built-in dropdown.
 
@@ -216,7 +216,7 @@ Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation
 - **Sticky pins the DEVICE, not the IP.** Mobile CGNAT can re-NAT a held modem. For a held address prefer `defaultPool="peer"` (home/ISP peers hold for hours-to-days), or lease a [Reserved IP](../../docs/RESERVED-IPS.md).
 - **Stickiness needs a `-sid-`.** The spawner always emits one, so its output is fine — but a hand-built string with `-rot-sticky` and no `-sid-` starts a fresh session on every connection and looks broken.
 
-Full token semantics, including which filters silently widen when nothing matches: [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.md). Layer-1-vs-Layer-2 explanation: [wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
+Full token semantics, including what each filter does when nothing matches: [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.md). Layer-1-vs-Layer-2 explanation: [wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
 ### `<ActiveSessionsTable>` — live session manager (v0.4.0+)
 
@@ -235,7 +235,7 @@ Full token semantics, including which filters silently widen when nothing matche
 />
 ```
 
-Polls `GET /api/pool/my-sessions` (auto-handler) at 5 s default. Per-row: country, sid, IP, rotation, TTL countdown, bytes in/out, request count, Copy-URL (with password substitution), Close. Header Close-all + Refresh. Hides synthesized-sid sessions by default (`hideSynthesizedSessions`).
+Polls `GET /api/pool/my-sessions` (auto-handler) at 5 s default. Per-row: country/pool, sid, rotation, TTL countdown, bytes in/out, request count, Copy-URL (with password substitution), Close. No exit IP — the platform returns none for a session. Header Close-all + Refresh. Hides synthesized-sid sessions by default (`hideSynthesizedSessions`).
 
 ### `<PoolDocsPanel>` — drop-in technical reference (v0.4.1+)
 
@@ -297,15 +297,17 @@ across modems + verified peers with automatic failover.
 
 ### Server handlers (v0.4.0+)
 
-`createPoolApiHandlers()` exports three methods. `GET` (`/me`, `/stock`,
-`/stock/carriers`, `/incidents`, `/my-sessions`) and `POST` (`/regenerate`) and
-`DELETE` (`/my-sessions`):
+`createPoolApiHandlers()` exports three methods. `GET` (`/me`, `/usage`, `/stock`,
+`/stock/carriers`, `/stock/cities`, `/stock/facets`, `/incidents`, `/my-sessions`)
+and `POST` (`/regenerate`) and `DELETE` (`/my-sessions`):
 
 | Method | Path | Action | Scoped to caller? |
 |---|---|---|---|
 | `GET` | `<route>/me` | Current user's `pak_` + usage | ✅ via `getUserKeyId` |
+| `GET` | `<route>/usage?days=30` | Current user's per-day MB series (v0.14.0) | ✅ via `getUserKeyId` (platform 404s a foreign key) |
 | `GET` | `<route>/stock` | Live per-country endpoint counts | n/a (public stock data) |
 | `GET` | `<route>/stock/carriers` | Per-carrier stock for a country (v0.9.0) | n/a (public stock data) |
+| `GET` | `<route>/stock/cities`, `<route>/stock/facets` | City / region / carrier stock for a country (v0.13.0) | n/a (public stock data) |
 | `GET` | `<route>/incidents` | Status-page incidents | n/a |
 | `POST` | `<route>/regenerate` | Rotate current user's key | ✅ via `getUserKeyId` |
 | `GET` | `<route>/my-sessions` | List sessions | ✅ since 0.6.0 via `getUserKeyId` → `pakId` (⚠️ 0.5.x returned all account sessions) |
@@ -407,6 +409,7 @@ scoping guarantee.
 | `getUserKeyId(userId)` | ✅ | `string \| null` — which `pakKeyId` belongs to this user? |
 | `gatewayHost` | | Passed through to the browser for custom edge deployments |
 | `onAudit(event)` | | Called on writes (e.g. regenerate). Log to your audit trail. |
+| `privatePool` | | Enables the Reserved-IP routes (`/leases*`), scoped per customer through your `listUserLeaseIds` / `onLeaseAcquired`. Lease rows reach the browser without the platform's `strings` block and without `observedIp` — a device exit IP never leaves your server. |
 
 ### Provisioning a key for a new customer
 

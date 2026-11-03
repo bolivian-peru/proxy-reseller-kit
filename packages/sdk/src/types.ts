@@ -173,7 +173,12 @@ export interface PoolAccessKey {
    * with `E_CAP_EXCEEDED`. To stop a key, use `update({ enabled: false })`.
    */
   trafficCapGB: number | null;
-  /** Bytes consumed so far, in megabytes (fractional). */
+  /**
+   * Bytes consumed so far, in megabytes (fractional). This is the RAW byte
+   * count the key carried; the per-key cap is compared against it as-is.
+   * Country-tier pricing (see {@link PoolPricing}) applies to the reseller's
+   * own GB balance, not to this counter.
+   */
   trafficUsedMB: number;
   /** Same value as {@link trafficUsedMB} but expressed in GB for display. */
   trafficUsedGB?: number;
@@ -311,6 +316,47 @@ export interface PoolAccessKeyAuditEvent {
 }
 
 /**
+ * Per-key bandwidth time-series from `GET /reseller/pool-keys/:id/usage`.
+ * One bucket per UTC day, oldest → newest, gap-filled with zeroes so a chart
+ * x-axis is continuous. Values are MB carried by the key (in + out), raw.
+ *
+ * @since 0.14.0
+ */
+export interface PakUsageSeries {
+  keyId: string;
+  /** Window length actually applied (clamped 1–365). */
+  days: number;
+  totalMB: number;
+  totalGB: number;
+  series: Array<{ date: string; mbIn: number; mbOut: number; mb: number }>;
+}
+
+/**
+ * Reseller-wide pool-key bandwidth from `GET /reseller/analytics/pak-usage`:
+ * a daily GB series across ALL of your keys plus a per-key breakdown, from the
+ * same per-key daily rollup (retained 90 days). This is the per-GB reseller's
+ * sales number.
+ *
+ * @since 0.14.0
+ */
+export interface PakUsageSummary {
+  days: number;
+  totalGB: number;
+  /** Keys that carried traffic in the window (= `byKey.length`). */
+  activeKeys: number;
+  series: Array<{ date: string; gb: number }>;
+  /** Sorted by `gb` descending. Keys with no traffic in the window are omitted. */
+  byKey: Array<{
+    keyId: string;
+    label: string;
+    /** First 12 characters of the `pak_` value — never the full secret. */
+    keyPrefix: string;
+    gb: number;
+    lastUsedAt: string | null;
+  }>;
+}
+
+/**
  * Filters and pagination for {@link PoolKeysApi.audit} /
  * {@link PoolKeysApi.auditForKey}.
  *
@@ -417,7 +463,12 @@ export interface PinConfig {
 export interface BuildProxyUrlOpts {
   /** ISO country code. If omitted, any country in the pool is eligible. */
   country?: Country;
-  /** Carrier name (e.g. `"att"`, `"tmobile"`). Soft preference, mostly for modems. */
+  /**
+   * Carrier name (e.g. `"att"`, `"tmobile"`). **Hard** filter: an exact
+   * slug match against the endpoint's carrier or ISP name, never widened on a
+   * retry. No match → `E_NO_STOCK_COUNTRY` (502). Prefer {@link asn} when you
+   * have it (from {@link PoolApi.getCarrierStock}).
+   */
   carrier?: string;
   /**
    * ISP slug — HARD prefix match against the endpoint's ISP name (peer pool).
@@ -430,18 +481,23 @@ export interface BuildProxyUrlOpts {
    * filter, e.g. `21928` (T-Mobile). Pairs with {@link PoolApi.getCarrierStock}.
    */
   asn?: number;
-  /** City name (e.g. `"nyc"`, `"berlin"`). Carrier-level precision recommended over city. */
+  /**
+   * City slug (e.g. `"brooklyn"`, from {@link PoolApi.getCities}). **Hard**
+   * filter, peer-pool only: modems never match, so on `pool: 'mbl'` it
+   * refuses with `E_NO_STOCK_COUNTRY` (502); on `peer` it refuses when no
+   * routable endpoint is in that city. Never widened on a retry.
+   */
   city?: string;
   /**
-   * Region / state — **soft**, peer-pool only. A US state code like `"ca"`,
-   * `"fl"`, `"ny"` (or a region slug elsewhere). Like {@link city}, it is a
-   * pure ranking preference: the gateway prefers endpoints in that region and
-   * silently widens to any region in the country when none match — it never
-   * excludes and never errors. Coarser than {@link city} and looser than the
-   * hard filters ({@link isp} / {@link asn} / {@link ipType}); reach for those
-   * when you need guaranteed precision. Region availability comes back as
-   * `states[]` from {@link PoolApi.getCities} / {@link PoolApi.getFacets}.
-   * Slugified to one `[a-z0-9]` token on emission, same as `city`/`carrier`.
+   * Region / state — **hard** filter, peer-pool only. A US state code like
+   * `"ca"`, `"fl"`, `"ny"` (an ISO subdivision code, matched exactly against
+   * the endpoint's region). Like {@link city}, modems never match it, so on
+   * `pool: 'mbl'` it refuses with `E_NO_STOCK_COUNTRY` (502); on `peer` it
+   * refuses when no routable endpoint is in that region — the gateway never
+   * widens a location filter on a retry. Region availability comes back as
+   * `regions[]` from {@link PoolApi.getCities} / `states[]` from
+   * {@link PoolApi.getFacets}. Slugified to one `[a-z0-9_]` token on emission,
+   * same as `city`/`carrier`.
    */
   state?: string;
   /**
@@ -564,20 +620,93 @@ export interface BuildProxyUrlOpts {
  *   live response.
  */
 export interface PoolStock {
-  /** Per-pool, per-country online endpoint count. Country code → online. */
+  /** Per-pool, per-country ROUTABLE endpoint count (what can be bought and used). Country code → online. */
   pools: {
     mbl: Record<string, number>;
     peer: Record<string, number>;
   };
-  /** Aggregate totals across all countries. */
+  /** Aggregate routable totals across all countries. */
   totals: {
     mbl: number;
     peer: number;
     /** Sum of `mbl` + `peer`. */
     all: number;
   };
+  /**
+   * Recorded relay memberships per pool per country — devices that are
+   * connected but not necessarily passing the public stock filters. Always
+   * `>= pools`; the gap is supply that is not sellable right now. Never treat
+   * it as capacity.
+   */
+  connected?: {
+    mbl: Record<string, number>;
+    peer: Record<string, number>;
+  };
+  /** Aggregates of {@link connected}. */
+  connectedTotals?: { mbl: number; peer: number; all: number };
+  /** Country-tier pricing in force. See {@link PoolPricing}. */
+  pricing?: PoolPricing;
+  /** Reserved IP (lease) terms the platform currently enforces. */
+  reservedIp?: {
+    /** `false` while the Reserved-IP feature is off — acquiring will fail. */
+    enabled: boolean;
+    /** Peers (not only carrier modems) may be reserved. */
+    peersAllowed: boolean;
+    /** A reservation on a peer ends this many hours after it was made; `0` = no limit. Modem reservations never age out. */
+    peerMaxAgeHours: number;
+  };
+  /**
+   * Routable PEER counts by exit-IP class. `pools.mbl` is all mobile by
+   * construction and is not repeated here. `unclassified` endpoints are served
+   * without an `-iptype-` filter but excluded under one.
+   */
+  ipTypes?: {
+    peer: Record<string, { mobile: number; residential: number; datacenter: number; unclassified: number }>;
+    totals: { mobile: number; residential: number; datacenter: number; unclassified: number };
+  };
   /** ISO 8601 timestamp when the snapshot was taken (cached server-side ~30s). */
   generatedAt: string;
+  /** `true` when the last Redis read failed and the previous snapshot was served. */
+  stale?: boolean;
+}
+
+/**
+ * One country tier. A GB of traffic that exits in one of `countries` uses
+ * `burnRate` GB of the account's balance (so `pricePerGB` is the effective
+ * list price for that country). `countries: null` marks the default tier —
+ * every country not named by another tier.
+ *
+ * @since 0.14.0
+ */
+export interface CountryTier {
+  tier: number;
+  name: string;
+  burnRate: number;
+  pricePerGB: number;
+  countries: string[] | null;
+}
+
+/**
+ * The `pricing` block of `GET /v1/gateway/pool/stock` — the platform's
+ * published list pricing for GB. Wholesale terms you have agreed with
+ * Proxies.sx are not reflected here; this is what the balance burn uses.
+ *
+ * - `live: false` → every GB of traffic uses 1 GB of balance regardless of
+ *   country, at `basePricePerGB` less the volume discount of the purchase.
+ * - `live: true` → a GB exiting in a tier-2/3 country uses only `burnRate` GB
+ *   of balance. The per-key cap ({@link PoolAccessKey.trafficCapGB}) still
+ *   counts RAW GB carried.
+ *
+ * @since 0.14.0
+ */
+export interface PoolPricing {
+  live: boolean;
+  basePricePerGB: number;
+  /** Discount on a single purchase of at least `minGB`. */
+  volumeDiscounts: Array<{ minGB: number; discountPercent: number }>;
+  /** `tier` of the default (unlisted-country) tier. */
+  defaultTier: number;
+  tiers: CountryTier[];
 }
 
 /** One carrier/ASN bucket of routable peer stock (counts only — never IPs). */
@@ -773,10 +902,13 @@ export interface ActiveSession {
   pool: Pool;
   /** ISO country code (lowercase). */
   country: string;
-  /** Carrier name if known, `'N/A'` otherwise. */
+  /**
+   * Carrier name if known, `'N/A'` otherwise. The session row carries NO exit
+   * IP: the platform allow-lists the fields it reads from the gateway store
+   * and `currentIp` is never one of them, by design — peer exit IPs are not
+   * enumerable through any customer-facing endpoint.
+   */
   carrier: string;
-  /** Last observed exit IP (updates as rotation fires). */
-  currentIp: string;
   /** Unix ms when the session was first opened. */
   createdAt: number;
   /** Unix ms of the last observed activity. */
@@ -816,17 +948,24 @@ export interface ActiveSession {
 export interface ActiveSessionsResponse {
   sessions: ActiveSession[];
   count: number;
+  /** Present and `true` when the account's session index was too large to read fully (bounded scan). */
+  truncated?: boolean;
 }
 
-/** Incident notice (unauthenticated public endpoint). */
+/**
+ * Incident notice (unauthenticated public endpoint). Derived from live stock:
+ * one entry per advertised carrier-modem country with nothing online
+ * (`no-stock-<cc>`), plus `pool-empty` when the whole gateway has no
+ * endpoints. Shape verified against production 2026-11-03.
+ */
 export interface Incident {
+  /** e.g. `no-stock-ge`, `empty-fr`, `pool-empty`. */
   id: string;
-  severity: 'info' | 'minor' | 'major' | 'critical';
-  title: string;
-  description?: string;
-  startedAt: string;
-  resolvedAt?: string;
-  affects: string[];
+  severity: 'info' | 'warning' | 'critical';
+  /** Customer-facing sentence, ready to render. */
+  message: string;
+  /** ISO 8601 timestamp the notice was generated. */
+  since: string;
 }
 
 /**
@@ -840,6 +979,8 @@ export interface IncidentsResponse {
   incidents: Incident[];
   /** ISO 8601 timestamp when the snapshot was generated (cached server-side ~60s). */
   generatedAt: string;
+  /** `true` when the stock snapshot behind it is stale (Redis read failed, last good copy served). */
+  stale?: boolean;
 }
 
 /**
@@ -867,14 +1008,21 @@ export interface RetryConfig {
 export interface ClientConfig {
   /**
    * Reseller API key (`psx_...`) — mint at https://client.proxies.sx/account
-   * with scopes **`ports:read` + `ports:write`**.
+   * on an account that already holds the `reseller` role (granted by
+   * Proxies.sx; it is not self-serve). Give the key these scopes:
    *
-   * Not `customers:write`, which reads like the obvious choice and grants
-   * nothing this SDK uses: the `/reseller/pool-keys/*` routes are gated by the
-   * reseller *role* rather than by a scope, while the live-session routes
-   * behind {@link ProxiesClient.sessions} do check scopes and `403` without
-   * `ports:*`. Scope matching is exact-string or `prefix:*` wildcard — there
-   * is no `customers` → `ports` mapping.
+   * | Scope | Unlocks |
+   * |---|---|
+   * | `customers:read` | every `GET` under `/reseller/pool-keys` (list, get, audit, usage, reveal) |
+   * | `customers:write` | mint, update, top-up, regenerate, delete |
+   * | `ports:read` | `sessions.list()` |
+   * | `ports:write` | `sessions.close()` / `closeAll()` |
+   * | `traffic:read` | `poolKeys.usageSummary()` |
+   *
+   * Scope matching is exact-string or `prefix:*` wildcard. A missing scope is
+   * a `403` with `code: "scope_missing"` naming the scope to add. The reseller
+   * role is checked as well: a key on a non-reseller account gets `403` on
+   * every `/reseller/*` route no matter which scopes it carries.
    *
    * Keep this server-side only; never expose to browsers.
    */

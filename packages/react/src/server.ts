@@ -7,7 +7,7 @@
  * @packageDocumentation
  */
 
-import type { ProxiesClient, ProxiesApiError } from '@proxies-sx/pool-sdk';
+import type { ProxiesClient, ProxiesApiError, PakUsageSeries } from '@proxies-sx/pool-sdk';
 import type { MeResponse } from './types';
 // Type-only import: erased at compile time, so the 'use client' module in
 // hooks.ts (and React with it) never reaches your server bundle.
@@ -28,11 +28,21 @@ const LEASE_ACTION_PATH = /\/leases\/([^/]+)\/(rotate|extend|rotation-mode|rotat
 const LEASE_PATH = /\/leases\/([^/]+)$/;
 
 /** Shape of the platform's `GET /private-pool/:poolId/leases` response. */
+/**
+ * `observedIp` is the held device's current exit IP, which the platform shows
+ * only to the pool OWNER (your account). It is stripped before anything
+ * reaches a customer's browser: exit IPs are never enumerable downstream.
+ */
+interface UpstreamLease extends PoolLease {
+  strings?: unknown;
+  observedIp?: string | null;
+}
+
 interface UpstreamLeaseList {
   enabled: boolean;
   maxLeases: number;
   held: number;
-  leases: Array<PoolLease & { strings?: unknown }>;
+  leases: UpstreamLease[];
 }
 
 /**
@@ -156,6 +166,7 @@ interface RouteHandlers {
  *
  * Exposes:
  * - `GET  /api/pool/me`         — current user's pak_ + usage (auth required)
+ * - `GET  /api/pool/usage`      — current user's per-day usage series, `?days=` (auth required)
  * - `GET  /api/pool/stock`      — public pool stock
  * - `GET  /api/pool/incidents`  — public incidents
  * - `POST /api/pool/regenerate` — rotate current user's key (auth required)
@@ -249,6 +260,35 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
     return json(response, {
       headers: { 'Cache-Control': 'private, no-store' },
     });
+  };
+
+  /**
+   * GET /usage?days=N — the CURRENT user's per-day MB series, for a usage
+   * chart. Scoped the same way as `/me`: the platform 404s a keyId that is
+   * not yours, so a customer can only ever chart their own key.
+   */
+  const handleUsage = async (req: Request): Promise<Response> => {
+    const userId = await getSessionUserId(req);
+    if (!userId) return json({ error: 'unauthorized' }, { status: 401 });
+
+    const keyId = await getUserKeyId(userId);
+    if (!keyId) return json({ error: 'no_key' }, { status: 404 });
+
+    const days = Number(new URL(req.url).searchParams.get('days'));
+    try {
+      const usage: PakUsageSeries = await proxies.poolKeys.usage(
+        keyId,
+        Number.isFinite(days) && days > 0 ? { days } : {},
+      );
+      return json(usage, { headers: { 'Cache-Control': 'private, no-store' } });
+    } catch (err) {
+      const apiErr = err as ProxiesApiError;
+      if (apiErr.status === 404) return json({ error: 'key_missing' }, { status: 404 });
+      return json(
+        { error: 'upstream_error', status: apiErr.status ?? 500 },
+        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502 },
+      );
+    }
   };
 
   const handleStock = async (): Promise<Response> => {
@@ -498,13 +538,14 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
   };
 
   /**
-   * Drop the platform's pre-built `strings` block. Its password is a masked
-   * `pak_********` placeholder, so it isn't usable as-is, and shipping it would
-   * give the browser a second, competing source for the connection string —
-   * the component builds the real one with `buildProxyUrl`.
+   * Drop what must not reach the browser. `strings` is the platform's
+   * pre-built block with a masked `pak_********` password — unusable as-is,
+   * and a second, competing source for the connection string the component
+   * builds itself with `buildProxyUrl`. `observedIp` is the device's exit IP,
+   * shown to the pool owner only; a customer never receives an exit IP.
    */
-  const stripLease = (row: PoolLease & { strings?: unknown }): PoolLease => {
-    const { strings: _platformStrings, ...lease } = row;
+  const stripLease = (row: UpstreamLease): PoolLease => {
+    const { strings: _platformStrings, observedIp: _exitIp, ...lease } = row;
     return lease;
   };
 
@@ -617,16 +658,19 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
       return json({ error: 'country_required', message: 'Pick a country to reserve in.' }, { status: 400 });
     }
 
-    let lease: PoolLease;
+    let lease: UpstreamLease;
     try {
-      lease = await proxies.request<PoolLease>(
+      lease = await proxies.request<UpstreamLease>(
         `/private-pool/${encodeURIComponent(privatePool!.poolId)}/leases`,
         {
           method: 'POST',
           body: JSON.stringify({
             country: body.country,
             carrier: body.carrier,
+            asn: body.asn,
             ipType: body.ipType,
+            city: body.city,
+            state: body.state,
             idleTtlSec: body.idleTtlSec,
             failover: body.failover,
           }),
@@ -707,6 +751,7 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
   const GET = async (req: Request): Promise<Response> => {
     const p = pathOf(req);
     if (p.endsWith('/me')) return handleMe(req);
+    if (p.endsWith('/usage')) return handleUsage(req);
     if (p.includes('/stock/carriers')) return handleCarrierStock(req);
     if (p.includes('/stock/cities')) return handleCities(req);
     if (p.includes('/stock/facets')) return handleFacets(req);
@@ -733,7 +778,7 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
             const idleTtlSec = Number(body.idleTtlSec);
             // The platform falls back to 1800 on a non-number, which would
             // silently change the customer's window to something they never
-            // picked — reject instead. (It still clamps to [600, 43200].)
+            // picked — reject instead. (It still clamps to [600, 86400].)
             if (!Number.isFinite(idleTtlSec)) {
               return json(
                 { error: 'invalid_idle_ttl', message: 'idleTtlSec must be a number of seconds.' },

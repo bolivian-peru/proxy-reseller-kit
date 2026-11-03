@@ -131,18 +131,16 @@ describe('<PoolPortal>', () => {
       '/stock': STOCK_FIXTURE,
       '/incidents': [
         {
-          id: 'inc1',
-          severity: 'minor',
-          title: 'Degraded DE pool',
-          description: 'Some endpoints offline',
-          startedAt: '2026-04-24T11:00:00Z',
-          affects: ['de'],
+          id: 'no-stock-ge',
+          severity: 'warning',
+          message: 'No GE stock currently online. Try another country or check back shortly.',
+          since: '2026-04-24T11:00:00Z',
         },
       ],
     });
     render(<PoolPortal apiRoute="/api/pool" />);
     await waitFor(() => {
-      expect(screen.getByText(/degraded de pool/i)).toBeInTheDocument();
+      expect(screen.getByText(/no ge stock currently online/i)).toBeInTheDocument();
     });
   });
 

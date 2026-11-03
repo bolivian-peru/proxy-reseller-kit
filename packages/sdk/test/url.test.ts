@@ -49,7 +49,7 @@ describe('buildProxyUrl', () => {
     expect(url).toContain('-mbl-us-carrier-att-city-nyc');
   });
 
-  it('appends the soft state/region token after city', () => {
+  it('appends the state/region token after city (both hard, peer-only filters)', () => {
     const url = buildProxyUrl(USER, KEY, {
       pool: 'peer',
       country: 'us',
@@ -94,7 +94,7 @@ describe('buildProxyUrl', () => {
     expect(() => buildProxyUrl(USER, KEY, { sid: 'x'.repeat(65) })).toThrow(ProxiesConfigError);
   });
 
-  it('accepts short / underscore sids (Atheris -sid- regression fix)', () => {
+  it('accepts short / underscore sids (reseller -sid- regression fix)', () => {
     // `t1` previously built a URL that 400'd at CONNECT because the old gateway
     // enforced an 8-char minimum. Both SDK and self-healing gateway now accept it.
     expect(buildProxyUrl(USER, KEY, { sid: 't1' })).toContain('-sid-t1');

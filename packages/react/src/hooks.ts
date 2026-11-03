@@ -222,14 +222,12 @@ export interface PoolLease {
   country: string;
   /** Verified access class of the held device. */
   ipType: 'mobile' | 'residential' | 'datacenter' | (string & {});
-  /** Resolved carrier/ISP display name, or `null` when the ASN is unnamed. */
+  /** Resolved carrier/ISP display name, or `'Unknown'` when the ASN is unnamed. */
   carrier: string | null;
-  /**
-   * The held exit IP, masked to a /16 by the platform (e.g. `85.12.x.x`). Full
-   * exit IPs are never returned by any endpoint — an enumerable exit IP is an
-   * IP-reputation liability for every customer on that device.
-   */
-  ipMasked: string | null;
+  /** Human city label of the CURRENT exit, or `null` while the device has no stable location. */
+  city?: string | null;
+  /** Upper-case ISO region/state of the current exit, or `null`. */
+  region?: string | null;
   /** Failover scope this lease was reserved with. Validated against the union platform-side. */
   failover: LeaseFailover;
   /** Idle window in seconds — the hold is released after this long with no traffic. */
@@ -242,6 +240,8 @@ export interface PoolLease {
   /** Full unauthenticated rotation URL, or `null`. Treat as a credential. */
   rotateUrl: string | null;
   lastRotatedAt: string | null;
+  /** Earliest time the next `rotate` is accepted (per-lease cooldown + hourly budget), or `null`. */
+  nextRotationEligibleAt?: string | null;
   /** `true` only when the device is online AND still held by this lease. */
   deviceOnline: boolean;
   /** Last time the platform saw traffic on this lease (drives the idle reaper). */
@@ -295,11 +295,17 @@ export interface PoolLeaseList {
 export interface AcquireLeaseInput {
   /** ISO-2 country, e.g. `'us'`. */
   country: string;
-  /** Soft carrier-name match, e.g. `'T-Mobile'`. Omit for any carrier. */
+  /** Carrier-name match, e.g. `'T-Mobile'`. Omit for any carrier. */
   carrier?: string;
-  /** Hard access-class filter. Omit for any class. */
+  /** Exact ASN match — the precise form of `carrier`. From the carrier stock entry. */
+  asn?: number;
+  /** Access-class filter. Omit for any class. */
   ipType?: 'mobile' | 'residential';
-  /** Idle window in seconds. Platform clamps to [600, 43200]. Default 900. */
+  /** City slug (from the cities/facets stock). Peer devices only. */
+  city?: string;
+  /** Region/state slug (from the cities/facets stock). Peer devices only. */
+  state?: string;
+  /** Idle window in seconds. Platform clamps to [600, 86400]. Default 86400 (24 h). */
   idleTtlSec?: number;
   /** Failover scope. Defaults to the pool's own default (usually `samecountry`). */
   failover?: LeaseFailover;

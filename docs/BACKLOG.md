@@ -22,11 +22,11 @@ acceptance criteria.
 
 ### Stale explicit-sid session auto-close
 
-**Source:** Coronium reply (2026‑05‑01) — production scrapers
+**Source:** reseller reply (2026‑05‑01) — production scrapers
 crashing mid-batch leave 50+ sticky sessions warm, customer hits the
 50-session-per-account cap before TTL evicts them.
 
-**Suggested shape (Coronium):**
+**Suggested shape (reseller):**
 
 ```
 DELETE /v1/gateway/pool/my-sessions?staleMinutes=15
@@ -65,11 +65,11 @@ client.sessions.closeStale({ olderThanMinutes: 15 }):
 `pak.*` events extending the existing `reseller-webhook` infrastructure.
 Full design at [`packages/sdk/docs/WEBHOOKS-DESIGN.md`](../packages/sdk/docs/WEBHOOKS-DESIGN.md).
 
-**Source:** Coronium 2026‑04‑30 audit (Block 2 from the original
+**Source:** reseller 2026‑04‑30 audit (Block 2 from the original
 production-readiness pass).
 
 **Status:** Design done, implementation deferred until 0.3.1+0.4.0
-have soaked at Coronium for 2-4 weeks. Re-evaluate around 2026‑05‑20.
+have soaked in production for 2-4 weeks. Re-evaluate around 2026‑05‑20.
 
 ---
 
@@ -78,11 +78,11 @@ have soaked at Coronium for 2-4 weeks. Re-evaluate around 2026‑05‑20.
 From the same 2026‑04‑30 audit:
 
 - `client.poolKeys.bulkUpdate(ids, patch)`
-- `client.poolKeys.usageHistory(keyId, { from, to, granularity })` — needs daily snapshot rollup table on the platform
+- ~~`client.poolKeys.usageHistory(keyId, …)`~~ — shipped as `poolKeys.usage(keyId, { days })` + `poolKeys.usageSummary()` in 0.14.0 (platform daily rollup, 90-day retention)
 - `ClientConfig.tenant` header for sub-reseller audit trails
 - `client.poolKeys.archive(keyId)` (soft-delete with audit retention)
 
-**Status:** Pending until Coronium hits 5K+ active keys (target Q3 2026).
+**Status:** Pending until a reseller hits 5K+ active keys (target Q3 2026).
 
 ---
 
@@ -114,12 +114,12 @@ If none fire by **2026-Q3**, revisit and decide whether to drop or push.
 
 | Item | Source | Notes |
 |---|---|---|
-| `<PoolPortalAdvanced>` wrapper | Coronium 0.4.0 reply | Compose `<PoolPortal> + <PoolSessionSpawner> + <ActiveSessionsTable>` in one block. Skipped in 0.4.0 — revisit when 2+ resellers ask. |
-| Cache TTL transparency in admin UI | Coronium 0.3.1 audit | Admin banner showing "auth cache: 30s valid / 10s invalid" so resellers know what to expect after flag changes. Trivial. |
-| Stable error `code` field in API responses | Coronium 0.3.1 audit (Bug 5) | Currently `requestId` is the only structured field; `code` would let receivers branch programmatically. |
-| Path namespace docs | Coronium 0.3.1 audit (Bug 4) | Add a "Routes" section to packages/sdk/README.md that maps every SDK method → API path. |
+| `<PoolPortalAdvanced>` wrapper | reseller 0.4.0 reply | Compose `<PoolPortal> + <PoolSessionSpawner> + <ActiveSessionsTable>` in one block. Skipped in 0.4.0 — revisit when 2+ resellers ask. |
+| Cache TTL transparency in admin UI | reseller 0.3.1 audit | Admin banner showing "auth cache: 30s valid / 10s invalid" so resellers know what to expect after flag changes. Trivial. |
+| Stable error `code` field in API responses | reseller 0.3.1 audit (Bug 5) | Currently `requestId` is the only structured field; `code` would let receivers branch programmatically. |
+| Path namespace docs | reseller 0.3.1 audit (Bug 4) | Add a "Routes" section to packages/sdk/README.md that maps every SDK method → API path. |
 | HMAC request signing | 2026‑04‑30 audit (Block 4) | Optional, not needed until a paying reseller asks. |
-| Public OpenAPI for reseller surface | 2026‑04‑30 audit | Today only Swagger UI behind basic auth. Useful when first non-Coronium reseller signs up. |
+| Public OpenAPI for reseller surface | 2026‑04‑30 audit | Partly done: `GET /v1/reseller/docs/openapi` + `/llm` are public but cover sub-accounts / ports / webhooks / analytics, not `/reseller/pool-keys/*`. The kit's endpoint tables remain the pool-keys reference. |
 
 ---
 
@@ -130,7 +130,7 @@ If none fire by **2026-Q3**, revisit and decide whether to drop or push.
 | 0.2.0 → 0.3.0 | Built-in retry, idempotency, requestId, `topUp()`, `get()` | 2026-05-01 |
 | 0.3.0 → 0.3.1 | `PoolStock` type fix + runtime validator, KnownCountry widened | 2026-05-01 |
 | 0.3.1 → 0.4.0 | Sessions API + `<PoolSessionSpawner>` + `<ActiveSessionsTable>` + 5-min synth TTL + `gw:` prefix DELETE bug | 2026-05-01 |
-| Partnership flag | Coronium `poolFreeBandwidth: true` | 2026-05-01 13:08 UTC |
+| Partnership flag | partner `poolFreeBandwidth: true` | 2026-05-01 13:08 UTC |
 | Gateway diagnostics | X-Request-ID in 407 body + structured E_* codes + bonus pak_ fallback message clarity | 2026-05-01 |
 
 Three round-trips in one day. Cadence to maintain.

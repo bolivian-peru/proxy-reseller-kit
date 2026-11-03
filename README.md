@@ -39,7 +39,7 @@ Long-form docs that don't belong inline with code live in the **[wiki](https://g
 - [Integration Paths](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Integration-Paths) — A/B/C/D decision tree
 - [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation) ⭐ — what "sticky" actually guarantees on mobile carriers
 - [Pak Key Lifecycle](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Pak-Key-Lifecycle) — mint, top-up, rotate, revoke
-- [Private Pool](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Private-Pool) — reserve dedicated modem or committed peer capacity (quote-based)
+- [Private Pool](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Private-Pool) — reserve dedicated modem or committed peer capacity (balance-funded instantly, or quote-based for reserved hardware)
 - [x402 and Wallet Setup](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup) — accept USDC from AI agents
 - [Troubleshooting](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Troubleshooting) — flat error catalog
 - [Glossary](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Glossary) — every term defined
@@ -125,12 +125,13 @@ tiers (-10% from 25 GB, -20% from 50 GB, -30% from 100 GB, -40% from 250 GB). **
 tier comes from the size of a single order, not a monthly total** — 25 orders of
 10 GB earn 0%; one order of 250 GB earns 40%. Billed only as used from the same GB
 balance that covers both pools ([full table](./docs/PRIVATE-POOL.md#pricing)). The only
-addition is a **monthly reservation fee**, quoted per country and pool size. Private
-Pool is quote-based, not instant checkout - reserving real devices needs a capacity
-check - so you configure and request at
-[client.proxies.sx/private-pool](https://client.proxies.sx/private-pool);
-availability and price are confirmed within about one business day, then the
-allocation is provisioned. Requesting never charges anything.
+addition is a **monthly reservation fee**, quoted per country and pool size. A pool
+funded from your existing account GB is built instantly at
+[client.proxies.sx/private-pool](https://client.proxies.sx/private-pool); an
+allocation of reserved hardware is quote-based - reserving real devices needs a
+capacity check - so you configure and request it on the same page, availability
+and price are confirmed within about one business day, then the allocation is
+provisioned. Requesting never charges anything.
 
 **Programmatic quality tier (v0.9.0+).** For a modem-only allocation you can
 self-provision without a capacity reservation, mint a `pak_` key with
@@ -181,7 +182,7 @@ Both share a **single backend layer** with one `ProxiesClient` instance (server-
 
 Why two: different audiences, different authz domains, different scale concerns, **catastrophically different failure modes** if you mix them (admin bug = regression; customer bug exposing other customers = P0 data leak).
 
-**Full pattern with concrete examples and a Coronium-style reference architecture: [`docs/TWO-SIDED-DASHBOARD.md`](./docs/TWO-SIDED-DASHBOARD.md).**
+**Full pattern with concrete examples and a production reference architecture: [`docs/TWO-SIDED-DASHBOARD.md`](./docs/TWO-SIDED-DASHBOARD.md).**
 
 ---
 
@@ -440,9 +441,13 @@ Endpoints (`X-API-Key` auth, [`psx_` keys minted at client.proxies.sx/account](h
 | `PATCH` | `/v1/reseller/pool-keys/:id` | Update label / cap / enabled / expiresAt |
 | `POST` | `/v1/reseller/pool-keys/:id/topup` | Atomic cap+expiry extension (v0.3.0+) |
 | `POST` | `/v1/reseller/pool-keys/:id/regenerate` | Rotate secret. Returns full record from v0.3.0 |
+| `POST` | `/v1/reseller/pool-keys/:id/reveal` | Audit-logged unmask of the `pak_` (v0.5.0+) |
+| `GET` | `/v1/reseller/pool-keys/audit`, `/:id/audit` | 90-day forensic log, all keys / one key (v0.5.0+) |
+| `GET` | `/v1/reseller/pool-keys/:id/usage?days=30` | Per-day MB series for one key — the customer's chart (v0.14.0+) |
+| `GET` | `/v1/reseller/analytics/pak-usage?days=30` | Daily GB across all keys + per-key breakdown (v0.14.0+, `traffic:read`) |
 | `DELETE` | `/v1/reseller/pool-keys/:id` | Delete |
 
-The table above is the full pool-keys surface — there is no public OpenAPI document for it (`/docs/api` and `/docs/seller` are basic-auth gated and 403 anonymously). The publicly readable spec is [api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway) (Pool Gateway API — Private Pool leases, x402 pool).
+The table above is the full pool-keys surface. API keys need the scopes `customers:read` + `customers:write` (pool-keys), `ports:read` + `ports:write` (live sessions) and `traffic:read` (pak-usage), on an account that already holds the reseller role. The public reseller spec at [api.proxies.sx/v1/reseller/docs/openapi](https://api.proxies.sx/v1/reseller/docs/openapi) covers the sub-account / port / webhook surface and does not list these routes; the interactive Swagger UIs (`/docs/api`, `/docs/seller`) answer 401 anonymously. Also public: [api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway) (Pool Gateway API — Private Pool leases, x402 pool).
 
 **v0.3.0 production-readiness features:**
 - `Idempotency-Key` header on writes — dedupes retries within 24h. Critical for webhook handlers and payment flows.
@@ -598,12 +603,12 @@ A: A `schema.sql` file is readable by anyone who knows SQL. There's no generated
 A: Stripe is the default rail in `apps/starter/` because it's what most resellers want for human customers. For **AI-agent customers**, you can accept USDC via x402 today — see [`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md). Both rails run side-by-side in the same app, settling into the same `psx_` account balance.
 
 **Q: Can I use this without being a Proxies.sx reseller?**
-A: You need a Proxies.sx reseller API key to mint `pak_` sub-keys. Sign up at [client.proxies.sx](https://client.proxies.sx), upgrade to reseller access (email us), then mint an API key.
+A: You need a Proxies.sx reseller API key to mint `pak_` sub-keys. Sign up at [client.proxies.sx](https://client.proxies.sx), ask us to enable reseller access on the account (it is granted by an admin, not self-serve), then mint an API key with the scopes listed above.
 
 **Q: What's my cost structure?**
 A: You pay Proxies.sx wholesale (current rates + volume tiers in your [client.proxies.sx](https://client.proxies.sx) dashboard). You set your retail price. Typical markups on resold mobile proxies are 2–5×. Stripe takes 2.9% + 30¢ per transaction on top.
 
-Larger resellers can negotiate custom wholesale pricing. The published $4/GB base and volume tiers are the self-serve rates. If you are moving serious volume or want committed pricing, contact us to arrange a custom wholesale rate that beats the standard tiers.
+Larger resellers can negotiate custom wholesale pricing. The published $4/GB base and volume tiers are the self-serve list rates (plus the country-tier burn published in `GET /v1/gateway/pool/stock` → `pricing`); your wholesale rate is per agreement and is not published by any endpoint. If you are moving serious volume or want committed pricing, contact us.
 
 **Q: Can I fork and re-brand without attribution?**
 A: Yes — MIT license. Do whatever you want. No attribution required.
