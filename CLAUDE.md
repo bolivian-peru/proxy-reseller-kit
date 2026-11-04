@@ -1,6 +1,6 @@
 # CLAUDE.md — proxy-reseller-kit
 
-> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](docs/SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](docs/SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. The lifecycle APIs are verified deployed in backend r86; package installation alone does not establish provider deployment. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
 
 **Explicitly choose `pool`; do not rely on the SDK mobile-pool default.**
 URL builders default to `mbl`; choose `peer` for the shared SDK network,
@@ -111,8 +111,8 @@ The SDK matured from 0.2.0 (stable surface, no retry, type-loose) to
 0.3.1 (production-ready). When generating example code or migrations,
 default to these patterns:
 
-- **Retry on by default.** `new ProxiesClient({ retry: { attempts, baseDelayMs, maxDelayMs } })` — fires on 5xx/429/timeouts/network with full jitter, honors `Retry-After`. Skips 4xx (except 429). Pass `retry: false` to disable. **Never** wrap your own retry around SDK calls — it causes thundering herd.
-- **Idempotency-Key on writes.** `create({ ..., idempotencyKey })`, `topUp(id, { ..., idempotencyKey })`, `regenerate(id, { idempotencyKey })`. Tie the key to a domain object (Stripe event id, ledger id, invoice id) — never `randomUUID()` inline at retry time. The candidate durable journal has no TTL; verify its release before relying on it. The older nominal 24-hour cache had concurrent/crash gaps. After an ambiguous write, inspect the saved operation rather than repeat it; see `docs/SHARED-POOL-CONTRACT.md`.
+- **Read retries on by default.** `new ProxiesClient({ retry: { attempts, baseDelayMs, maxDelayMs } })` retries eligible reads on 5xx/429/timeouts/network with jitter and `Retry-After`. Pass `retry: false` to disable. SDK 0.15.0 makes one attempt for shared-pool key and binding mutations, even with an idempotency key. Do not add an automatic mutation retry wrapper.
+- **Idempotency-Key on writes.** `create({ ..., idempotencyKey })`, `topUp(id, { ..., idempotencyKey })`, `regenerate(id, { idempotencyKey })`. Tie the key to a domain object (Stripe event id, ledger id, invoice id) — never `randomUUID()` inline at retry time. The durable lifecycle journal deployed in backend r86 has no TTL. The older nominal 24-hour cache had concurrent/crash gaps. After an ambiguous write, inspect the saved operation rather than repeat it; see `docs/SHARED-POOL-CONTRACT.md`.
 - **Top-up via `poolKeys.topUp()`** (not `update()`). Server-side atomic single-write: `addTrafficGB` is `$inc`-d, `extendDays` extends from `max(now, current_expiresAt)` (never shortens). Replaces the read-modify-write race.
 - **`poolKeys.get(id)`** for single-record fetch. Don't `list()` + filter on a known id.
 - **`ProxiesApiError.requestId`** is populated from the `X-Request-ID` response header. Log it on every error path; paste in support tickets to skip log-grepping.

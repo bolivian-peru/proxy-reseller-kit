@@ -476,11 +476,11 @@ Endpoints (`X-API-Key` auth, [`psx_` keys minted at client.proxies.sx/account](h
 | `GET` | `/v1/reseller/pool-keys/:id/usage?days=30` | Per-day MB series for one key — the customer's chart (v0.14.0+) |
 | `GET` | `/v1/reseller/analytics/pak-usage?days=30` | Daily GB across all keys + per-key breakdown (v0.14.0+, `traffic:read`) |
 | `DELETE` | `/v1/reseller/pool-keys/:id` | Remove key; not immediate socket termination |
-| `GET` | `/v1/reseller/pool-keys/operations/lookup` | Candidate: read by saved `Idempotency-Key` header |
-| `GET` | `/v1/reseller/pool-keys/operations/:operationId` | Candidate: secret-free original operation evidence |
-| `POST` | `/v1/reseller/pool-keys/:id/resume` | Candidate: conditional sole-cap-hold resume with `{ expectedLifecycleVersion }` |
+| `GET` | `/v1/reseller/pool-keys/operations/lookup` | Deployed in backend r86: read by saved `Idempotency-Key` header |
+| `GET` | `/v1/reseller/pool-keys/operations/:operationId` | Deployed in backend r86: secret-free original operation evidence |
+| `POST` | `/v1/reseller/pool-keys/:id/resume` | Deployed in backend r86: conditional sole-cap-hold resume with `{ expectedLifecycleVersion }` |
 
-The candidate rows require the serving lifecycle release shown in the [contract](docs/SHARED-POOL-CONTRACT.md); SDK publication alone does not enable them. API keys need the scopes `customers:read` + `customers:write` (pool-keys), `ports:read` + `ports:write` (live sessions) and `traffic:read` (pak-usage), on an account that already holds the reseller role. The public reseller spec at [api.proxies.sx/v1/reseller/docs/openapi](https://api.proxies.sx/v1/reseller/docs/openapi) covers the sub-account / port / webhook surface and does not list these routes; the interactive Swagger UIs (`/docs/api`, `/docs/seller`) answer 401 anonymously. Also public: [api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway) (Pool Gateway API — Private Pool leases, x402 pool).
+The lifecycle routes were verified deployed on 4 November 2026, as recorded in the [contract](docs/SHARED-POOL-CONTRACT.md). Use SDK 0.15.0 for the corresponding client methods; SDK publication alone does not establish provider deployment. API keys need the scopes `customers:read` + `customers:write` (pool-keys), `ports:read` + `ports:write` (live sessions) and `traffic:read` (pak-usage), on an account that already holds the reseller role. The public reseller spec at [api.proxies.sx/v1/reseller/docs/openapi](https://api.proxies.sx/v1/reseller/docs/openapi) covers the sub-account / port / webhook surface and does not list these routes; the interactive Swagger UIs (`/docs/api`, `/docs/seller`) answer 401 anonymously. Also public: [api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway) (Pool Gateway API — Private Pool leases, x402 pool).
 
 **v0.3.0 production-readiness features:**
 - Persist `Idempotency-Key` and immutable intent before writes. Shared-pool mutations make one SDK attempt; reconcile uncertain outcomes using the [shared-pool contract](docs/SHARED-POOL-CONTRACT.md). Payment settlement and provider fulfilment remain separate effects.
