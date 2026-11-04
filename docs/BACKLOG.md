@@ -1,5 +1,7 @@
 # proxy-reseller-kit — Roadmap & open requests
 
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+
 Tracking deferred features so they don't fall on the floor between
 round-trips. Each entry includes the source, target version, and
 acceptance criteria.
@@ -11,7 +13,7 @@ acceptance criteria.
 - **0.5.0 — Pool Access Key security hardening** (2026‑05‑01). Three
   new SDK methods (`reveal`, `audit`, `auditForKey`) tracking the
   platform's pak_ security update. Auto-suspend on cap exceeded means
-  consumer auto-topup flows must explicit `update({ enabled: true })`
+  shared-key top-ups leave disabled keys disabled; a separate reviewed conditional resume must check current quota, expiry, account and holds
   after `topUp` — starter app webhook updated. `RotationMode` widened
   to include `auto5 / auto20 / auto60 / ondemand` (was missing,
   caused typecheck errors). See SDK CHANGELOG.

@@ -1,5 +1,7 @@
 # Migration — DSL completeness release
 
+**Choose the pool explicitly in every connection setup.** Do not rely on the SDK's `mbl` default; use the intended pool and matching stock scope. See [pool selection](./USERNAME-DSL.md#choose-the-pool-explicitly), including residential-only filtering and the `safe` PAK override.
+
 > Covers the release that closes the gap between what `buildProxyUrl` could
 > emit and what the Pool Gateway parser actually accepts, plus the
 > documentation correction pass that shipped alongside it. The version number
@@ -86,11 +88,11 @@ changes. If you construct ids yourself, normalise before calling:
 
 ```ts
 // Before — silently produced a broken pin
-buildProxyUrl(u, k, { pin: { type: 'device', id: rawId } });
+buildProxyUrl(u, k, { pool: 'peer', pin: { type: 'device', id: rawId } });
 
 // After — fail fast, or normalise deliberately
 const id = rawId.toLowerCase().replace(/[^a-z0-9_]/g, '');
-buildProxyUrl(u, k, { pin: { type: 'device', id } });
+buildProxyUrl(u, k, { pool: 'peer', pin: { type: 'device', id } });
 ```
 
 Wrap the call in a `try`/`catch` for `ProxiesConfigError` if you feed it

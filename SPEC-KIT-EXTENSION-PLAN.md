@@ -1,5 +1,7 @@
 # Spec-Kit Extension Plan — `spec-kit-proxy-reseller-kit`
 
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](docs/SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+
 > **Status:** Design proposal. Do not implement before 0.7.x.
 > **Author:** Proxies.sx engineering, 2026-05-03
 > **Pairs with:** `create-pool-portal` (Phase 2 CLI scaffold, also unbuilt)
@@ -54,9 +56,9 @@ If none of these by **2026-Q3**, revisit and decide whether to drop the plan or 
 | Command | Effect | Read/Write | Audience |
 |---|---|---|---|
 | `/poolkit.scaffold` | Walks the user through "name your brand, pick countries, pick payment provider" → outputs a configured starter app (clone of `apps/starter/` with config baked in). | Read+Write | New reseller, greenfield project |
-| `/poolkit.add-payment` | Adds Stripe / Paddle / USDT to an existing portal. Wires the webhook handler with idempotency + auto-suspend re-enable already correct. | Read+Write | Existing reseller, new payment rail |
+| `/poolkit.add-payment` | Adds Stripe / Paddle / USDT to an existing portal. Wires the webhook handler with durable intent, read-only recovery and a separate reviewed conditional resume; verify the actual implementation before claiming readiness. | Read+Write | Existing reseller, new payment rail |
 | `/poolkit.add-pak-key-flow` | Generates a complete mint → assign → display (masked + reveal-on-demand) → rotate flow with all 0.5.0 security defaults baked in. | Read+Write | Reseller adding pak_ management to a non-Next.js app (Express, Fastify, Hono) |
-| `/poolkit.upgrade` | Detects pre-0.5.0 integration patterns (`topUp` without `update({enabled:true})`, full pak_ value in customer dashboard, missing `Idempotency-Key` on writes, etc.) and applies fixes with explanations. | Read+Write | Reseller on old SDK |
+| `/poolkit.upgrade` | Detects pre-0.5.0 integration patterns (automatic resume from top-up/sync, missing ownership checks, missing persisted operation intent, unsafe mutation retries, etc.) and applies fixes with explanations. | Read+Write | Reseller on old SDK |
 | `/poolkit.audit-integration` | Read-only health check. Verifies the reseller's integration follows current best practices. Reports diffs against the canonical patterns from `apps/starter/`. | Read-only | Any reseller, periodically |
 | `/poolkit.add-webhook` | Generates the reseller's HTTP handler for `pak.*` webhook events (when Block 2 ships in 0.5.x platform). HMAC verification + replay protection + idempotency. | Read+Write | Reseller wanting reactive UX (cap warning emails, etc.) |
 | `/poolkit.add-customer-dash` | Drops in the customer-facing React components (`<PoolPortal>`, `<PoolSessionSpawner>`, `<ActiveSessionsTable>`, etc.) into an existing React app. | Read+Write | Reseller with existing customer-facing app, just adding the proxy section |

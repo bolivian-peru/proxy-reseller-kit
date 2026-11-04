@@ -1,5 +1,7 @@
 # White-Labeling the Gateway (hide `gw.proxies.sx`)
 
+**Choose the pool explicitly in every connection setup.** Do not rely on the SDK's `mbl` default; use the intended pool and matching stock scope. See [pool selection](./USERNAME-DSL.md#choose-the-pool-explicitly), including residential-only filtering and the `safe` PAK override.
+
 Your customers never need to see `gw.proxies.sx`. The Pool Gateway is a plain
 TCP/HTTP(S) proxy on ports **7000** (HTTP) and **7001** (SOCKS5) — it accepts a
 connection on its IP regardless of the hostname the client used, and auth lives
@@ -44,9 +46,10 @@ createPoolApiHandlers({ proxies, getSessionUserId, getUserKeyId,
 // SDK client → buildProxyUrl()
 new ProxiesClient({ apiKey, proxyUsername, gatewayHost: 'proxy.yourbrand.com' });
 
-// React components that render connection strings
+// React components: these examples deliberately use modem routing.
+// PakQuickstart and PoolDocsPanel have fixed mbl examples, with no pool prop.
 <PakQuickstart      gatewayHost="proxy.yourbrand.com" ... />
-<PoolSessionSpawner gatewayHost="proxy.yourbrand.com" ... />
+<PoolSessionSpawner defaultPool="mbl" gatewayHost="proxy.yourbrand.com" ... />
 <PoolDocsPanel      gatewayHost="proxy.yourbrand.com" ... />
 ```
 

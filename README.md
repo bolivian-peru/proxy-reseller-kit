@@ -2,6 +2,18 @@
 
 # proxy-reseller-kit
 
+**Explicitly choose `pool`; do not rely on the SDK mobile-pool default.**
+URL builders default to `mbl`; choose `peer` for the shared SDK network,
+`peer` plus `ipType: 'residential'` for residential-only routing, or `any` only
+when mixed pools are intended. A `qualityTier: 'safe'` PAK forces `mbl`.
+Keep discovery and generated connections on the same chosen pool.
+See [pool selection](./docs/USERNAME-DSL.md#choose-the-pool-explicitly) before copying examples.
+
+**Release status:** exact binding reads, conditional release, durable operation lookup
+and conditional resume below are candidates until the [release table](docs/SHARED-POOL-CONTRACT.md)
+confirms deployment and package publication. Client code alone does not release
+a provider contract.
+
 **Open-source reseller toolkit for the Proxies.sx Pool Gateway.**
 **Ship a branded mobile-proxy business in an afternoon — or embed mobile proxies into any app, in any language.**
 
@@ -101,7 +113,7 @@ curl -x http://psx_xxx-any-us:pak_xxx@gw.proxies.sx:7000 https://api.ipify.org
 
 **Per-pool country stock differs.** A country can have modems but no peers, or the reverse. Filter your country picker by the selected pool — `<PoolStockGrid>` and `<PoolSessionSpawner>` model this; live counts (never IPs) come from `GET /v1/gateway/pool/availability`.
 
-The reseller kit exposes the pool toggle in `<PoolSessionSpawner>` and `<PoolDocsPanel>`; if you build your own UI, include the token when constructing the username via `buildProxyUrl` / `buildProxyString` (see `@proxies-sx/pool-sdk`).
+The reseller kit exposes the pool toggle in `<PoolSessionSpawner>`; `<PoolPortal>` accepts a `pool` prop, while `<PoolDocsPanel>` has a fixed `mbl` curl example; if you build your own UI, include the token when constructing the username via `buildProxyUrl` / `buildProxyString` (see `@proxies-sx/pool-sdk`).
 
 **Which pool for sticky-IP workflows?** Sticky pins the **device**, not the IP — mobile carriers re-NAT egress IPs even on a held modem (the gateway weights IP-stability when selecting, but the carrier has the final say). For workflows needing a held IP (cf_clearance, banking, mTLS bound to source IP): use `-peer-` with `-rot-sticky`, add the `strict` flag for a hard stability floor, or lease a **[Reserved IP](./docs/RESERVED-IPS.md)** for an exclusively held device. Full token semantics: **[`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md)**. Layer-1-vs-Layer-2 explanation: [Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
@@ -178,13 +190,29 @@ Most production resellers ship **TWO dashboards**, not one:
 
 Both share a **single backend layer** with one `ProxiesClient` instance (server-side, holds your `psx_` API key). Admin routes call SDK methods directly; customer routes go through `createPoolApiHandlers()`, which scopes `/me` and `/regenerate` to the caller via `getUserKeyId`.
 
-> **Multi-tenant note:** the `/my-sessions` routes from `createPoolApiHandlers()` have been per-customer scoped since **0.6.0** (they thread the caller's `pakId` via `getUserKeyId`), so they are safe to mount on a customer dashboard. Only pinned-to-0.5.x installs are affected — `npm i @proxies-sx/pool-portal-react@latest` and confirm with `npm view @proxies-sx/pool-portal-react version`.
+> **Multi-tenant requirement:** resolve ownership with `getUserKeyId` and pass the stored `pakId` on every session request. SDK scoping introduced in 0.6.0 does not by itself establish provider authorization or PAK-isolated bindings. Verify the [provider release table](docs/SHARED-POOL-CONTRACT.md), preserve truncated/unknown observations, and use generation-conditioned release when that contract is deployed. Do not expose the unscoped 0.5.x routes to customers.
 
 Why two: different audiences, different authz domains, different scale concerns, **catastrophically different failure modes** if you mix them (admin bug = regression; customer bug exposing other customers = P0 data leak).
 
 **Full pattern with concrete examples and a production reference architecture: [`docs/TWO-SIDED-DASHBOARD.md`](./docs/TWO-SIDED-DASHBOARD.md).**
 
 ---
+
+## Starter payment-delivery gate
+
+`apps/starter` is a checkout/integration demonstration, **not production payment
+fulfillment**. It currently records a purchase before provider delivery finishes.
+If create/top-up or local persistence then fails, a repeated Stripe callback can
+find the purchase marker and skip the unfinished delivery. A payment record is
+not proof that the customer received the allowance.
+
+Before taking live payments with the starter, implement durable delivery states,
+serialized provider intents, read-only recovery of uncertain effects and a
+restart-safe reconciliation worker. Track the required tests and migration in
+[issue #4](https://github.com/bolivian-peru/proxy-reseller-kit/issues/4).
+The provider operation journal and SDK update alone do not implement this local
+workflow. Custom integrations, including Portproof, do not use this starter and
+must be assessed against their own code and deployment.
 
 ## Pick an integration path
 
@@ -265,8 +293,10 @@ pak. Whatever else you build, **verify the result routes before shipping it**:
 curl -x "http://<username>:<pak>@gw.proxies.sx:7000" https://api.ipify.org
 ```
 
-**2. Drop in `<PakQuickstart>`** — React component that renders a 30-second
-curl, country picker, sticky toggle, copy buttons, and SOCKS5 / Python / Node /
+**2. For modem onboarding, drop in `<PakQuickstart>`** — this component hardcodes
+`mbl` and has no pool-selection prop. For peers use the SDK above or an
+explicitly configured `<PoolPortal pool="peer" ... />` / `<PoolSessionSpawner defaultPool="peer" ... />`.
+The quickstart renders a card with curl, country picker, sticky toggle, copy buttons, and SOCKS5 / Python / Node /
 Playwright snippets:
 
 ```tsx
@@ -376,7 +406,7 @@ npm install @proxies-sx/pool-portal-react @proxies-sx/pool-sdk
 import { PoolPortal } from '@proxies-sx/pool-portal-react';
 import '@proxies-sx/pool-portal-react/styles.css';
 
-<PoolPortal apiRoute="/api/pool" branding={{ name: 'AcmeProxies' }} />
+<PoolPortal pool="mbl" apiRoute="/api/pool" branding={{ name: 'AcmeProxies' }} />
 ```
 
 Plus one API route (`app/api/pool/[...path]/route.ts`) — see the [React package README](./packages/react/README.md).
@@ -401,7 +431,7 @@ const key = await proxies.poolKeys.create({
   trafficCapGB: 10,
   expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString(),
 });
-const url = proxies.buildProxyUrl(key.key, { country: 'us', rotation: 'sticky' });
+const url = proxies.buildProxyUrl(key.key, { pool: 'peer', country: 'us', rotation: 'sticky' });
 ```
 
 Details: [SDK README](./packages/sdk/README.md). Time-bounded credits via `expiresAt` are documented in [SKILL.md](./SKILL.md#time-bounded-credits-with-expiresat-v020).
@@ -445,15 +475,18 @@ Endpoints (`X-API-Key` auth, [`psx_` keys minted at client.proxies.sx/account](h
 | `GET` | `/v1/reseller/pool-keys/audit`, `/:id/audit` | 90-day forensic log, all keys / one key (v0.5.0+) |
 | `GET` | `/v1/reseller/pool-keys/:id/usage?days=30` | Per-day MB series for one key — the customer's chart (v0.14.0+) |
 | `GET` | `/v1/reseller/analytics/pak-usage?days=30` | Daily GB across all keys + per-key breakdown (v0.14.0+, `traffic:read`) |
-| `DELETE` | `/v1/reseller/pool-keys/:id` | Delete |
+| `DELETE` | `/v1/reseller/pool-keys/:id` | Remove key; not immediate socket termination |
+| `GET` | `/v1/reseller/pool-keys/operations/lookup` | Candidate: read by saved `Idempotency-Key` header |
+| `GET` | `/v1/reseller/pool-keys/operations/:operationId` | Candidate: secret-free original operation evidence |
+| `POST` | `/v1/reseller/pool-keys/:id/resume` | Candidate: conditional sole-cap-hold resume with `{ expectedLifecycleVersion }` |
 
-The table above is the full pool-keys surface. API keys need the scopes `customers:read` + `customers:write` (pool-keys), `ports:read` + `ports:write` (live sessions) and `traffic:read` (pak-usage), on an account that already holds the reseller role. The public reseller spec at [api.proxies.sx/v1/reseller/docs/openapi](https://api.proxies.sx/v1/reseller/docs/openapi) covers the sub-account / port / webhook surface and does not list these routes; the interactive Swagger UIs (`/docs/api`, `/docs/seller`) answer 401 anonymously. Also public: [api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway) (Pool Gateway API — Private Pool leases, x402 pool).
+The candidate rows require the serving lifecycle release shown in the [contract](docs/SHARED-POOL-CONTRACT.md); SDK publication alone does not enable them. API keys need the scopes `customers:read` + `customers:write` (pool-keys), `ports:read` + `ports:write` (live sessions) and `traffic:read` (pak-usage), on an account that already holds the reseller role. The public reseller spec at [api.proxies.sx/v1/reseller/docs/openapi](https://api.proxies.sx/v1/reseller/docs/openapi) covers the sub-account / port / webhook surface and does not list these routes; the interactive Swagger UIs (`/docs/api`, `/docs/seller`) answer 401 anonymously. Also public: [api.proxies.sx/docs/gateway](https://api.proxies.sx/docs/gateway) (Pool Gateway API — Private Pool leases, x402 pool).
 
 **v0.3.0 production-readiness features:**
-- `Idempotency-Key` header on writes — dedupes retries within 24h. Critical for webhook handlers and payment flows.
+- Persist `Idempotency-Key` and immutable intent before writes. Shared-pool mutations make one SDK attempt; reconcile uncertain outcomes using the [shared-pool contract](docs/SHARED-POOL-CONTRACT.md). Payment settlement and provider fulfilment remain separate effects.
 - `X-Request-ID` returned on every response — paste in support tickets to skip log-grepping.
 - `POST /:id/topup` — atomic single-write that does cap `$inc` and extends `expiresAt = max(now, current) + days`.
-- SDK adds built-in retry (3 attempts, exp + jitter, honors `Retry-After`). Disable with `retry: false`.
+- Reads use bounded retries and honor `Retry-After`; shared-key and binding mutations make one attempt. Disable read retries with `retry: false`.
 
 Migration guide for existing v0.2.0 integrations: [docs/MIGRATION-0.3.0.md](./docs/MIGRATION-0.3.0.md).
 
@@ -563,7 +596,8 @@ Details: [apps/starter/README.md](./apps/starter/README.md).
 
 ## Security
 
-This repo takes security seriously. Every release is audited to ensure:
+Verify these controls in your deployed application; this list is not a claim that
+every release has passed an independent audit:
 
 - ✅ **No secrets are ever committed.** Only `.env.example` with placeholders.
 - ✅ **SQL is parameterized** — `pg` `$1` placeholders, never string interpolation.

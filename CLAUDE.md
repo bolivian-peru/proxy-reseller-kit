@@ -1,5 +1,14 @@
 # CLAUDE.md — proxy-reseller-kit
 
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](docs/SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+
+**Explicitly choose `pool`; do not rely on the SDK mobile-pool default.**
+URL builders default to `mbl`; choose `peer` for the shared SDK network,
+`peer` plus `ipType: 'residential'` for residential-only routing, or `any` only
+when mixed pools are intended. A `qualityTier: 'safe'` PAK forces `mbl`.
+Keep discovery and generated connections on the same chosen pool.
+See [pool selection](./docs/USERNAME-DSL.md#choose-the-pool-explicitly) before copying examples.
+
 > Reading this means you're an AI agent (Claude Code, Cursor, etc.) helping a human build on top of the Proxies.sx Pool Gateway. This file tells you everything you need to know without having to read source. Treat it as authoritative.
 
 ## What this project is
@@ -103,7 +112,7 @@ The SDK matured from 0.2.0 (stable surface, no retry, type-loose) to
 default to these patterns:
 
 - **Retry on by default.** `new ProxiesClient({ retry: { attempts, baseDelayMs, maxDelayMs } })` — fires on 5xx/429/timeouts/network with full jitter, honors `Retry-After`. Skips 4xx (except 429). Pass `retry: false` to disable. **Never** wrap your own retry around SDK calls — it causes thundering herd.
-- **Idempotency-Key on writes.** `create({ ..., idempotencyKey })`, `topUp(id, { ..., idempotencyKey })`, `regenerate(id, { idempotencyKey })`. Tie the key to a domain object (Stripe event id, ledger id, invoice id) — never `randomUUID()` inline at retry time. Platform dedupes within 24h.
+- **Idempotency-Key on writes.** `create({ ..., idempotencyKey })`, `topUp(id, { ..., idempotencyKey })`, `regenerate(id, { idempotencyKey })`. Tie the key to a domain object (Stripe event id, ledger id, invoice id) — never `randomUUID()` inline at retry time. The candidate durable journal has no TTL; verify its release before relying on it. The older nominal 24-hour cache had concurrent/crash gaps. After an ambiguous write, inspect the saved operation rather than repeat it; see `docs/SHARED-POOL-CONTRACT.md`.
 - **Top-up via `poolKeys.topUp()`** (not `update()`). Server-side atomic single-write: `addTrafficGB` is `$inc`-d, `extendDays` extends from `max(now, current_expiresAt)` (never shortens). Replaces the read-modify-write race.
 - **`poolKeys.get(id)`** for single-record fetch. Don't `list()` + filter on a known id.
 - **`ProxiesApiError.requestId`** is populated from the `X-Request-ID` response header. Log it on every error path; paste in support tickets to skip log-grepping.
@@ -197,10 +206,11 @@ order the build.
 0a. **A cross-package contract must name an owner for every file it touches.** The `-pin-lease-` rollout nearly shipped backend-first while nobody owned `username-parser.ts`, whose `PinConfig` lacked `'lease'` — and the parser **drops an unknown pin type silently**. Every Reserved-IP credential would have routed to a random shared exit while reporting `200`. When a change spans gateway + backend + SDK, enumerate the files first and assign each one.
 
 1. `buildProxyUrl()` output MUST be URL-encoded — username/password may contain `@`/`:` in the user's `sid` token.
-2. `pak_` keys regenerated via `regenerate()` invalidate the old value at the **platform** immediately, but the gateway caches auth results for **up to 30 s** (`CACHE_TTL_MS = 30000`, `gateway/src/auth/http-auth.ts`), keyed on `accountId:password`. So the old secret keeps authenticating **new** connections for up to 30 s after you rotate, and connections already established are **not** torn down — an in-flight tunnel runs until it closes on its own. Treat rotation as "leaked key stops working within ~30 s", never as an instant kill-switch. If the backend is unreachable the gateway additionally serves last-known-good auth for `GW_AUTH_GRACE_MS` (default 15 min) — a real `valid:false` is always honoured, but a *stale-cached* pass can outlive the rotation during an outage. For an immediate hard stop, `update(id, { enabled: false })` has the same 30 s cache floor, so also close the sessions (`client.sessions.closeAll({ pakId })`).
+2. Regeneration changes the stored secret; authentication caches, outage grace and tunnel rechecks mean there is no fixed old-password or socket-cutoff deadline. Persist the operation before dispatch. After response loss, read the current scoped key and recover local delivery without regenerating again. Binding release does not terminate existing sockets or revoke exported URLs. Shared-key disables and resumes follow the current hold/version contract in `docs/SHARED-POOL-CONTRACT.md`.
+
 3. `trafficCapGB` must be a **whole number ≥ 1** for an ordinary reseller, and it is checked in two places. **The DTO runs first** (`src/reseller/dto/`): `@IsInt() @Min(1) @Max(100_000)` — so `0.5`, `0.1`, or any fraction is a `400` for *everyone*, partner accounts included. **Then `assertCapAllowed()`** (`src/reseller/services/reseller-pool-access-key.service.ts`) applies the business rule: `null`/omitted means "unlimited" and is **partner-only**, rejected with `400 "An unlimited pool-access-key requires a partner account. Set a GB cap for this key."` unless the account has `poolFreeBandwidth` or the `admin` role, and a finite cap must satisfy `0 < cap <= RESELLER_MAX_PAK_CAP_GB` (default **1000**) or you get `400 "Pool-access-key GB cap must be between 1 and N"`. `0` is rejected by both, so there is no "blocked" sentinel — use `enabled: false` to disable a key. **The practical consequence: 1 GB is the smallest sellable slice.** If your product sells fractions of a GB, track that in your own ledger and still mint the pak at a whole number.
 4. `expiresAt: null` means "never expires." Setting a Date or ISO string in the past is rejected by the platform — use `enabled: false` to disable a key, not a past date.
-5. Expiry is enforced **inline on every auth** by the platform (`src/gateway/gateway.service.ts` compares `pak.expiresAt` to now), not by a scheduled job — the nightly 03:30 UTC cron only flips `enabled = false` for tidier admin queries, and revocation does not depend on it. Subject to the same 30 s auth cache as invariant 2, so the practical rejection window is "within 30 s of the expiry instant", not the exact second.
+5. Expiry is enforced **inline on every auth** by the platform (`src/gateway/gateway.service.ts` compares `pak.expiresAt` to now), not by a scheduled job — the nightly 03:30 UTC cron only flips `enabled = false` for tidier admin queries, and revocation does not depend on it. Authentication caches, outage grace and existing-tunnel rechecks can delay enforcement; no fixed rejection deadline is promised.
 6. The SDK never caches responses. Callers who need caching layer it themselves (React Query, SWR, etc.).
 
 ## Common agent tasks (continued)
@@ -216,7 +226,7 @@ order the build.
 
 **Compensating controls** (so the SDK isn't the weak link): per-key rate limit (passport-strategy enforced, plus 30 req/min on mint and reveal), the scope gate (`customers:read` / `customers:write`, see the table above), the role gate (`ResellerOnlyGuard`), and a 90-day audit log on every mutation that records `ip`, `userAgent`, `requestId`, and `authMethod: 'apiKey'`.
 
-**Auto-suspend on cap**: when a `pak_`'s `trafficUsedMB / 1024 >= trafficCapGB`, the platform flips `enabled = false` automatically and records `auto_suspended_cap_exceeded`. The SDK's `topUp()` extends the cap but does NOT auto re-enable — callers must explicitly `update(id, { enabled: true })` to bring a suspended key back online. This is by design: a leaked key that auto-recovered would defeat the suspend.
+**Auto-suspend on cap**: top-up preserves current usage and all holds, and never resumes a disabled key. Routine synchronization and payment callbacks must not send `enabled:true`. After authorized reconciliation of raw quota, expiry, account eligibility and independent holds, the candidate conditional resume can release a sole cap hold at the expected lifecycle version. Unknown legacy disables require review; see the release-gated contract.
 
 **Reveal + audit endpoints (shipped in the SDK since 0.5.x):**
 - `client.poolKeys.reveal(id)` — audit-logged unmask (`POST /pool-keys/:id/reveal`). Returns same shape as `get()`.

@@ -1,5 +1,14 @@
 # CLAUDE.md — Pool Portal starter
 
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](../../docs/SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+
+**Explicitly choose `pool`; do not rely on the SDK mobile-pool default.**
+URL builders default to `mbl`; choose `peer` for the shared SDK network,
+`peer` plus `ipType: 'residential'` for residential-only routing, or `any` only
+when mixed pools are intended. A `qualityTier: 'safe'` PAK forces `mbl`.
+Keep discovery and generated connections on the same chosen pool.
+See [pool selection](../../docs/USERNAME-DSL.md#choose-the-pool-explicitly) before copying examples.
+
 > Reading this means you're an AI agent helping a human deploy or customize their branded proxy reseller portal. This file is authoritative. Read it before touching source.
 
 ## What this app is
@@ -44,7 +53,7 @@ Edit `src/config.ts`. The value flows to the landing page, layout header, emails
 Edit the `pricing` array in `src/config.ts`. Each tier needs `id`, `displayName`, `gb`, `priceUsd`. The `id` is stored in Stripe metadata and in the `purchases` table, so don't rename existing ids after launch — add new ones instead.
 
 ### Add a new country to the dashboard
-Add the ISO code to `config.countries` in `src/config.ts`. Must be a valid `Country` from `@proxies-sx/pool-sdk` (the mbl tier covers `'us' | 'gb' | 'fr' | 'nl' | 'pl' | 'ge'`; the peer network spans 80+).
+Choose the `pool` prop explicitly in `src/app/dashboard/page.tsx` (the starter uses `mbl`), then add only countries with live stock for that pool to `config.countries` in `src/config.ts`. Must be a valid `Country` from `@proxies-sx/pool-sdk` (the mbl tier covers `'us' | 'gb' | 'fr' | 'nl' | 'pl' | 'ge'`; the peer network spans 80+).
 
 ### Change the DB schema
 Edit `db/schema.sql`. Every statement must use `IF NOT EXISTS` / `ON CONFLICT` — the migration runner is idempotent and re-runs the whole file. If you need to drop or alter, add the ALTER/DROP statement with `IF EXISTS` guards.
@@ -69,22 +78,19 @@ The platform supports `expiresAt` on `pak_` keys (SDK ≥ 0.2.0). To ship "10 GB
      label: `customer:${customerId}`,
      trafficCapGB: gbPurchased,
      expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString(),
-     idempotencyKey: `mint_${session.id}`,  // safe to retry on 504 (SDK ≥ 0.3.0)
+     idempotencyKey: `mint_${session.id}`,  // saved before dispatch; recover a 504 through operation lookup
    });
    ```
 2. On subsequent top-ups, prefer `poolKeys.topUp()` (SDK ≥ 0.3.0) over a
-   read-modify-write via `update()`. It's atomic server-side and idempotent:
+   read-modify-write via `update()`. It avoids a lost cap update; keep durable intent and same-key serialization:
    ```ts
    await proxies.poolKeys.topUp(customer.pak_key_id, {
      addTrafficGB: tier.gb,        // server $inc, race-safe
      extendDays: 60,               // expiresAt = max(now, current) + 60d
      idempotencyKey: `topup_${session.id}`,
    });
-   // Platform behavior since SDK 0.5.0: if the key was auto-suspended
-   // for hitting its cap, topUp does NOT auto re-enable. For confirmed
-   // payment paths (Stripe webhook from the actual account owner),
-   // lift the suspend explicitly:
-   await proxies.poolKeys.update(customer.pak_key_id, { enabled: true });
+   // Top-up does not resume a disabled key. A separate authorized review
+   // must reconcile raw quota, expiry, account eligibility and every hold.
    ```
 3. Surface `expiresAt` and `isExpired` in the `/api/pool/me` response —
    `<PoolPortal />` will render the countdown banner automatically.
@@ -95,7 +101,7 @@ The gateway rejects expired keys inline (no waiting for a cron). The platform's 
 
 When a customer's `pak_` hits its `trafficCapGB`, the platform atomically flips `enabled = false` and writes an `auto_suspended_cap_exceeded` audit event. **`topUp()` doesn't auto re-enable** — that's intentional, so a leaked key can't auto-recover from a cap suspend without owner review.
 
-If your auto-topup runs on a confirmed payment from the account owner (Stripe webhook in the starter), pair `topUp` + explicit `update({ enabled: true })`. The starter's `src/app/api/stripe/webhook/route.ts` already does this in `handleCheckoutCompleted`.
+A confirmed payment authorizes its intended grant, not clearing an unrelated hold. The starter must leave disabled keys disabled after top-up. An authorized separate resume needs fresh raw quota, expiry, account and hold evidence plus the candidate conditional resume route; verify its deployed release first.
 
 ### Audit log (SDK ≥ 0.5.0)
 
@@ -149,7 +155,7 @@ catch (err) {
 
 The starter ships Stripe for human card payments. To *also* sell to autonomous AI-agent customers, add a second payment rail on the same app — both settle into the same `psx_` account, so your wholesale economics are identical. The agent hits a 402 endpoint, pays USDC on Base/Solana, retries with the transaction hash, and you mint a `pak_` capped at what they paid.
 
-This is a **new route**, not a change to the Stripe flow — add it, don't refactor checkout (scope discipline). The full drop-in handler lives in [`docs/X402-RESELLER-INTEGRATION.md`](../../docs/X402-RESELLER-INTEGRATION.md); drop it at `src/app/api/x402-proxy/route.ts`. Set the wallet + price env vars per the [x402 and Wallet Setup wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup), and add them to `.env.example` in the same commit (the env-var rule below). The mint call is the same `proxies.poolKeys.create()` you already use in the Stripe webhook — with the on-chain transaction hash as the `idempotencyKey` so agent retries never double-mint.
+This is a **new route**, not a change to the Stripe flow — add it, don't refactor checkout (scope discipline). The full drop-in handler lives in [`docs/X402-RESELLER-INTEGRATION.md`](../../docs/X402-RESELLER-INTEGRATION.md); drop it at `src/app/api/x402-proxy/route.ts`. Set the wallet + price env vars per the [x402 and Wallet Setup wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup), and add them to `.env.example` in the same commit (the env-var rule below). The mint call is the same `proxies.poolKeys.create()` you already use in the Stripe webhook — with the on-chain transaction hash as the `idempotencyKey` persisted before dispatch. After ambiguity, recover the original operation without another mint; independently reconcile payment settlement and delivery.
 
 ### Switch from the dev console-logger to real email
 Set `EMAIL_SERVER_HOST`, `EMAIL_SERVER_PORT`, `EMAIL_SERVER_USER`, `EMAIL_SERVER_PASSWORD`, `EMAIL_FROM` in `.env`. NextAuth picks them up automatically (see `src/lib/auth.ts` — the presence of `EMAIL_SERVER_HOST` + `EMAIL_FROM` flips SMTP on).

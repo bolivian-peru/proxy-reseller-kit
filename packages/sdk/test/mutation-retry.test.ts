@@ -11,6 +11,7 @@ const mutations: Mutation[] = [
   { name: 'keyed regeneration', call: (c) => c.poolKeys.regenerate('key1', { idempotencyKey: 'fixture_regen' }) },
   { name: 'key update', call: (c) => c.poolKeys.update('key1', { enabled: false }) },
   { name: 'key deletion', call: (c) => c.poolKeys.delete('key1') },
+  { name: 'versioned resume', call: (c) => c.poolKeys.resume('key1', { expectedLifecycleVersion: 2, idempotencyKey: 'fixture_resume' }) },
   { name: 'selected binding release', call: (c) => c.sessions.close('binding1', { pakId: 'key1' }) },
   { name: 'scoped all-binding release', call: (c) => c.sessions.closeAll({ pakId: 'key1' }) },
 ];

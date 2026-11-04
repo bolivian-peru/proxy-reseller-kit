@@ -219,11 +219,12 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
   };
 
   const handleMe = async (req: Request): Promise<Response> => {
+    const headers = { 'Cache-Control': 'private, no-store' };
     const userId = await getSessionUserId(req);
-    if (!userId) return json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return json({ error: 'unauthorized' }, { status: 401, headers });
 
     const keyId = await getUserKeyId(userId);
-    if (!keyId) return json({ error: 'no_key' }, { status: 404 });
+    if (!keyId) return json({ error: 'no_key' }, { status: 404, headers });
 
     let key;
     try {
@@ -236,12 +237,19 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
       // points at it. Surface as `key_missing` so the dashboard can ask
       // the user to repurchase, instead of bubbling a 502.
       if (apiErr.status === 404) {
-        return json({ error: 'key_missing' }, { status: 404 });
+        return json({ error: 'key_missing' }, { status: 404, headers });
       }
       return json(
         { error: 'upstream_error', status: apiErr.status ?? 500 },
-        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502 },
+        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502, headers },
       );
+    }
+
+    if (!key || key.id !== keyId || typeof key.key !== 'string' || !key.key || typeof key.trafficUsedMB !== 'number' || !Number.isFinite(key.trafficUsedMB) || key.trafficUsedMB < 0 ||
+        (key.trafficCapGB !== null && (!Number.isFinite(key.trafficCapGB) || key.trafficCapGB <= 0)) ||
+        typeof key.enabled !== 'boolean' || key.usageState === 'unknown' || key.expiryState === 'unknown' ||
+        (key.expiresAt !== null && (typeof key.expiresAt !== 'string' || !key.expiresAt || !Number.isFinite(Date.parse(key.expiresAt))))) {
+      return json({ error: 'key_state_unavailable' }, { status: 503, headers });
     }
 
     const response: MeResponse = {
@@ -250,10 +258,12 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
       pakKeyId: key.id,
       usage: {
         usedMB: key.trafficUsedMB,
-        usedGB: key.trafficUsedGB ?? key.trafficUsedMB / 1024,
+        usedGB: key.trafficUsedMB / 1024,
         capGB: key.trafficCapGB,
         enabled: key.enabled,
         lastUsedAt: key.lastUsedAt,
+        expiresAt: key.expiresAt,
+        isExpired: key.isExpired,
       },
       ...(gatewayHost ? { gatewayHost } : {}),
     };
@@ -398,22 +408,23 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
    * so the platform filters server-side. A user without a key has no sessions.
    */
   const handleListSessions = async (req: Request): Promise<Response> => {
+    const headers = { 'Cache-Control': 'private, no-store' };
     const userId = await getSessionUserId(req);
-    if (!userId) return json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return json({ error: 'unauthorized' }, { status: 401, headers });
 
     const keyId = await getUserKeyId(userId);
     if (!keyId) {
-      return json({ sessions: [], count: 0 }, { headers: { 'Cache-Control': 'private, no-store' } });
+      return json({ sessions: [], count: 0 }, { headers });
     }
 
     try {
       const result = await proxies.sessions.list({ pakId: keyId });
-      return json(result, { headers: { 'Cache-Control': 'private, no-store' } });
+      return json(result, { headers });
     } catch (err) {
       const apiErr = err as ProxiesApiError;
       return json(
         { error: 'upstream_error' },
-        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502 },
+        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502, headers },
       );
     }
   };
@@ -427,23 +438,30 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
     req: Request,
     sessionKey: string,
   ): Promise<Response> => {
+    const headers = { 'Cache-Control': 'private, no-store' };
     const userId = await getSessionUserId(req);
-    if (!userId) return json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return json({ error: 'unauthorized' }, { status: 401, headers });
 
     const keyId = await getUserKeyId(userId);
-    if (!keyId) return json({ success: false, message: 'Session not found' });
+    if (!keyId) return json({ success: false, message: 'Session not observed' }, { headers });
 
     try {
-      const result = await proxies.sessions.close(sessionKey, { pakId: keyId });
-      if (onAudit) {
-        await onAudit({ type: 'session.closed', userId, sessionKey });
+      const generation = new URL(req.url).searchParams.get('generation');
+      const opts = generation ? { pakId: keyId, generation } : { pakId: keyId };
+      const result = await proxies.sessions.close(sessionKey, opts);
+      if (result.success && onAudit) {
+        try {
+          await onAudit({ type: 'session.closed', userId, sessionKey });
+        } catch {
+          return json({ ...result, auditStatus: 'failed' }, { headers });
+        }
       }
-      return json(result);
+      return json(result, { headers });
     } catch (err) {
       const apiErr = err as ProxiesApiError;
       return json(
-        { error: 'upstream_error' },
-        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502 },
+        { error: 'upstream_error', outcome: 'unknown', retryAllowed: false },
+        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502, headers },
       );
     }
   };
@@ -454,23 +472,28 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
    * sessions under the same reseller API key.
    */
   const handleCloseAllSessions = async (req: Request): Promise<Response> => {
+    const headers = { 'Cache-Control': 'private, no-store' };
     const userId = await getSessionUserId(req);
-    if (!userId) return json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return json({ error: 'unauthorized' }, { status: 401, headers });
 
     const keyId = await getUserKeyId(userId);
-    if (!keyId) return json({ success: true, message: 'No sessions', count: 0 });
+    if (!keyId) return json({ success: true, message: 'No customer key', count: 0 }, { headers });
 
     try {
       const result = await proxies.sessions.closeAll({ pakId: keyId });
-      if (onAudit) {
-        await onAudit({ type: 'sessions.closed_all', userId, count: result.count });
+      if (result.success && onAudit) {
+        try {
+          await onAudit({ type: 'sessions.closed_all', userId, count: result.count });
+        } catch {
+          return json({ ...result, auditStatus: 'failed' }, { headers });
+        }
       }
-      return json(result);
+      return json(result, { headers });
     } catch (err) {
       const apiErr = err as ProxiesApiError;
       return json(
-        { error: 'upstream_error' },
-        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502 },
+        { error: 'upstream_error', outcome: 'unknown', retryAllowed: false },
+        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502, headers },
       );
     }
   };

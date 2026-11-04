@@ -22,6 +22,7 @@ export type {
   Protocol,
   PoolQualityTier,
   PoolAccessKey,
+  PoolKeyOperation,
   CreatePoolAccessKeyInput,
   UpdatePoolAccessKeyInput,
   TopUpPoolAccessKeyInput,
@@ -33,6 +34,7 @@ export type {
   RetryConfig,
   ActiveSession,
   ActiveSessionsResponse,
+  SessionBindingObservation,
   BuildProxyUrlOpts,
   // Exported so a consumer can type a pin without reaching into
   // BuildProxyUrlOpts['pin']. The type existed but had no exported path —

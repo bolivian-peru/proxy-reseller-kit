@@ -40,6 +40,17 @@ const KEY_FIXTURE = {
 };
 
 describe('ProxiesClient', () => {
+  it('scopes exact binding reads and conditional release to the same PAK and generation', async () => {
+    const fetcher = mockFetch(200, { success: true });
+    const client = new ProxiesClient({ apiKey: 'psx_fixture', fetch: fetcher as unknown as typeof fetch });
+    await client.sessions.get('gw:session:fixture:sid', { pakId: 'owned' });
+    await client.sessions.close('gw:session:fixture:sid', { pakId: 'owned', generation: 'observed_generation' });
+    expect(fetcher.mock.calls[0][0]).toContain('/my-sessions/gw%3Asession%3Afixture%3Asid?pakId=owned');
+    expect(fetcher.mock.calls[0][1]?.method).not.toBe('DELETE');
+    expect(fetcher.mock.calls[1][0]).toContain('pakId=owned&generation=observed_generation');
+    expect(fetcher.mock.calls[1][1]?.method).toBe('DELETE');
+  });
+
   it('throws ProxiesConfigError when apiKey is missing', () => {
     expect(() => new ProxiesClient({ apiKey: '' })).toThrow(ProxiesConfigError);
   });

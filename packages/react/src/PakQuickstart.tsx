@@ -157,8 +157,8 @@ export function PakQuickstart(props: PakQuickstartProps): JSX.Element {
   //
   // Sticky needs BOTH tokens. `-sid-` names the session so it survives across
   // connections; `-rot-sticky` overrides the gateway's default rotation
-  // (`auto10`), which would otherwise re-pick a device every ~10 minutes even
-  // with a sid present.
+  // (`auto10`), which evaluates rotation on a later connection after 10
+  // minutes when the same SID is reused.
   const username = sticky
     ? `${proxyUsername}-mbl-${country}-sid-${stickyId}-rot-sticky`
     : `${proxyUsername}-mbl-${country}`;
@@ -184,7 +184,9 @@ console.log(await r.text());`;
     } catch { /* clipboard unavailable */ }
   };
 
-  const usedPct = capGB && capGB > 0 ? Math.min(100, Math.round(((usedGB ?? 0) / capGB) * 100)) : null;
+  const meterAvailable = typeof capGB === 'number' && Number.isFinite(capGB) && capGB > 0
+    && typeof usedGB === 'number' && Number.isFinite(usedGB) && usedGB >= 0;
+  const usedPct = meterAvailable ? Math.min(100, Math.round((usedGB / capGB) * 100)) : null;
 
   return (
     <section
@@ -194,7 +196,8 @@ console.log(await r.text());`;
       <header className={classNames?.header ?? 'pp-pakquick__header'}>
         <h2 className="pp-pakquick__title">Use your proxy in 30 seconds</h2>
         <p className="pp-pakquick__lead">
-          Real 4G/5G mobile IPs from real phones. Plug the credentials below into any HTTP client.
+          This quickstart explicitly selects the shared carrier-modem pool (mbl).
+          Use the connection builder with an explicit peer pool for SDK-network exits.
         </p>
       </header>
 
@@ -228,13 +231,17 @@ console.log(await r.text());`;
           <div className="pp-pakquick__meter-row">
             <span>Traffic</span>
             <span>
-              {(usedGB ?? 0).toFixed(2)} GB / {capGB?.toFixed(2)} GB
+              {usedGB!.toFixed(2)} GB / {capGB!.toFixed(2)} GB
             </span>
           </div>
           <div className="pp-pakquick__meter-bar">
             <div className="pp-pakquick__meter-fill" style={{ width: `${usedPct}%` }} />
           </div>
         </div>
+      )}
+
+      {capGB !== undefined && !meterAvailable && (
+        <p className="pp-pakquick__hint" role="status">Traffic usage is unavailable. No zero balance is inferred.</p>
       )}
 
       {/* Picker controls */}
@@ -338,24 +345,26 @@ console.log(await r.text());`;
               <tr>
                 <td><code>407 Proxy Authentication Required</code></td>
                 <td>
-                  The two halves are swapped. The username is your account id plus
+                  Check the credential positions. The username is your account id plus
                   routing tokens (<code>{username}</code>); the <code>pak_</code> key is
                   the <em>password</em>. A <code>pak_</code> in the username position
                   always fails — the gateway looks the account up by that first segment
-                  only. Otherwise: the key is disabled, expired, or over its traffic cap.
+                  only. A 407 can also mean disabled/expired credentials, quota or provider-account
+                  eligibility. Inspect the structured reason; it does not always mean a wrong password.
                 </td>
               </tr>
               <tr>
                 <td><code>502 Bad Gateway</code></td>
-                <td>No device available for that country right now. Try another country or wait 30s.</td>
+                <td>Inspect the gateway error and live stock for the selected pool and country.
+                  Keep the requested targeting; distinguish no stock from transport or upstream failures.</td>
               </tr>
               <tr>
-                <td>Device changes every ~10 minutes</td>
+                <td>Understanding timed rotation</td>
                 <td>
-                  That is the gateway default (<code>auto10</code>) — it applies whenever the
-                  username carries no <code>-rot-</code> token. Tick "Sticky session" above;
-                  it emits both <code>-sid-</code> and <code>-rot-sticky</code>, and you need
-                  both for a session to hold.
+                  Timed modes need the same saved SID across connections. Rotation is checked
+                  on a subsequent connection after the interval; existing sockets stay open,
+                  and a different IP is not guaranteed. Tick "Sticky session" for a saved
+                  SID with <code>-rot-sticky</code>.
                 </td>
               </tr>
               <tr>
@@ -370,9 +379,9 @@ console.log(await r.text());`;
               <tr>
                 <td>Want a fresh device more often</td>
                 <td>
-                  Leave "Sticky session" off for the default 10-minute turnover, or append
-                  <code> -rot-auto5</code> to the username yourself for 5-minute turnover.
-                  Every routing choice lives in the username — nothing to configure here.
+                  Without a SID, connections have no shared binding timer. To request a
+                  five-minute interval, reuse a saved <code>-sid-</code> with
+                  <code> -rot-auto5</code>. A new selection does not guarantee a different IP.
                 </td>
               </tr>
               <tr>

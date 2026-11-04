@@ -1,5 +1,17 @@
 # @proxies-sx/pool-portal-react
 
+**Explicitly choose `pool`; do not rely on the SDK mobile-pool default.**
+URL builders default to `mbl`; choose `peer` for the shared SDK network,
+`peer` plus `ipType: 'residential'` for residential-only routing, or `any` only
+when mixed pools are intended. A `qualityTier: 'safe'` PAK forces `mbl`.
+Keep discovery and generated connections on the same chosen pool.
+See [pool selection](../../docs/USERNAME-DSL.md#choose-the-pool-explicitly) before copying examples.
+
+**Release status:** exact binding reads, conditional release, durable operation lookup
+and conditional resume below are candidates until the [release table](../../docs/SHARED-POOL-CONTRACT.md)
+confirms deployment and package publication. Client code alone does not release
+a provider contract.
+
 [![npm](https://img.shields.io/npm/v/@proxies-sx/pool-portal-react)](https://www.npmjs.com/package/@proxies-sx/pool-portal-react)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](../../LICENSE)
 
@@ -58,6 +70,7 @@ import '@proxies-sx/pool-portal-react/styles.css';
 export default function Dashboard() {
   return (
     <PoolPortal
+      pool="mbl"
       apiRoute="/api/pool"
       branding={{ name: 'AcmeProxies', primaryColor: '#6366f1' }}
     />
@@ -75,7 +88,7 @@ That's the whole integration. The browser **never** sees your `PROXIES_SX_API_KE
 Customer's browser
       │ (signed-in session via your auth lib)
       ▼
-<PoolPortal apiRoute="/api/pool" />
+<PoolPortal pool="mbl" apiRoute="/api/pool" />
       │ fetch("/api/pool/me", { credentials: 'same-origin' })
       ▼
 createPoolApiHandlers()  (your /api/pool/[...path]/route.ts)
@@ -134,6 +147,7 @@ rather than hardcoding one — stock moves.
 
 ```tsx
 <PoolPortal
+  pool="mbl"
   branding={{
     name: 'AcmeProxies',
     logoUrl: '/logo.svg',
@@ -151,6 +165,7 @@ Brand values map to CSS custom properties (`--psx-primary`, `--psx-accent`, `--p
 
 ```tsx
 <PoolPortal
+  pool="mbl"
   classNames={{
     root: 'w-full max-w-2xl mx-auto',
     card: 'bg-zinc-900 border-zinc-800 text-zinc-50',
@@ -184,22 +199,22 @@ Compose with `<PoolPortal>` for full reseller-dashboard parity with `client.prox
 
 Count slider (1–100), country / pool / protocol / rotation / failover / sid-mode controls, "Generate" → N proxy URLs, per-row Copy + bulk Copy-all + Download .txt. The `showTtlControl` prop (v0.4.2 default true) exposes a "Session TTL override" field that appends `-ttl-<seconds>` to the username DSL (range 60-2592000 = 1 min to 30 days).
 
-**IP class filter (v0.11.0+).** When `pool` is `peer` or `any`, an "IP class" dropdown appears with `Any` / `Mobile only` / `Residential only` / `Datacenter only` — it emits `-iptype-<v>` and hard-filters the peer pool to that verified exit class (unclassified peers are excluded). The `mbl` pool is mobile-only by construction, so the control is hidden whenever `mbl` is selected. Programmatic equivalent: `buildProxyString({ ..., ipType: 'mobile' })`.
+**IP class filter (v0.11.0+).** When `pool` is `peer` or `any`, an "IP class" dropdown appears with `Any` / `Mobile only` / `Residential only` / `Datacenter only` — it emits `-iptype-<v>` and hard-filters the peer pool to that verified exit class (unclassified peers are excluded). The `mbl` pool is mobile-only by construction, so the control is hidden whenever `mbl` is selected. Programmatic equivalent: `buildProxyString({ ..., pool: 'peer', ipType: 'mobile' })`.
 
 **City + Region pickers (v0.13.0+).** Pass a `facets` prop (from `usePoolFacets`) and, on the peer pool, "Region / State" and "City" dropdowns appear — emitting the `-state-` / `-city-` tokens (hard, peer-only filters). Because the facets endpoint is cross-filtered, feeding the current City/Region/Carrier selection back into the hook makes each picker narrow the others (the same "city smallens carrier and vice versa" behaviour as `client.proxies.sx/pool-proxy`):
 
 ```tsx
 const [country, setCountry] = useState<Country>('us');
 const [sel, setSel] = useState<{ city?: string; state?: string; carrier?: string }>({});
-const facets = usePoolFacets('/api/pool', { country, ...sel }).data ?? undefined;
-const carrierStock = usePoolCarrierStock('/api/pool', country).data?.carriers;
+const facets = usePoolFacets('/api/pool', { pool: 'peer', country, ...sel }).data ?? undefined;
+const carrierStock = usePoolCarrierStock('/api/pool', country, { pool: 'peer' }).data?.carriers;
 <PoolSessionSpawner
   proxyUsername={me.proxyUsername} proxyPassword={me.pakKey}
   defaultPool="peer" facets={facets} carrierStock={carrierStock}
 />
 ```
 
-City and region are hard peer-only filters on the live gateway: a credential routes only while a routable peer is online there (`E_NO_STOCK_COUNTRY` otherwise), which is why the pickers are built from live counts and hidden on `mbl` (a modem never matches a location). Programmatic equivalent: `buildProxyString({ ..., city: 'brooklyn', state: 'ny' })`.
+City and region are hard peer-only filters on the live gateway: a credential routes only while a routable peer is online there (`E_NO_STOCK_COUNTRY` otherwise), which is why the pickers are built from live counts and hidden on `mbl` (a modem never matches a location). Programmatic equivalent: `buildProxyString({ ..., pool: 'peer', city: 'brooklyn', state: 'ny' })`.
 
 Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation)` helpers for hand-rolled UIs. `buildProxyString`'s `ipType?: 'mobile' | 'residential' | 'datacenter'` option is available regardless of whether you use the built-in dropdown.
 
@@ -207,37 +222,49 @@ Also exports `buildProxyString(opts)` and `defaultTtlSecondsForRotation(rotation
 
 | `sessionType` | Per-row behavior | When N spawned URLs are used |
 |---|---|---|
-| `unique` | Each row gets its own random `-sid-<prefix><index>` | N different modems (one per row) — best for parallel workers that each want their own stable IP |
-| `same` | All rows share the same `-sid-<prefix>` | All rows land on the SAME modem — useful when many parallel sockets from one customer should share one exit |
+| `unique` | Each row gets its own random `-sid-<prefix><index>` | Separate logical bindings; does not reserve devices or guarantee distinct exit IPs |
+| `same` | All rows share the same `-sid-<prefix>` | Reuse one binding preference while it remains eligible; existing sockets and failover may differ |
 | `none` | Each row gets a random `-sid-<row-specific>` | Same as `unique` in practice — every row distinct (we always emit a sid; "none" just means "you didn't pick a prefix") |
 
 **Sticky semantics:** with `defaultRotation="sticky"` or `"hard"` the gateway weights IP-stability when picking each row's device — you get the devices whose carrier holds an egress IP best. `hard` **pins like sticky**; it is not "a new IP per request". Two caveats worth surfacing in your own UI copy:
 
-- **Sticky pins the DEVICE, not the IP.** Mobile CGNAT can re-NAT a held modem. For a held address prefer `defaultPool="peer"` (home/ISP peers hold for hours-to-days), or lease a [Reserved IP](../../docs/RESERVED-IPS.md).
+- **Sticky prefers the current device; it does not reserve it or guarantee an IP.** Failover, rotation and the endpoint's own network can change the result. A [Reserved IP](../../docs/RESERVED-IPS.md) is a separate product with its own contract.
 - **Stickiness needs a `-sid-`.** The spawner always emits one, so its output is fine — but a hand-built string with `-rot-sticky` and no `-sid-` starts a fresh session on every connection and looks broken.
 
 Full token semantics, including what each filter does when nothing matches: [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.md). Layer-1-vs-Layer-2 explanation: [wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
 
 ### `<ActiveSessionsTable>` — live session manager (v0.4.0+)
 
-> ⚠️ **Multi-tenant note.** Since 0.6.0 the `/my-sessions` routes this table polls
-> are scoped per-customer (the auto-handlers thread the caller's `pakId` via
-> `getUserKeyId`), so it is safe in customer dashboards. On the legacy 0.5.x SDK
-> those routes returned ALL account sessions - if you are pinned to 0.5.x, mount
-> this only in a single-tenant/admin context, or upgrade.
+> **Multi-tenant requirement:** resolve the authenticated customer's stored PAK
+> with `getUserKeyId`; never accept a browser-supplied provider ID. Client scoping
+> does not establish provider binding isolation by itself. Verify the current
+> [release table](../../docs/SHARED-POOL-CONTRACT.md); do not expose unscoped legacy
+> routes. Exact reads and generation-conditioned release require that provider
+> contract to be deployed.
 
 ```tsx
 <ActiveSessionsTable
   apiRoute="/api/pool"
   proxyPassword={me.pakKey}
   refreshIntervalMs={5_000}
-  onSessionClosed={(key) => toast.success(`Closed ${key.slice(-12)}`)}
+  onSessionClosed={() => toast.success("Binding released; existing sockets stay open")}
 />
 ```
 
-Polls `GET /api/pool/my-sessions` (auto-handler) at 5 s default. Per-row: country/pool, sid, rotation, TTL countdown, bytes in/out, request count, Copy-URL (with password substitution), Close. No exit IP — the platform returns none for a session. Header Close-all + Refresh. Hides synthesized-sid sessions by default (`hideSynthesizedSessions`).
+Polls `GET /api/pool/my-sessions` every five seconds by default. Rows show observed
+bindings, not a live-socket inventory. Release checks `success`, forwards the observed
+binding generation when present, and never claims it closes connections. Truncated
+inventory disables bulk release; read failures retain the last observed rows. An
+empty response does not prove absence. Unknown releases remain blocked in the mounted
+component; production hosts must persist mutation intent and uncertainty across
+page reloads and process restarts. Callback failures do not change an acknowledged
+provider outcome. Session URL templates are diagnostic aids; store original named
+configuration settings separately. See [the contract](../../docs/SHARED-POOL-CONTRACT.md).
 
 ### `<PoolDocsPanel>` — drop-in technical reference (v0.4.1+)
+
+Its copyable curl example is fixed to `mbl` and has no pool-selection prop.
+Use an explicitly configured spawner or SDK builder for peer/mixed-pool exports.
 
 ```tsx
 <PoolDocsPanel
@@ -311,25 +338,25 @@ and `POST` (`/regenerate`) and `DELETE` (`/my-sessions`):
 | `GET` | `<route>/incidents` | Status-page incidents | n/a |
 | `POST` | `<route>/regenerate` | Rotate current user's key | ✅ via `getUserKeyId` |
 | `GET` | `<route>/my-sessions` | List sessions | ✅ since 0.6.0 via `getUserKeyId` → `pakId` (⚠️ 0.5.x returned all account sessions) |
-| `DELETE` | `<route>/my-sessions/<sessionKey>` | Close one | ✅ since 0.6.0 (⚠️ 0.5.x: any key under the account) |
-| `DELETE` | `<route>/my-sessions` | Close all | ✅ since 0.6.0 (⚠️ 0.5.x: every account session) |
+| `DELETE` | `<route>/my-sessions/<sessionKey>` | Release one observed binding; forwards `generation` | ✅ since 0.6.0 (⚠️ 0.5.x: any key under the account) |
+| `DELETE` | `<route>/my-sessions` | Bounded bulk binding release; check partial/false results | ✅ since 0.6.0 (⚠️ 0.5.x: every account session) |
 
 `export const { GET, POST, DELETE } = createPoolApiHandlers({...})`.
 
 #### Session routes — multi-tenant security
 
-Every route above is scoped to the caller via `getUserKeyId`, including
-`/my-sessions`: since **0.6.0** the handlers thread the caller's `pakId` into
-`sessions.list({ pakId })` / `close(key, { pakId })` / `closeAll({ pakId })`,
-and `ActiveSession` carries `pakKeyId`. Mounting them on a multi-tenant customer
-dashboard is safe.
+Every customer route resolves the stored PAK through `getUserKeyId`. Session
+list and release must pass that `pakId`; the candidate selected-release handler
+also forwards the observed generation. SDK scoping introduced in 0.6.0 is not
+proof that the provider has released PAK-isolated identities or conditional
+release. Verify both the package and provider release in the
+[contract](../../docs/SHARED-POOL-CONTRACT.md).
 
-> ⚠️ **Only if you are pinned to the legacy `0.5.x` packages:** those session
-> routes took no arguments and operated across **every** session under your
-> `psx_` API key, so any signed-in customer could list, close, or wipe another
-> customer's sessions by calling the route directly. The fix is to upgrade —
-> `npm i @proxies-sx/pool-portal-react@latest` — not to work around it. Confirm
-> with `npm view @proxies-sx/pool-portal-react version`.
+The route factory exposes list and release, not an exact-read route. A host that
+needs exact observation can call `proxies.sessions.get(key, { pakId })` on its
+server after checking ownership. Do not expose an unscoped fallback when the
+candidate endpoint is unavailable. Binding release does not revoke credentials
+or stop current sockets. Persist uncertainty outside the component.
 
 ---
 
@@ -349,6 +376,7 @@ function MyDashboard() {
   if (me.error || !me.data) return <ErrorView onRetry={me.refetch} />;
 
   const url = buildProxyUrl(me.data.proxyUsername, me.data.pakKey, {
+    pool: 'mbl',
     country: 'us',
     rotation: 'sticky',
   });
@@ -372,6 +400,10 @@ pickers. Polls every 30s. (`createPoolApiHandlers` serves `/stock/facets` and
 `/stock/cities` automatically.)
 
 ### `<PakQuickstart>` - one-key onboarding card (v0.6.0+)
+
+**Modem-only onboarding:** generated usernames hardcode `mbl`; this component
+has no `pool` prop. For peer/mixed-pool exports use `<PoolPortal pool="peer" ... />`,
+`<PoolSessionSpawner defaultPool="peer" ... />` or an explicit SDK builder.
 
 Shows a customer THEIR key with a copy-ready proxy string, country dropdown, and an
 optional usage meter. Props: `proxyUsername` (**required**), `pak` (required),
@@ -413,7 +445,11 @@ scoping guarantee.
 
 ### Provisioning a key for a new customer
 
-`createPoolApiHandlers` only reads existing keys. Create them server-side after a successful payment:
+The handlers do not provision purchases. The example below shows provider calls
+inside a host-owned payment workflow. Before dispatch, persist immutable intent,
+ownership and the operation token; serialize same-key work across workers. Keep
+settlement, entitlement and delivery separate. After response loss or local-save
+failure, use read-only operation recovery instead of calling create again.
 
 ```ts
 // app/api/stripe/webhook/route.ts
@@ -430,17 +466,21 @@ const key = await proxies.poolKeys.create({
   trafficCapGB: Number(session.metadata?.gb),
   // Optional: 60-day expiry. Top-ups extend it via poolKeys.topUp() (preferred over update).
   expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString(),
-  idempotencyKey: `mint_${session.id}`,        // SDK ≥ 0.3.0 — protect against double-mint on retry
+  idempotencyKey: persistedCreateOperationId, // committed before dispatch; no automatic retry
 });
 await db.customers.update(customerId, { pakKeyId: key.id });
 
-// On subsequent top-ups, prefer topUp() over update() — atomic + idempotent.
+// Persist top-up intent first; reconcile an ambiguous response before any further write.
 await proxies.poolKeys.topUp(key.id, {
-  addTrafficGB: 10,                            // server-side $inc, race-safe
+  addTrafficGB: 10,                            // intended grant already persisted
   extendDays: 60,                              // pushes expiresAt forward
   idempotencyKey: `topup_${invoiceId}`,
 });
 ```
+
+Top-up does not resume a disabled key. Review current raw quota, expiry, account
+eligibility and all holds before a separately authorized conditional resume.
+The route factory is not a durable payment or mutation journal.
 
 ### Time-bounded credits in the dashboard (v0.2.0+)
 
@@ -454,7 +494,8 @@ return NextResponse.json({
   pakKeyId: key.id,
   usage: {
     usedMB: key.trafficUsedMB,
-    usedGB: (key.trafficUsedMB / 1024),
+    usedGB: key.trafficUsedMB === null ? null : key.trafficUsedMB / 1024,
+    usageState: key.usageState, // unknown remains unknown; never substitute zero
     capGB: key.trafficCapGB,
     enabled: key.enabled,
     lastUsedAt: key.lastUsedAt,
@@ -484,7 +525,9 @@ hosts must persist intent, serialize writes and retain ambiguous outcomes.
 With the SDK's mutation boundary, shared-pool writes make one attempt. An upstream
 error includes `mutationOutcome: "unknown"` and `retryAllowed: false`; it does not
 prove the old password survived. Recover the current scoped key without issuing
-another regeneration. The provider's cached replay may hold an obsolete secret.
+another regeneration. A pre-candidate cached replay may hold an obsolete secret; the candidate
+lifecycle response distinguishes historical operation state from a current
+credential observation. Verify the provider release before relying on it.
 A current read does not fence another writer that is still running.
 
 If the provider responds successfully but `onAudit` throws, the handler preserves

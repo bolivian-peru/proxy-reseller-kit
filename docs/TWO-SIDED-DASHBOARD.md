@@ -1,5 +1,9 @@
 # Two-Sided Dashboard Pattern — Reseller Best Practice
 
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+
+**Choose the pool explicitly in every connection setup.** Do not rely on the SDK's `mbl` default; use the intended pool and matching stock scope. See [pool selection](./USERNAME-DSL.md#choose-the-pool-explicitly), including residential-only filtering and the `safe` PAK override.
+
 > **For:** Engineers (and AI agents) building a SaaS dashboard on top of the Proxies.sx Pool Gateway.
 > **Authoritative pattern.** Used in production by a reseller on this platform and what we recommend to every reseller.
 >
@@ -149,7 +153,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   await proxies.poolKeys.topUp(customer.pakKeyId, {
     addTrafficGB,
     extendDays,
-    idempotencyKey: `admin_topup_${operator.id}_${Date.now()}`,
+    idempotencyKey: persistedOperatorOperationId, // immutable intent saved before dispatch
   });
 
   await db.auditLog.create({
@@ -249,7 +253,7 @@ export default function PoolPage({ me }: { me: MeResponse }) {
       {/* 2. Single-key view */}
       <section>
         <h2>Your proxy</h2>
-        <PoolPortal apiRoute="/api/pool" branding={{ name: 'BrandName', primaryColor: '#7c3aed' }} />
+        <PoolPortal pool="mbl" apiRoute="/api/pool" branding={{ name: 'BrandName', primaryColor: '#7c3aed' }} />
       </section>
 
       {/* 3. Multi-port spawner */}
@@ -312,7 +316,7 @@ export const proxies = new ProxiesClient({
 
 - This file is server-only. Add it to your bundler's server-only allowlist (Next.js: top of file, `import 'server-only';`).
 - The `psx_` API key NEVER appears in browser code, browser bundles, or response bodies.
-- All write paths (admin AND customer) pass `idempotencyKey` derived from a domain object (operator id + timestamp for admin actions, Stripe event id for customer payments).
+- All write paths (admin AND customer) pass `idempotencyKey` persisted with immutable intent before dispatch (a durable operator action ID or payment ID). Never regenerate it during recovery.
 
 ---
 
@@ -369,7 +373,7 @@ If a user asks to "build a Pool dashboard for my reseller business" and you're a
 2. **Shipping admin features inside `<PoolPortal>`.** That's the customer view. Build admin tables separately.
 3. **Calling `proxies.poolKeys.list()` from the customer dashboard.** That returns ALL the reseller's pak_ keys — leaks every customer's id to whoever logs in. Always go through `getUserKeyId()` to scope to one customer.
 4. **Putting `psx_` in browser-readable code.** The SDK is server-only. Ban imports of `@proxies-sx/pool-sdk` from anything inside `'use client'` or `client/` directories.
-5. **Skipping `idempotencyKey` on writes.** Webhook/payment retries WILL happen. The platform dedupes with the key; without one, you'll mint two pak_ keys for one Stripe event.
+5. **Skipping `idempotencyKey` on writes.** Webhook/payment retries WILL happen. A saved operation token enables recovery under the verified lifecycle contract. After ambiguity, read the operation; do not dispatch another mint just because the callback was retried. Payment event deduplication remains separate.
 6. **Building one admin "act-as-customer" view that re-uses customer components.** Tempting, but the customer components polling `/api/pool/me` won't return the impersonated customer's data unless your `getSessionUserId()` callback is impersonation-aware. Simpler: admin has its own customer-detail page that calls `proxies.poolKeys.get(impersonatedCustomerKeyId)` directly.
 
 ---

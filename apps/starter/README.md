@@ -1,5 +1,14 @@
 # Pool Portal — reseller starter
 
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](../../docs/SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+
+**Explicitly choose `pool`; do not rely on the SDK mobile-pool default.**
+URL builders default to `mbl`; choose `peer` for the shared SDK network,
+`peer` plus `ipType: 'residential'` for residential-only routing, or `any` only
+when mixed pools are intended. A `qualityTier: 'safe'` PAK forces `mbl`.
+Keep discovery and generated connections on the same chosen pool.
+See [pool selection](../../docs/USERNAME-DSL.md#choose-the-pool-explicitly) before copying examples.
+
 > Self-hosted branded storefront for the [Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy). Next.js 15, NextAuth, raw Postgres, Stripe. Zero paid dependencies beyond what you choose.
 
 **What you get out of the box:**
@@ -13,6 +22,26 @@
 Total lines of app code: **under 1000** including comments. You can read it all in 20 minutes.
 
 ---
+
+## Production payment gate
+
+This starter is a demonstration until its paid-delivery recovery is implemented
+and verified. The webhook records a unique purchase before its provider call and
+customer update finish. If the call or local save fails, a callback retry can see
+the existing purchase and return without completing delivery. Stripe webhook
+deduplication therefore does not prove that a paid customer received their GB.
+
+Do not take live payments with this flow as-is. Complete separate payment,
+entitlement-intent, provider-operation and delivery states; serialize writes;
+recover ambiguous provider effects by authoritative reads; and reconcile pending
+work after restart. Verify duplicate callbacks, concurrent first purchases,
+response loss and DB failure using native PostgreSQL tests. Keep uncertain old
+purchases gated rather than blindly replaying them. Required work and acceptance:
+[issue #4](https://github.com/bolivian-peru/proxy-reseller-kit/issues/4).
+
+Provider lifecycle fixes do not automatically repair this application-level
+workflow. This limitation applies to `apps/starter`, not independently implemented
+custom integrations such as Portproof.
 
 ## Setup (10 minutes)
 
@@ -89,7 +118,10 @@ stripe listen --forward-to localhost:3000/api/stripe/webhook
 
 ## Customizing
 
-Everything a reseller wants to change lives in **one file**: `src/config.ts`.
+Branding, prices and offered countries live in `src/config.ts`. Also choose the
+`pool` prop explicitly in `src/app/dashboard/page.tsx` before changing countries.
+The starter explicitly uses `mbl`; change it to `peer` for the mixed SDK network
+or `any` only when both pools are intended. Use current stock for that choice.
 
 ```ts
 export const config = {
@@ -198,7 +230,7 @@ Proxies.sx API
 
 ### Time-bounded credits (optional)
 
-If your retail product is "10 GB, use within 60 days", set `expiresAt` when minting in the Stripe webhook handler. **Always pass `idempotencyKey`** so a 504 retry doesn't double-mint:
+If your retail product is "10 GB, use within 60 days", set `expiresAt` when minting in the Stripe webhook handler. **Persist `idempotencyKey` and immutable intent before dispatch.** After a 504, read the original operation instead of issuing another create:
 
 ```ts
 // src/app/api/stripe/webhook/route.ts — inside handleCheckoutCompleted
@@ -206,11 +238,11 @@ const key = await proxies.poolKeys.create({
   label: `customer:${customerId}`,
   trafficCapGB: gbPurchased,
   expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString(),
-  idempotencyKey: `mint_${session.id}`,        // SDK ≥ 0.3.0 — required for retry safety
+  idempotencyKey: `mint_${session.id}`,        // persist before dispatch; recover unknown outcomes without another write
 });
 ```
 
-On top-up (subsequent purchases by the same customer), prefer `poolKeys.topUp()` (SDK ≥ 0.3.0) over a read-modify-write via `update()`. It's atomic server-side and idempotent:
+On top-up (subsequent purchases by the same customer), prefer `poolKeys.topUp()` (SDK ≥ 0.3.0) over a read-modify-write via `update()`. It avoids a lost cap update, but your host still needs durable intent, serialization and read-only recovery:
 
 ```ts
 await proxies.poolKeys.topUp(customer.pakKeyId, {

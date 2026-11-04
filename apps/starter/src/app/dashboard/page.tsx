@@ -73,6 +73,7 @@ export default async function DashboardPage() {
       </div>
 
       <PoolPortal
+        pool="mbl"
         apiRoute="/api/pool"
         countries={[...config.countries]}
         branding={{

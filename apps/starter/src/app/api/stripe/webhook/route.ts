@@ -148,14 +148,9 @@ async function handleCheckoutCompleted(sess: Stripe.Checkout.Session): Promise<v
         addTrafficGB: tier.gb,
         idempotencyKey: `topup_${sess.id}`,
       });
-      // Platform behavior (May 2026): if the customer hit their cap
-      // before this top-up, the platform auto-suspended the key
-      // (`enabled = false`) to limit blast radius from leaks. `topUp`
-      // doesn't auto re-enable — that's a deliberate decision per
-      // top-up. Since this code path runs ONLY on a confirmed Stripe
-      // payment from the account owner, it's safe to lift the suspend.
-      // Idempotent — no-op when the key was already enabled.
-      await proxies.poolKeys.update(customer.pak_key_id, { enabled: true });
+      // Payment adds entitlement; it does not authorize clearing an independent
+      // account, security or operator hold. Conditional resume belongs to an
+      // explicit reviewed recovery flow, outside this payment callback.
       await client.query(
         `UPDATE customers
            SET total_gb_purchased = $1,

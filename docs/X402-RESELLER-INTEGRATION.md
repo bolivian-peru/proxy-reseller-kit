@@ -1,5 +1,9 @@
 # x402 for resellers — accept USDC, mint a `pak_`, return a proxy
 
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+
+**Choose the pool explicitly in every connection setup.** Do not rely on the SDK's `mbl` default; use the intended pool and matching stock scope. See [pool selection](./USERNAME-DSL.md#choose-the-pool-explicitly), including residential-only filtering and the `safe` PAK override.
+
 This is how you turn your reseller deployment into an **x402 paid proxy endpoint** —
 an AI agent sends a request, gets a `402 Payment Required` with your USDC wallet,
 signs a payment authorization, retries with it, and gets back proxy credentials.
@@ -205,11 +209,12 @@ async function handle(req: Request): Promise<Response> {
     label:          `x402:${verify.payment.payer}:${txHash.slice(0, 10)}`,
     trafficCapGB:   gb,              // REQUIRED — a positive number. null/omit → 400
     expiresAt,
-    idempotencyKey: txHash,          // settled tx hash → safe to retry
+    idempotencyKey: txHash,          // persist with intent before dispatch; recover ambiguity read-only
   });
 
   // Build the proxy URL the agent will actually use.
   const proxyUrl = proxies.buildProxyUrl(key.key, {
+    pool: 'peer',
     country,
     rotation: 'sticky',
     sid: `x402_${key.id.slice(0, 8)}`,
@@ -271,18 +276,9 @@ under the hood, it IS one.
 - **Check the recipient.** `verify.payment.recipient` must be *your* wallet for
   that network. A payload correctly signed and funded but addressed to someone
   else still verifies as `valid: true`.
-- **`idempotencyKey: <settled txHash>` blocks double-mint** when an agent retries.
-  Platform dedupes within 24h. The key must be 8-128 chars of `[A-Za-z0-9_-]`;
-  a raw base64 payload violates both rules and is rejected with a 400.
-- **Settle-then-mint is not atomic.** If `poolKeys.create` fails after a
-  successful settle, you have the agent's money and they have nothing. Persist
-  `txHash` before minting, and on the retry (same `txHash` → same
-  `idempotencyKey`) the mint completes instead of double-charging. Alert on any
-  settled `txHash` with no pak after a grace period.
-- **`expiresAt` caps your exposure.** If something leaks, the pak dies at the TTL.
-  Set it equal to the session you sold.
-- **`trafficCapGB` caps the bytes.** Even if expiry is wrong, the agent can't
-  use more than they paid for — the platform auto-suspends the pak at the cap.
+- **Persist the settled transaction hash and immutable mint intent.** The token must be 8–128 characters from `[A-Za-z0-9_-]`; a raw payment signature does not satisfy that contract. A token alone does not make payment and delivery exactly-once. Follow the verified provider lifecycle release for shared keys.
+- **Settle-then-mint is not atomic.** If settlement succeeds but minting is uncertain, retain both states and inspect the original operation. Do not blindly repeat settlement or minting. Alert on settled payments with incomplete delivery; a missing lookup for a pre-cutover request is not proof of no effect.
+- **Expiry and caps are policies, not exact cutoffs.** Authentication caches, tunnel rechecks and accounting delays allow delayed enforcement or some quota overshoot. Neither a declared TTL nor cap proves immediate termination or zero overshoot.
 - **Replay**: the facilitator returns the on-chain `payer` + `amount`; you can
   enforce per-wallet rate limits if you want (track verified txs in your own DB).
 

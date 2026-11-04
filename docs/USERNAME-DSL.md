@@ -34,6 +34,59 @@ http://psx_acme-peer-us-sid-cust_8f3a21bd-rot-sticky:pak_a1b2c3@gw.proxies.sx:70
 
 ---
 
+## Choose the pool explicitly
+
+**Explicitly choose `pool`; do not rely on the SDK mobile-pool default.**
+`buildProxyUrl()` and `<PoolPortal>` retain `mbl` as their compatibility default.
+That does not mean they select the peer stock you just discovered. Carrier, city
+and facet discovery default to `peer`, while a raw gateway username with no pool
+token defaults to `any`. Always specify the pool in discovery and connection
+configuration, and show the customer which network they selected. To discover
+both pools, pass `pool: 'all'` to stock discovery; connection URLs use
+`pool: 'any'` or `'best'` instead. `all` is not a URL-builder pool value.
+
+| Customer requirement | Explicit URL-builder options |
+|---|---|
+| Shared SDK peer network, mixed mobile/residential | `{ pool: 'peer' }` |
+| Residential-only peer traffic | `{ pool: 'peer', ipType: 'residential' }` |
+| Shared carrier modems | `{ pool: 'mbl' }` |
+| Deliberately allow either pool | `{ pool: 'any' }` (`best` is an alias) |
+
+`peer` alone is **not residential-only**. The residential filter requires the
+reported residential class and excludes unknown classes; classification is not
+independent proof of the underlying physical connection. `any` deliberately
+permits mixed pools; do not use it as an unnoticed fallback for a more specific
+customer request. A PAK with `qualityTier: 'safe'` forces modem routing even if
+its username requests `peer` or `any`. A peer product therefore needs a
+`standard` PAK as well as an explicit `pool: 'peer'`.
+
+```ts
+import { buildProxyUrl } from '@proxies-sx/pool-sdk';
+
+const url = buildProxyUrl(proxyUsername, customerPak, {
+  pool: 'peer',
+  ipType: 'residential',
+  country: 'us',
+  sid: 'customer_42_connection_1',
+  rotation: 'sticky',
+});
+```
+
+For React, pass `<PoolPortal pool="peer" ... />` or the deliberately chosen
+`mbl` / `any` value; pass `defaultPool` explicitly to `<PoolSessionSpawner>`.
+`PoolPortal` has no `ipType` prop: for residential-only exports use the SDK
+option above or the spawner's IP-class selector. Query stock for the same pool,
+filter countries to current matching supply, and test the generated connection.
+A stock count is not a reservation or a successful proxy request.
+
+`PakQuickstart` and the copyable curl in `PoolDocsPanel` are fixed `mbl`
+examples in the current package and have no pool-selection prop. Choose those
+components only for modem onboarding; for peer or mixed-pool connection
+exports, use an explicitly configured `PoolPortal`, `PoolSessionSpawner` or SDK
+builder. Do not assume a parent component changes those fixed examples.
+
+---
+
 ## How the parser behaves (read this before the table)
 
 The username is **lowercased, stripped of whitespace, and split on `-`**. Two
@@ -129,7 +182,7 @@ a filter on a retry.
 | `ttl` | integer seconds, clamped **60 – 2 592 000** | session-row lifetime | Non-numeric → `3600`. Out of range → clamped. **Immutable for a live sid** — see [TTL is immutable](#ttl-is-immutable-per-session). |
 | `carrier` | slug, ≤64 chars, e.g. `att` | **hard**, exact slug match on the device's carrier *or* ISP name | No candidate → `E_NO_STOCK_COUNTRY` (502). Never widened. Prefer `asn` when you have it. |
 | `city` | slug, ≤64 chars, e.g. `brooklyn` (from `/stock/cities`) | **hard**, peer only | No routable peer in that city → 502. Modems never match a city, so `mbl` + `city` always refuses. |
-| `state` | ISO subdivision code, e.g. `ca`, `ny` | **hard**, peer only | No routable peer in that region → 502; refuses on `mbl`. Discover regions via `client.pool.getCities(cc).regions` or the cross-filtered `getFacets({country}).states`. |
+| `state` | ISO subdivision code, e.g. `ca`, `ny` | **hard**, peer only | No routable peer in that region → 502; refuses on `mbl`. Discover regions via `client.pool.getCities(cc, { pool: 'peer' }).regions` or the cross-filtered `getFacets({ pool: 'peer', country }).states`. |
 | `iptype` | `mobile` · `residential` · `datacenter` | **hard** | No candidate → 502. Unclassified peers are excluded; a modem with no explicit class counts as `mobile`. |
 | `isp` | brand slug, e.g. `spectrum` | **hard**, slugified contains-match | No candidate → 502. |
 | `asn` | 1–7 digits, e.g. `7018` | **hard**, exact | No candidate → 502. |

@@ -1,5 +1,9 @@
 # Migration guide: `@proxies-sx/pool-sdk` 0.2.0 → 0.3.0
 
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+
+**Choose the pool explicitly in every connection setup.** Do not rely on the SDK's `mbl` default; use the intended pool and matching stock scope. See [pool selection](./USERNAME-DSL.md#choose-the-pool-explicitly), including residential-only filtering and the `safe` PAK override.
+
 This release is **non-breaking** — every 0.2.0 call still works without
 modification. But you'll want to migrate four patterns to take advantage
 of the new features and remove now-redundant host-app code.
@@ -33,9 +37,10 @@ const keys = await withRetry(() => proxies.poolKeys.list());
 const keys = await proxies.poolKeys.list();
 ```
 
-The SDK retries on `5xx` / `429` / timeouts / network errors with
-exponential backoff and full jitter, honors `Retry-After`, and skips
-`4xx` (except `429`). To tune:
+For reads, the SDK retries bounded `5xx`, `429`, timeout and network failures,
+honoring `Retry-After`. Current shared-key and binding mutations make one
+attempt regardless of this setting; recover uncertain effects by reading the
+original operation. To tune read retries:
 
 ```ts
 new ProxiesClient({
@@ -59,7 +64,7 @@ transient gateway failures.
 
 If you mint keys from a webhook handler or payment-success callback,
 you've been one network blip away from a double-mint since day one.
-0.3.0 fixes that with `idempotencyKey`.
+0.3.0 introduced cached replay via `idempotencyKey`; it did not solve concurrent or crash-window ambiguity. Use the current release-gated durable operation contract for new work.
 
 **Before:**
 
@@ -84,8 +89,10 @@ const key = await proxies.poolKeys.create({
 
 Tie `idempotencyKey` to a domain object — `stripe_payment_intent_id`,
 `order_id`, `invoice_id`, your own UUIDv4 stored alongside the customer
-record. The platform stores the response for 24h and returns it on
-duplicate calls.
+record, before dispatch. The historical implementation cached sequential replies
+for nominally 24 hours; it did not ensure concurrent/crash-safe execution. Current
+shared-key SDK mutations make one attempt. Reconcile the original operation under
+the verified released contract instead of relying on retries or cache expiry.
 
 Apply the same to `topUp()` and `regenerate()`:
 

@@ -5,6 +5,14 @@ All notable changes to this package are documented here. The format is based on
 semver from 0.3.0 onwards (the public surface is everything exported from
 `dist/index.d.ts`).
 
+## 0.15.0 — shared-pool lifecycle and session contracts (4 November 2026)
+
+- Mutations make one attempt; ambiguous responses are retained for reconciliation instead of retried automatically.
+- Added durable operation lookup, version-conditioned resume, exact scoped binding observation and generation-conditioned release.
+- Raw usage can be unknown; lifecycle versions, independent holds and history coverage are exposed explicitly.
+- Examples choose a pool explicitly. Timed rotation needs a stable SID and a subsequent connection; existing sockets and distinct exit IPs are not guaranteed.
+- See [the shared-pool contract](../../docs/SHARED-POOL-CONTRACT.md) for provider release evidence and limits. Keep your own durable operation intent; installing the SDK does not supply an application database or payment fulfilment worker.
+
 ## 0.14.0 — live-API sync: usage endpoints, hard location filters, no exit IPs (Nov 2026)
 
 Synced against the live platform (backend release r84 `73b911d6`, gateway

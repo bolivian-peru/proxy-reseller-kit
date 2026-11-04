@@ -5,6 +5,7 @@ import {
   type JSX,
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 import type { ActiveSession } from '@proxies-sx/pool-sdk';
@@ -33,7 +34,7 @@ export interface ActiveSessionsTableProps {
    * TTL. Default true — they're internal and not user-actionable.
    */
   hideSynthesizedSessions?: boolean;
-  /** Called with the closed sessionKey after a successful close. */
+  /** Called when a binding release is acknowledged; existing sockets remain open. */
   onSessionClosed?: (sessionKey: string) => void;
   /** Called with the count after closeAll resolves. */
   onAllSessionsClosed?: (count: number) => void;
@@ -61,8 +62,7 @@ export interface ActiveSessionsTableProps {
  * - Copy-URL button (substitutes `<PASSWORD>` with `proxyPassword`).
  * - Close button — calls `DELETE <apiRoute>/my-sessions/:sessionKey`.
  *
- * Sessions auto-close on TTL — manual close is only for releasing the
- * pinned IP early.
+ * A binding release does not close existing sockets or revoke exported URLs.
  *
  * @example
  * ```tsx
@@ -94,6 +94,11 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
+  const [uncertainKeys, setUncertainKeys] = useState<string[]>([]);
+  const [allUncertain, setAllUncertain] = useState(false);
+  const readVersion = useRef(0);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [closingKey, setClosingKey] = useState<string | null>(null);
   const [closingAll, setClosingAll] = useState(false);
@@ -106,31 +111,30 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
   const { copy, copied } = useCopyToClipboard();
 
   const fetchSessions = useCallback(async () => {
+    const version = ++readVersion.current;
     try {
       const r = await fetch(`${apiRoute}/my-sessions`, { credentials: 'same-origin' });
+      if (version !== readVersion.current) return;
       if (!r.ok) {
         // Don't blow away prior state — surface the error but keep last-known sessions.
         setError(`Failed to load sessions (HTTP ${r.status})`);
         return;
       }
-      const body = (await r.json()) as { sessions?: unknown };
-      // A non-array `sessions` (error envelope, HTML proxy page parsed as JSON)
-      // would take `.filter`/`.map` down with it — the table is the only thing
-      // standing between a malformed response and the host app's whole tree.
-      // Non-object ENTRIES are dropped for the same reason: one `null` in the
-      // array is enough to throw on `s.isSynthesizedSid` a line later.
-      setSessions(
-        Array.isArray(body.sessions)
-          ? body.sessions.filter(
-              (s): s is ActiveSession => typeof s === 'object' && s !== null,
-            )
-          : [],
-      );
+      const body = (await r.json()) as { sessions?: unknown; truncated?: unknown };
+      if (version !== readVersion.current) return;
+      if (!Array.isArray(body.sessions) || body.sessions.some(
+        (s) => !s || typeof s !== 'object' || typeof s.sessionKey !== 'string' || !s.sessionKey,
+      )) {
+        setError('Session inventory is unavailable. Last observed rows are retained.');
+        return;
+      }
+      setSessions(body.sessions);
+      setTruncated(body.truncated === true);
       setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch {
+      if (version === readVersion.current) setError('Session inventory is unavailable. Last observed rows are retained.');
     } finally {
-      setLoading(false);
+      if (version === readVersion.current) setLoading(false);
     }
   }, [apiRoute]);
 
@@ -141,43 +145,68 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
     return () => clearInterval(id);
   }, [fetchSessions, refreshIntervalMs]);
 
-  const handleClose = useCallback(async (sessionKey: string) => {
-    if (!sessionKey) return;
+  const handleClose = useCallback(async (session: ActiveSession) => {
+    const { sessionKey, bindingGeneration } = session;
+    if (!sessionKey || allUncertain || uncertainKeys.includes(sessionKey)) return;
+    ++readVersion.current;
     setClosingKey(sessionKey);
+    setReleaseError(null);
     try {
-      const r = await fetch(`${apiRoute}/my-sessions/${encodeURIComponent(sessionKey)}`, {
+      const query = bindingGeneration ? `?generation=${encodeURIComponent(bindingGeneration)}` : '';
+      const r = await fetch(`${apiRoute}/my-sessions/${encodeURIComponent(sessionKey)}${query}`, {
         method: 'DELETE',
         credentials: 'same-origin',
       });
-      if (r.ok) {
-        onSessionClosed?.(sessionKey);
-        // Optimistically remove — next poll will reconcile.
-        setSessions((prev) => prev.filter((s) => s.sessionKey !== sessionKey));
+      const body = await r.json() as { success?: boolean; outcome?: string };
+      if (r.ok && body.success === true) {
+        setSessions((prev) => prev.filter((s) => s.sessionKey !== sessionKey || s.bindingGeneration !== bindingGeneration));
+        try {
+          onSessionClosed?.(sessionKey);
+        } catch {
+          setReleaseError('Binding release was acknowledged, but the application callback failed.');
+        }
+      } else if (r.ok && body.success === false) {
+        setReleaseError('Release was not confirmed. Refresh to inspect the current binding.');
+      } else {
+        throw new Error('Release outcome unavailable');
       }
+    } catch {
+      setUncertainKeys((prev) => [...new Set([...prev, sessionKey])]);
+      setReleaseError('Release outcome is unknown. Do not repeat it; ask your operator to reconcile the original operation.');
     } finally {
       setClosingKey(null);
     }
-  }, [apiRoute, onSessionClosed]);
+  }, [apiRoute, onSessionClosed, allUncertain, uncertainKeys]);
 
   const handleCloseAll = useCallback(async () => {
-    if (!confirm('Close all active sessions? This terminates every live connection — including ones you may still be using.')) return;
+    if (truncated || error || allUncertain || uncertainKeys.length) return;
+    if (!confirm('Release the listed bindings? Existing connections stay open, and exported URLs may create new bindings.')) return;
+    ++readVersion.current;
     setClosingAll(true);
+    setReleaseError(null);
     try {
       const r = await fetch(`${apiRoute}/my-sessions`, {
         method: 'DELETE',
         credentials: 'same-origin',
       });
-      if (r.ok) {
-        const body = (await r.json()) as { count?: number };
-        // Hosts put this straight into a toast — "Closed NaN sessions" is a
-        // worse outcome than falling back to what we last rendered.
-        onAllSessionsClosed?.(finiteOr(body.count, sessions.length));
+      const body = (await r.json()) as { success?: boolean; count?: number };
+      if (r.ok && body.success === true && Number.isInteger(body.count) && (body.count as number) >= 0) {
         setSessions([]);
+        try {
+          onAllSessionsClosed?.(body.count as number);
+        } catch {
+          setReleaseError('Binding releases were acknowledged, but the application callback failed.');
+        }
+      } else {
+        throw new Error('Complete release not confirmed');
       }
+    } catch {
+      setAllUncertain(true);
+      setReleaseError('Some binding releases may have succeeded. Do not repeat the operation; ask your operator to reconcile it.');
     } finally {
       setClosingAll(false);
     }
-  }, [apiRoute, onAllSessionsClosed, sessions.length]);
+  }, [apiRoute, onAllSessionsClosed, truncated, error, allUncertain, uncertainKeys]);
 
   const handleCopy = useCallback(async (session: ActiveSession) => {
     // The gateway emits an empty proxyUrl when the Redis row has no accountId
@@ -227,23 +256,24 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
             <button
               type="button"
               onClick={handleCloseAll}
-              disabled={closingAll}
+              disabled={closingAll || Boolean(closingKey) || truncated || Boolean(error) || allUncertain || uncertainKeys.length > 0}
               aria-busy={closingAll}
               className={cn('psx-button', 'psx-button-danger', classNames.button)}
             >
-              {closingAll ? 'Closing…' : 'Close all'}
+              {closingAll ? 'Releasing…' : 'Release all'}
             </button>
           )}
         </div>
       </div>
 
       {error && <p className="psx-sessions-error" role="status">{error}</p>}
+      {truncated && <p className="psx-sessions-error" role="status">Partial inventory: more bindings may exist. Bulk release is unavailable.</p>}
+      {releaseError && <p className="psx-sessions-error" role="status">{releaseError}</p>}
       {copyError && <p className="psx-sessions-error" role="status">{copyError}</p>}
 
-      {!loading && visible.length === 0 && (
+      {!loading && !error && visible.length === 0 && (
         <p className="psx-sessions-empty">
-          No active sessions. Open a connection to <code>gw.proxies.sx</code> with your proxy URL —
-          it'll appear here within a few seconds.
+          No bindings were observed in this response. This does not establish that there are no open connections.
         </p>
       )}
 
@@ -298,13 +328,13 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
                     </button>
                     <button
                       type="button"
-                      onClick={() => { void handleClose(s.sessionKey); }}
-                      disabled={isClosing || !s.sessionKey}
+                      onClick={() => { void handleClose(s); }}
+                      disabled={Boolean(closingKey) || closingAll || allUncertain || uncertainKeys.includes(s.sessionKey) || !s.sessionKey}
                       aria-busy={isClosing}
-                      aria-label={`Close ${rowLabel}`}
+                      aria-label={`Release ${rowLabel}`}
                       className={cn('psx-button', 'psx-button-danger', classNames.button)}
                     >
-                      {isClosing ? 'Closing…' : 'Close'}
+                      {isClosing ? 'Releasing…' : 'Release'}
                     </button>
                   </td>
                 </tr>
@@ -315,8 +345,8 @@ export function ActiveSessionsTable(props: ActiveSessionsTableProps): JSX.Elemen
       )}
 
       <p className="psx-sessions-help">
-        Sessions auto-close on TTL — closing manually is only needed if you want the device released
-        before the timer fires. Synthesized-sid sessions (5-min TTL) are hidden.
+        Release removes a binding, not existing connections. Reconnect to select a binding again;
+        a different IP is not guaranteed. Keep original connection settings in your application.
       </p>
     </div>
   );

@@ -4,6 +4,7 @@ import type {
   UpdatePoolAccessKeyInput,
   TopUpPoolAccessKeyInput,
   PoolAccessKey,
+  PoolKeyOperation,
   PoolAccessKeyAuditEvent,
   AuditQueryOpts,
   PakUsageSeries,
@@ -20,6 +21,7 @@ import type {
   RetryConfig,
   ActiveSession,
   ActiveSessionsResponse,
+  SessionBindingObservation,
 } from './types';
 import {
   ProxiesError,
@@ -55,7 +57,7 @@ const DEFAULT_RETRY: Required<RetryConfig> = {
  *   idempotencyKey: `mint_${customerId}`,  // tie to your domain
  * });
  *
- * const url = proxies.buildProxyUrl(key.key, { country: 'us', rotation: 'sticky' });
+ * const url = proxies.buildProxyUrl(key.key, { pool: 'peer', country: 'us', rotation: 'sticky' });
  * ```
  */
 export class ProxiesClient {
@@ -111,6 +113,9 @@ export class ProxiesClient {
    * Build a customer-facing proxy URL. Sugar over the standalone
    * {@link buildProxyUrl} helper, using the `proxyUsername` and `gatewayHost`
    * from this client's config.
+   *
+   * Explicitly choose `opts.pool`; omission defaults to the mobile `mbl` pool.
+   * Choose `peer` plus `ipType: 'residential'` for residential-only routing.
    *
    * @throws {ProxiesConfigError} if `proxyUsername` wasn't set on the client.
    */
@@ -244,10 +249,11 @@ export class PoolKeysApi {
    * Mint a new Pool Access Key. Returns the full key record including the secret `key`.
    *
    * Pass `idempotencyKey` (UUIDv4 or a deterministic ID tied to a domain
-   * object like a `payment_intent_id`) for sequential cached replay. The
-   * provider's nominal 24h cache is not concurrent/crash-safe admission.
-   * Persist intent before dispatch and reconcile ambiguous writes; the SDK
-   * does not automatically retry shared-pool mutations.
+   * object like a `payment_intent_id`). The durable lifecycle contract admits
+   * immutable intent once and exposes operation inspection after response loss.
+   * Persist intent before dispatch; use operationByToken() for reconciliation.
+   * The SDK does not automatically retry shared-pool mutations. Pre-cutover
+   * cached operations require review; missing old evidence does not allow replay.
    *
    * @example
    * ```ts
@@ -301,6 +307,30 @@ export class PoolKeysApi {
     );
   }
 
+  /** Inspect an operation without redispatching its effect. */
+  operation(operationId: string): Promise<PoolKeyOperation> {
+    if (!operationId) throw new ProxiesConfigError('poolKeys.operation: operationId is required');
+    return this.client.request(`/reseller/pool-keys/operations/${encodeURIComponent(operationId)}`);
+  }
+
+  /** Recover a lost response using the token persisted before the original write. */
+  operationByToken(idempotencyKey: string): Promise<PoolKeyOperation> {
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey)) throw new ProxiesConfigError('poolKeys.operationByToken: invalid operation key');
+    return this.client.request('/reseller/pool-keys/operations/lookup', { headers: { 'Idempotency-Key': idempotencyKey } });
+  }
+
+  /** Resume only a current quota-only hold after an authorized entitlement reconciliation. */
+  resume(keyId: string, input: { expectedLifecycleVersion: number; idempotencyKey: string }): Promise<PoolAccessKey> {
+    if (!keyId || !Number.isSafeInteger(input.expectedLifecycleVersion) || input.expectedLifecycleVersion < 0) {
+      throw new ProxiesConfigError('poolKeys.resume: keyId and a valid lifecycle version are required');
+    }
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(input.idempotencyKey)) throw new ProxiesConfigError('poolKeys.resume: invalid operation key');
+    return this.client.request(`/reseller/pool-keys/${encodeURIComponent(keyId)}/resume`, {
+      method: 'POST', headers: { 'Idempotency-Key': input.idempotencyKey },
+      body: JSON.stringify({ expectedLifecycleVersion: input.expectedLifecycleVersion }),
+    });
+  }
+
   /**
    * Update a key. Any field left undefined is untouched.
    *
@@ -308,15 +338,16 @@ export class PoolKeysApi {
    *   and existing tunnels may outlive that change; no immediate cutoff is promised.
    *
    *   For top-ups (extending an existing credit), prefer {@link topUp}
-   *   over `update` for its atomic cap increment. Serialize expiry extensions:
-   *   the provider computes them from a prior read, so concurrent extensions
-   *   can overwrite one another.
+   *   over `update` for its cap increment. The lifecycle contract serializes
+   *   key mutations; a busy or uncertain key requires reconciliation. Top-up
+   *   does not clear holds or resume the key. Use conditional resume after review.
    */
-  async update(keyId: string, input: UpdatePoolAccessKeyInput): Promise<PoolAccessKey> {
+  async update(keyId: string, input: UpdatePoolAccessKeyInput, opts?: { idempotencyKey?: string }): Promise<PoolAccessKey> {
     if (!keyId) throw new ProxiesConfigError('poolKeys.update: keyId is required');
     return this.client.request<PoolAccessKey>(`/reseller/pool-keys/${encodeURIComponent(keyId)}`, {
       method: 'PATCH',
       body: JSON.stringify(input),
+      headers: operationHeaders(opts?.idempotencyKey),
     });
   }
 
@@ -326,12 +357,11 @@ export class PoolKeysApi {
    * - `addTrafficGB` is added to the current cap server-side via a single
    *   `$inc`. If the existing cap is `null` (unbounded), it stays `null`.
    * - `extendDays` computes from `max(now, observed_expiresAt)` — if no
-   *   expiry was observed, from `now`. The read and update are separate;
-   *   concurrent extensions can be lost or overwrite a newer expiry.
+   *   expiry was observed, from `now`, inside the key's admitted operation.
    *
-   * Pass a persisted `idempotencyKey` (e.g. your invoice id) for sequential
-   * replay. It does not guarantee one effect under concurrent calls or a
-   * provider crash. Ambiguous outcomes require reconciliation before retry.
+   * Persist `idempotencyKey` (e.g. your invoice id) before dispatch. Inspect
+   * ambiguous outcomes with operationByToken(); do not repeat the write under
+   * a fresh token. Existing quota use and independent holds are preserved.
    *
    * @example
    * ```ts
@@ -377,10 +407,10 @@ export class PoolKeysApi {
    * Rotate the secret value of a key. Use this if the old value was leaked.
    * The stored secret changes; gateway caches and existing tunnels may lag.
    *
-   * Pass a persisted `idempotencyKey` for sequential cached replay. Its
-   * historical response can contain an obsolete secret after another rotation.
-   * Recover an ambiguous result with {@link get}, not another regeneration.
-   * A current read still cannot fence another in-flight writer.
+   * Persist `idempotencyKey` before dispatch. Inspect the historical operation
+   * separately from the CURRENT secret returned by {@link get}. Do not perform
+   * another regeneration to recover a lost response. A current credential
+   * observation does not fence another authorized writer or revoke open sockets.
    *
    * @returns The full key record with the new `key` field.
    *   (Until 0.3.0 this returned `{id, key}` only — the old fields are
@@ -405,11 +435,11 @@ export class PoolKeysApi {
   }
 
   /** Permanently delete a key. Cannot be undone. */
-  async delete(keyId: string): Promise<void> {
+  async delete(keyId: string, opts?: { idempotencyKey?: string }): Promise<void> {
     if (!keyId) throw new ProxiesConfigError('poolKeys.delete: keyId is required');
     await this.client.request<{ message: string }>(
       `/reseller/pool-keys/${encodeURIComponent(keyId)}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: operationHeaders(opts?.idempotencyKey) },
     );
   }
 
@@ -630,7 +660,7 @@ export class PoolApi {
    *
    * @example Full catalogue, every country, both pools
    * ```ts
-   * const all = await client.pool.getCarrierStock();          // peer, all countries
+   * const all = await client.pool.getCarrierStock({ pool: 'peer' }); // peer, all countries
    * const mob = await client.pool.getCarrierStock({ pool: 'mbl' });
    * const us  = await client.pool.getCarrierStock({ country: 'us', pool: 'all' });
    * ```
@@ -681,7 +711,7 @@ export class PoolApi {
    *
    * @example
    * ```ts
-   * const { cities, regions } = await client.pool.getCities('us');
+   * const { cities, regions } = await client.pool.getCities('us', { pool: 'peer' });
    * // cities:  [{ city: 'brooklyn', label: 'Brooklyn', count: 6 }, …]
    * // regions: [{ region: 'ca', count: 43 }, { region: 'fl', count: 35 }, …]
    * const url = buildProxyUrl(me, pak, { country: 'us', pool: 'peer', city: 'brooklyn' });
@@ -723,11 +753,11 @@ export class PoolApi {
    *
    * @example Progressive narrowing
    * ```ts
-   * const all = await client.pool.getFacets({ country: 'us' });
+   * const all = await client.pool.getFacets({ pool: 'peer', country: 'us' });
    * // all.cities, all.states, all.carriers each reflect the whole country
-   * const inCA = await client.pool.getFacets({ country: 'us', state: 'ca' });
+   * const inCA = await client.pool.getFacets({ pool: 'peer', country: 'us', state: 'ca' });
    * // inCA.cities + inCA.carriers now only what co-exists in California
-   * const onComcast = await client.pool.getFacets({ country: 'us', carrier: '7922' });
+   * const onComcast = await client.pool.getFacets({ pool: 'peer', country: 'us', carrier: '7922' });
    * // onComcast.cities now only cities where Comcast (ASN 7922) has stock
    * ```
    */
@@ -799,8 +829,8 @@ export class SessionsApi {
    *
    * MULTI-TENANT: when one API key serves many customers, pass `{ pakId }` to
    * scope the result to a single customer's sessions. `pakId` is the customer's
-   * Pool Access Key id (`PoolAccessKey.id`, what `getUserKeyId` returns) or its
-   * `pak_` value. Without it, the API key holder's full session list is returned.
+   * Pool Access Key record id (`PoolAccessKey.id`, what `getUserKeyId` returns).
+   * Without it, the API key holder's full session list is returned.
    *
    * @example
    * ```ts
@@ -815,7 +845,7 @@ export class SessionsApi {
    * @example multi-tenant reseller
    * ```ts
    * // In your customer dashboard backend
-   * const { sessions } = await client.sessions.list(customer.pakKey);
+   * const { sessions, truncated } = await client.sessions.list({ pakId: customer.providerKeyId });
    * ```
    *
    * @since 0.4.0 — `pakKey` param added 0.5.0 to close cross-customer
@@ -826,17 +856,26 @@ export class SessionsApi {
     return this.client.request<ActiveSessionsResponse>(`/gateway/pool/my-sessions${qs}`);
   }
 
+  /** Read one binding without widening the caller's PAK scope. Requires binding contract v2. */
+  get(sessionKey: string, opts: { pakId: string }): Promise<SessionBindingObservation> {
+    if (!sessionKey || !opts?.pakId) throw new ProxiesConfigError('sessions.get: sessionKey and pakId are required');
+    return this.client.request(`/gateway/pool/my-sessions/${encodeURIComponent(sessionKey)}?pakId=${encodeURIComponent(opts.pakId)}`);
+  }
+
   /**
-   * Close ONE session. The customer's connection drops on the next
-   * gateway-side check (within ~5 s).
-   *
-   * Idempotent — closing an already-closed or non-existent session returns
-   * `success: false` with `Session not found`. MULTI-TENANT: pass `{ pakId }`
+   * Release ONE binding. Existing sockets continue; an exported URL may rebind.
+   * Always check `success`. A timeout is an unknown outcome, not safe to replay
+   * against a potentially newer binding. Pass its observed `generation` for a
+   * conditional release on gateway versions supporting that contract.
+   * MULTI-TENANT: pass `{ pakId }`
    * so the server verifies the session belongs to that customer before closing —
    * without it, any session under the API key holder is closable.
    */
-  close(sessionKey: string, opts?: { pakId?: string }): Promise<{ success: boolean; message: string }> {
-    const qs = opts?.pakId ? `?pakId=${encodeURIComponent(opts.pakId)}` : '';
+  close(sessionKey: string, opts?: { pakId?: string; generation?: string }): Promise<{ success: boolean; message: string }> {
+    const query = new URLSearchParams();
+    if (opts?.pakId) query.set('pakId', opts.pakId);
+    if (opts?.generation) query.set('generation', opts.generation);
+    const qs = query.size ? `?${query}` : '';
     return this.client.request(
       `/gateway/pool/my-sessions/${encodeURIComponent(sessionKey)}${qs}`,
       { method: 'DELETE' },
@@ -860,6 +899,12 @@ export class SessionsApi {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function operationHeaders(idempotencyKey?: string): Record<string, string> {
+  if (idempotencyKey === undefined) return {};
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey)) throw new ProxiesConfigError('Invalid operation key');
+  return { 'Idempotency-Key': idempotencyKey };
 }
 
 /** `?days=N` for the two usage endpoints, or '' when unset. Rejects a non-positive window. */

@@ -61,7 +61,8 @@ export interface PoolPortalProps {
    *   six above.
    * - `best` / `any` — let the gateway pick.
    *
-   * Defaults to `mbl` to preserve the behaviour of every existing embed.
+   * Set this explicitly. The `mbl` default preserves existing embeds only.
+   * `peer` alone is mixed, and a `safe` PAK still forces modem routing.
    * Widening `countries` WITHOUT setting this builds e.g. `…-mbl-de-…`,
    * which always fails.
    *

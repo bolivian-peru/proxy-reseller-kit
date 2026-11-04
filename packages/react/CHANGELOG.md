@@ -2,6 +2,17 @@
 
 All notable changes to this package are documented here.
 
+## 0.15.0 — conservative session and quota handling (4 November 2026)
+
+- Forward caller operation tokens through regeneration and preserve successful provider results when an audit callback fails.
+- Validate key identity, raw usage, cap, enabled and expiry observations; secret-bearing responses use `no-store`.
+- Retain existing session rows on refresh failure, expose truncated inventory, disable unsafe bulk release, and send observed binding generations on selected release.
+- Keep uncertain release outcomes visible; hosts must persist those outcomes across application restarts.
+- Show missing or invalid quickstart usage as unavailable, while retaining genuine zero and measured quota overshoot.
+- Updated routing help removes fixed-IP, distinct-IP and exact timing promises. Depends on `@proxies-sx/pool-sdk ^0.15.0`.
+
+The independent starter payment example still requires durable fulfilment before production use; see [issue #4](https://github.com/bolivian-peru/proxy-reseller-kit/issues/4).
+
 ## 0.14.0 — live-API sync (Nov 2026)
 
 Synced against the live platform (backend r84, gateway `d2e9f99e`) on

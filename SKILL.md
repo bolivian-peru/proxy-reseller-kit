@@ -5,6 +5,18 @@ description: Build a branded mobile-proxy reseller business or embed Proxies.sx 
 
 # Proxies.sx Pool Portal — Reseller Toolkit
 
+**Explicitly choose `pool`; do not rely on the SDK mobile-pool default.**
+URL builders default to `mbl`; choose `peer` for the shared SDK network,
+`peer` plus `ipType: 'residential'` for residential-only routing, or `any` only
+when mixed pools are intended. A `qualityTier: 'safe'` PAK forces `mbl`.
+Keep discovery and generated connections on the same chosen pool.
+See [pool selection](./docs/USERNAME-DSL.md#choose-the-pool-explicitly) before copying examples.
+
+**Release status:** exact binding reads, conditional release, durable operation lookup
+and conditional resume below are candidates until the [release table](docs/SHARED-POOL-CONTRACT.md)
+confirms deployment and package publication. Client code alone does not release
+a provider contract.
+
 Open-source toolkit for embedding the [Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy) into customer-facing apps. Three layers, three audiences:
 
 1. **`@proxies-sx/pool-sdk`** — typed REST client (npm). For JS/TS code that mints `pak_` keys, lists usage, and builds proxy URLs.
@@ -32,9 +44,9 @@ Two pools, selected via the `pool` token in the username DSL:
 **Quality bar.** Peers are throughput-graded; only those clearing the live floor (`PEER_THROUGHPUT_FLOOR_KBPS`, ~500 KB/s) are routable. Plenty for scraping / API / anti-bot work — the value is the clean, in-country IP, not raw bandwidth. The `mbl` pool is the ultra-stable carrier-modem tier — same $4/GB, smaller footprint (6 countries).
 
 **Targeting depth (all peer-pool).** Beyond country you can narrow on carrier, city and region — build the pickers from the discovery methods, never hardcode:
-- `client.pool.getCarrierStock(cc)` → carriers/ASNs. Route with `buildProxyUrl({ asn })` (exact) or `{ carrier }` (name slug). Both are hard filters.
-- `client.pool.getCities(cc)` → `{ cities, regions }`. Route with `{ city }` / `{ state }` — **both hard, peer-only**: no routable peer there → `E_NO_STOCK_COUNTRY`, and on `mbl` they always refuse. Only offer what the counts show.
-- `client.pool.getFacets({ country, city?, state?, carrier? })` → **cross-filtered** lists: feed the current selection back so each picker narrows the others ("city smallens carrier and vice versa"). This is what keeps a three-picker UI in agreement with what the gateway will actually route. `<PoolSessionSpawner facets={…} carrierStock={…}>` wires all of it; the `usePoolFacets` / `usePoolCarrierStock` hooks fetch it. **(v0.13.0+)**
+- `client.pool.getCarrierStock({ country: cc, pool: 'peer' })` → carriers/ASNs. Route with explicit `pool: 'peer'` plus `asn` (exact) or `carrier` (name slug). Both are hard filters.
+- `client.pool.getCities(cc, { pool: 'peer' })` → `{ cities, regions }`. Route with `{ city }` / `{ state }` — **both hard, peer-only**: no routable peer there → `E_NO_STOCK_COUNTRY`, and on `mbl` they always refuse. Only offer what the counts show.
+- `client.pool.getFacets({ pool: 'peer', country, city?, state?, carrier? })` → **cross-filtered** lists: feed the current selection back so each picker narrows the others ("city smallens carrier and vice versa"). This is what keeps a three-picker UI in agreement with what the gateway will actually route. `<PoolSessionSpawner facets={…} carrierStock={…}>` wires all of it; the `usePoolFacets` / `usePoolCarrierStock` hooks fetch it. **(v0.13.0+)**
 
 ---
 
@@ -331,6 +343,7 @@ import '@proxies-sx/pool-portal-react/styles.css';
 export default function Dashboard() {
   return (
     <PoolPortal
+      pool="mbl"
       apiRoute="/api/pool"
       branding={{ name: 'AcmeProxies', primaryColor: '#7c3aed' }}
     />
@@ -384,16 +397,14 @@ await db.update(customerId, { pakKeyId: key.id, pakKey: key.key });
 const proxyUrl = proxies.buildProxyUrl(key.key, {
   pool: 'peer',       // the flagship network — widest country reach
   country: 'us',
-  sid: customerId,    // session name — REQUIRED for stickiness to persist
+  sid: savedConfiguration.sid, // persisted opaque SID unique per logical configuration
   rotation: 'sticky', // without this, the gateway default auto10 rotates ~every 10 min
 });
 // → "http://psx_abc-peer-us-sid-cust_7a3f9b-rot-sticky:pak_xyz@gw.proxies.sx:7000"
 //
-// IMPORTANT: sticky pins the DEVICE, not the IP. Mobile carriers can re-NAT a
-// held modem's egress IP — the gateway compensates by weighting IP-stability,
-// and `strict: true` adds a hard stability floor on top. Residential peers hold
-// addresses for hours-to-days. If the workflow needs a guaranteed exclusive
-// device (cf_clearance, banking), use a Reserved IP — docs/RESERVED-IPS.md.
+// Sticky prefers an eligible binding; it does not reserve a device or address.
+// Failover and the device's network can change the result. A Reserved IP is a
+// separate product with its own contract — docs/RESERVED-IPS.md.
 // Full token reference: docs/USERNAME-DSL.md
 ```
 
@@ -407,7 +418,7 @@ await proxies.poolKeys.topUp(keyId, {              // atomic cap+expiry extensio
   extendDays: 30,
   idempotencyKey: `topup_${invoiceId}`,
 });
-await proxies.poolKeys.regenerate(keyId);          // rotate the secret (old pak_ dies within ~30s — see below)
+await proxies.poolKeys.regenerate(keyId, { idempotencyKey: persistedOperationId }); // recover ambiguity by reading current scoped key
 await proxies.poolKeys.reveal(keyId);              // audit-logged unmask (v0.5.0+)
 await proxies.poolKeys.audit({ limit: 50 });       // 90-day forensic log across all keys (v0.5.0+)
 await proxies.poolKeys.auditForKey(keyId);         // forensic log for one key (v0.5.0+)
@@ -418,11 +429,13 @@ await proxies.pool.getStock();                     // live endpoint count by cou
 await proxies.pool.getIncidents();                 // active pool incidents
 ```
 
-**Auto-suspend on cap (v0.5.0+):** when traffic crosses `trafficCapGB`, the platform flips `enabled=false` automatically. `topUp()` does NOT auto re-enable. For trusted payment paths, pair the call:
-```ts
-await proxies.poolKeys.topUp(keyId, { addTrafficGB: 10, idempotencyKey: invoiceId });
-await proxies.poolKeys.update(keyId, { enabled: true });   // lift the suspend
-```
+**Cap suspension:** `topUp()` never resumes a disabled key. Persist the intended
+payment/grant and operation token, dispatch once, then reconcile current raw
+usage, cumulative cap, expiry, account eligibility and all local/provider holds.
+Routine sync must not send `enabled: true`. An unknown disable needs review.
+After the [candidate lifecycle release](docs/SHARED-POOL-CONTRACT.md#conditional-resume)
+is verified, a deliberate `poolKeys.resume(keyId, { expectedLifecycleVersion,
+idempotencyKey })` can clear only a sole cap hold at the observed version.
 
 **Time-bounded credits with `expiresAt` (v0.2.0+):**
 ```ts
@@ -431,14 +444,14 @@ const key = await proxies.poolKeys.create({
   label: 'customer:alice',
   trafficCapGB: 10,
   expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString(),
-  idempotencyKey: paymentIntentId,                 // safe to retry on 504 (v0.3.0+)
+  idempotencyKey: persistedOperationId,            // saved before dispatch; recover a 504 by reading the operation
 });
 
-// On top-up — PREFERRED: atomic single-write, race-safe
+// On top-up: persist intent, serialize same-key work, and reconcile unknown outcomes
 await proxies.poolKeys.topUp(key.id, {
   addTrafficGB: 15,                                // server-side $inc
   extendDays: 60,                                  // expiresAt = max(now, current) + 60d
-  idempotencyKey: `topup_${invoiceId}`,            // dedupes retries within 24h
+  idempotencyKey: `topup_${invoiceId}`,            // persist before dispatch; do not replay an unknown effect
 });
 
 // Remove the expiry (perpetual key) — still uses update()
@@ -450,18 +463,18 @@ isPoolKeyExpired(key);          // boolean
 daysUntilPoolKeyExpiry(key);    // number | null
 ```
 
-The gateway rejects expired keys **immediately** (no wait for the nightly cron). The platform's daily cron (03:30 UTC) sets `enabled=false` on past-expiry keys for tidier admin queries.
+Expiry is enforced by authentication and tunnel rechecks; cache/grace behavior means there is no promised immediate socket cutoff. The platform's daily cron (03:30 UTC) sets `enabled=false` on past-expiry keys for tidier admin queries.
 
 **Production-readiness (v0.3.0+):**
 ```ts
-// Built-in retry on 5xx/429/timeouts/network errors. Default: 3 attempts.
-// Honors Retry-After. Skip 4xx (except 429). Don't wrap your own retry.
+// Reads retry bounded 5xx/429/transport failures and honor Retry-After.
+// Shared-key and binding mutations make one attempt; do not wrap them in retries.
 const proxies = new ProxiesClient({
   apiKey: process.env.PROXIES_SX_API_KEY!,
   retry: { attempts: 3, baseDelayMs: 250, maxDelayMs: 4000 },  // these are the defaults
 });
 
-// Idempotency-Key on writes — safe to retry the same call after a 504
+// Persist the operation token and intent first; a 504 requires read-only recovery
 await proxies.poolKeys.create({
   label: 'customer:alice',
   trafficCapGB: 10,
@@ -473,7 +486,7 @@ try {
   await proxies.poolKeys.create({ label: 'alice', trafficCapGB: 10 });
 } catch (err) {
   if (err instanceof ProxiesApiError) {
-    logger.error({ status: err.status, requestId: err.requestId, body: err.body });
+    logger.error({ status: err.status, requestId: err.requestId }); // omit raw bodies/secrets
     // Paste err.requestId in support tickets — it's the X-Request-ID server-side
   }
 }
@@ -496,9 +509,15 @@ Use when the user's backend is **not JavaScript**. The SDK is a thin wrapper aro
 | `GET` | `/v1/reseller/pool-keys/{keyId}` | Fetch a single key by id (v0.3.0+) |
 | `PATCH` | `/v1/reseller/pool-keys/{keyId}` | Update `label` / `enabled` / `trafficCapGB` / `expiresAt` |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/topup` | Atomic cap-and/or-expiry extension (v0.3.0+). Body: `{addTrafficGB?, extendDays?}`. Accepts `Idempotency-Key` |
-| `POST` | `/v1/reseller/pool-keys/{keyId}/regenerate` | Rotate secret. The old `pak_` keeps authenticating for **up to 30 s** (gateway auth cache) — not an instant kill-switch, see [Revocation timing](#revocation-timing-regenerate-is-not-instant). Returns full record from v0.3.0. **Sensitive.** |
+| `POST` | `/v1/reseller/pool-keys/{keyId}/regenerate` | Change the stored secret. No fixed cache/old-password/socket cutoff; recover ambiguity using the current scoped key. **Sensitive.** |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/reveal` | Audit-logged unmask (returns full pak_ + records `reveal` event). Use this in customer-facing UIs instead of displaying the key from `list`. |
-| `DELETE` | `/v1/reseller/pool-keys/{keyId}` | Delete permanently |
+| `DELETE` | `/v1/reseller/pool-keys/{keyId}` | Remove key; not immediate socket termination |
+| `GET` | `/v1/reseller/pool-keys/operations/lookup` | Candidate: read original operation by saved `Idempotency-Key` header |
+| `GET` | `/v1/reseller/pool-keys/operations/{operationId}` | Candidate: secret-free operation state; no redispatch |
+| `POST` | `/v1/reseller/pool-keys/{keyId}/resume` | Candidate: `{ expectedLifecycleVersion }` plus token header; sole cap hold only |
+| `GET` | `/v1/gateway/pool/my-sessions?pakId={ownedId}` | Bounded scoped inventory; preserve `truncated` and errors |
+| `GET` | `/v1/gateway/pool/my-sessions/{encodedKey}?pakId={ownedId}` | Candidate: exact binding observation and generation |
+| `DELETE` | `/v1/gateway/pool/my-sessions/{encodedKey}?pakId={ownedId}&generation={observedGeneration}` | Candidate: one conditional release; stale generation conflicts, no socket teardown |
 | `GET` | `/v1/reseller/pool-keys/audit` | 90-day forensic log across all keys. Filter via `?action=...`, paginate via `?before=<ISO>&limit=N` (max 500) |
 | `GET` | `/v1/reseller/pool-keys/{keyId}/audit` | 90-day forensic log scoped to one key (`limit` max 200) |
 | `GET` | `/v1/reseller/pool-keys/{keyId}/usage?days=30` | Per-day `{ date, mbIn, mbOut, mb }` series for one key (1–365 days, gap-filled). Ownership-scoped → safe to drive a customer's own chart |
@@ -506,7 +525,7 @@ Use when the user's backend is **not JavaScript**. The SDK is a thin wrapper aro
 
 **Three universal headers:**
 
-- `Idempotency-Key: <8-128 char [A-Za-z0-9_-]>` on `POST`/`PATCH` — dedupes retries within 24h. Pass any unique-per-domain ID (UUIDv4, payment_intent_id, invoice_id). Same key in 24h returns the cached response instead of re-executing.
+- Persist an `Idempotency-Key: <8-128 char [A-Za-z0-9_-]>` and immutable intent before each write. The SDK makes one attempt. Keep uncertain mutations gated across restart and reconcile according to the verified release in the [shared-pool contract](docs/SHARED-POOL-CONTRACT.md); a timeout does not authorize another write.
 - `X-Request-ID` is set on every response by the platform. Echo it in your logs. Paste it in support tickets — that's how we look up your request server-side without back-and-forth.
 - `X-Confirm-Password: <current_password>` — only required on **sensitive ops** (mint, regenerate) when the calling JWT was issued > 5 min ago. API-key callers bypass this entirely. See [Fresh-Auth Guard](#fresh-auth-guard) below.
 
@@ -528,7 +547,7 @@ UI pattern: catch `FRESH_AUTH_REQUIRED`, prompt the user for their current passw
 
 ### Auto-Suspend on Cap Exceeded
 
-When traffic crosses `trafficCapGB`, the platform flips `enabled = false` automatically and writes an `auto_suspended_cap_exceeded` audit event. Your reseller must inspect and explicitly top up + re-enable. Don't paper over this with a webhook auto-recreate — the suspend is intentional, to limit blast radius if the key was compromised.
+Cap suspension is independent of purchasing more allowance. Apply an authorized cap increase once, reconcile raw usage/cap and all holds, then review eligibility for a separate conditional resume. An old audit event alone cannot authorize it. Do not recreate a key or send `enabled: true` from routine sync/payment callbacks to bypass a disable.
 
 ### `trafficCapGB` is mandatory — an uncapped key is partner-only
 
@@ -547,7 +566,10 @@ The exemption exists because partner accounts settle wholesale out-of-band; a se
 1. **Never emit `create({ label })` with no cap** — it 400s on the first call.
 2. There is **no "blocked" sentinel value.** `0` is rejected, not stored. To disable a key use `update(id, { enabled: false })`.
 
-Cap the key to exactly what the customer paid for; that is what makes the auto-suspend above a real spend ceiling rather than a nicety.
+Set the cumulative cap from verified entitlement. Accounting flushes, caches and
+open connections permit some overshoot; a cap is not a zero-overshoot spending
+guarantee. Never use rounded `trafficUsedGB` for eligibility or treat missing
+raw usage as zero.
 
 Base URL: `https://api.proxies.sx/v1`.
 
@@ -681,11 +703,10 @@ http://psx_acme-peer-us-sid-customer123-rot-sticky:pak_a1b2c3@gw.proxies.sx:7000
 Route customer123 through the US peer network and hold one device for the
 session. Two things to tell the customer, both correct-by-design:
 
-1. **Sticky pins the DEVICE, not the IP.** Mobile CGNAT can still re-NAT a held
-   modem's exit address. Residential peers hold addresses far longer, which is
-   why `peer` + `sticky` is the recommended pairing for IP-hold work. For a
-   guaranteed exclusive device, use a **Reserved IP** —
-   [`docs/RESERVED-IPS.md`](./docs/RESERVED-IPS.md).
+1. **Sticky is a binding preference, not a reservation or immutable IP.**
+   Failover, rotation or the device's network can change the result.
+   [`Reserved IPs`](./docs/RESERVED-IPS.md) are a separate product with their
+   own eligibility, substitution and payment rules.
 2. **`sticky` needs the `-sid-`.** Both tokens, every time.
 
 Full explanation: [wiki page Sticky Sessions and Rotation](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/Sticky-Sessions-and-Rotation).
@@ -694,7 +715,7 @@ The SDK's `buildProxyUrl(pakKey, opts)` generates this. In other languages,
 build the string manually — note both tokens are needed for stickiness:
 
 ```python
-def build_proxy_url(reseller, pak_key, country='us', pool='peer',
+def build_proxy_url(reseller, pak_key, *, pool, country='us',
                     sid=None, rotation='sticky'):
     parts = [reseller, pool, country]
     if sid:
@@ -743,40 +764,21 @@ DO NOT skip these. Burn them into any code generated for the user:
 
 1. **`PROXIES_SX_API_KEY` is server-only.** Never inline it in `next.config.js`, never `NEXT_PUBLIC_*` it, never ship it to the browser bundle. The trust boundary lives at your backend.
 2. **Scope every request** by the authenticated customer. In the React PATH B example, `getSessionUserId` MUST read the session and `getUserKeyId` MUST map that user to their own `pakKeyId` — without them, customer A can read/regenerate customer B's keys.
-   - ✅ **Session routes are scoped per-customer since 0.6.0** (npm now serves 0.9.0): `createPoolApiHandlers()`'s `/my-sessions` GET + DELETE routes thread the caller's `pakId` via `getUserKeyId` → `sessions.list({ pakId })` / `close(key, { pakId })`, and `ActiveSession` carries `pakKeyId`. ⚠️ Only if you are pinned to the legacy `0.5.x` packages: those routes were NOT scoped (any signed-in customer could list/close other customers' sessions) — upgrade (`npm i @proxies-sx/pool-portal-react@latest`) rather than exposing them. Confirm with `npm view @proxies-sx/pool-portal-react version`.
+   - Pass the customer's stored PAK record id on every session read and release. API scoping and binding identity are separate guarantees; use the released [session contract](docs/SHARED-POOL-CONTRACT.md). Keep opaque SIDs unique per customer/configuration and retain old exported URLs when migrating.
 3. **Use parameterized SQL** if you're storing keys (the starter app does this — `$1`, `$2` placeholders, never string interpolation).
 4. **Verify Stripe webhook signatures.** The starter app's webhook handler does this; if you adapt it, do not comment out the signature check "to test".
-5. **Rotate leaked `pak_` keys immediately** via `regenerate()` — but budget for the **~30 s** revocation window below, and close the live sessions too.
+5. **Handle leaked keys through an authorized durable regeneration operation.** There is no fixed revocation deadline; binding release does not terminate open sockets.
 6. **Store `psx_` keys in a secrets manager**, not in source. The starter uses `.env`; production deployments should use 1Password / Doppler / AWS Secrets Manager / etc.
 
-### Revocation timing: `regenerate()` is not instant
+### Password recovery and revocation
 
-Older revisions of this file claimed the old `pak_` died "within ~1 second."
-That is wrong, and if you build a leaked-credential runbook on it you will
-under-estimate your exposure. What actually happens:
-
-- `regenerate()` swaps the secret in the platform database immediately.
-- The gateway caches auth results for **30 s** (`CACHE_TTL_MS = 30000` in
-  `gateway/src/auth/http-auth.ts`), keyed on `accountId:password`. Nothing
-  invalidates that entry on rotate. **The old secret keeps authenticating new
-  connections for up to 30 s.**
-- **Connections already established are not torn down.** An in-flight tunnel
-  runs until it closes on its own, however long that is.
-- If the platform API is unreachable, the gateway serves last-known-good auth
-  for `GW_AUTH_GRACE_MS` (default **15 min**). A real `valid:false` is always
-  honoured — but during an outage a *stale cached pass* can outlive the rotation.
-
-`update(id, { enabled: false })` sits behind the same 30 s cache, so it is not
-faster. To actually cut a leaked key off:
-
-```ts
-// 1. Kill the secret (new connections stop within ~30s)
-await proxies.poolKeys.regenerate(keyId);
-// 2. Kill the live tunnels the old secret already opened
-await proxies.sessions.closeAll({ pakId: keyId });
-```
-
-Tell customers "revoked within about 30 seconds", never "revoked instantly."
+Regeneration changes the stored secret. Authentication caches, outage grace and
+periodic tunnel checks affect propagation; there is no guaranteed 30-second cutoff.
+A binding release does not terminate open sockets. After a lost response, read the
+current scoped key and save it securely; do not regenerate again merely because
+local persistence failed. Preserve the original operation and uncertainty gate.
+A historical mutation result and a current secret observation are different facts.
+See [the shared-pool contract](docs/SHARED-POOL-CONTRACT.md) for the deployed recovery interfaces.
 
 ## Pool IPs are not publicly enumerable (May 2026)
 
@@ -835,24 +837,34 @@ console.log(`${ours.trafficUsedGB} / ${ours.trafficCapGB ?? '∞'} GB used`);
 
 ### Top-up: customer pays for more, increase the cap
 
-Prefer the atomic `topUp()` over a read-modify-write `update()` — it `$inc`s the cap and extends expiry in a single server-side write, immune to the race where two concurrent renewals clobber each other:
+Use `topUp()` instead of a read-modify-write cap update, but keep immutable intent,
+serialized same-key writes and durable recovery in your application:
 
 ```ts
+// persistedTopUpOperationId and intended addTrafficGB were saved before dispatch.
 await proxies.poolKeys.topUp(customer.pakKeyId, {
   addTrafficGB: additionalGB,
   extendDays: 30,
-  idempotencyKey: stripeEvent.id,
+  idempotencyKey: persistedTopUpOperationId,
 });
-// If the key auto-suspended at its old cap, top-up does NOT re-enable it —
-// flip it back explicitly (see Auto-Suspend section above):
-await proxies.poolKeys.update(customer.pakKeyId, { enabled: true });
 ```
+
+A top-up leaves a disabled key disabled. Reconcile entitlement, raw usage/cap,
+expiry, account eligibility and every hold before an authorized conditional
+resume. Do not append `update({ enabled: true })`. Candidate operation reads are
+`poolKeys.operationByToken(savedToken)` and `poolKeys.operation(savedOperationId)`;
+lookup `404` is not proof that an old/pre-cutover request had no effect. See the
+[release-gated lifecycle contract](docs/SHARED-POOL-CONTRACT.md).
 
 ### Customer is an AI agent → accept USDC via x402 (instead of, or alongside, Stripe)
 
 If the buyer is an autonomous agent rather than a human with a card, you can sell proxies on the same rail the agent economy already speaks: **HTTP 402 + USDC on-chain**. The agent calls your endpoint, gets `402 Payment Required` with *your* wallet address, signs a USDC payment authorization on Base or Solana, retries with it, and you mint a `pak_` capped at exactly what they paid for. You keep the margin between your retail USDC price and the platform's wholesale rate — the same economics as Stripe, on a different rail, with no chargebacks and second-scale settlement.
 
-The shape, in three steps: **`/verify` the payload → `/settle` it (this is the step that actually moves the USDC) → mint a `pak_` whose `idempotencyKey` is the settled transaction hash, so retries never double-mint.** You run no chain node and no payment infrastructure.
+The provider-call sequence is **verify → settle → mint**. Persist settlement and
+the intended grant separately before minting. A settled transaction hash can be
+the saved operation token; it does not make the whole payment/delivery workflow
+exactly-once. After an ambiguous mint, inspect its operation instead of dispatching
+another create. Reconcile facilitator outcomes independently.
 
 **Three shape errors to avoid — all three fail silently:**
 
@@ -890,7 +902,7 @@ const key = await proxies.poolKeys.create({
   expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
   idempotencyKey: txHash,           // settled hash: unique, and 8-128 [A-Za-z0-9_-]
 });                                 // (a raw base64 paymentSig would be rejected)
-return Response.json({ proxyUrl: proxies.buildProxyUrl(key.key, { country, rotation: 'sticky' }) });
+return Response.json({ proxyUrl: proxies.buildProxyUrl(key.key, { pool: 'peer', country, rotation: 'sticky' }) });
 ```
 
 **Full code + flow diagram + security model:** [`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md). **Operational wallet setup** (creating Base + Solana wallets, env config, end-to-end test, treasury hygiene): the [x402 and Wallet Setup wiki page](https://github.com/bolivian-peru/proxy-reseller-kit/wiki/x402-and-Wallet-Setup). There is no `@proxies-sx/pool-portal-x402` package yet (a `createX402PaidProxyHandler()` factory is earmarked for 0.7.x), so the handler in that doc is the reference implementation. **Its request/response shapes are traced from `src/x402/x402-facilitator.service.ts` but the handler has not been run end-to-end as written, and facilitator shapes vary by vendor — tell the user to smoke-test one testnet payment before taking real money.**

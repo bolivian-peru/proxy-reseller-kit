@@ -51,6 +51,38 @@ function makeClientStub(overrides: Partial<{ listKeys: unknown[]; stock: unknown
 }
 
 describe('createPoolApiHandlers', () => {
+  it.each([null, undefined, -1, NaN])('does not report invalid raw usage %s as zero', async (trafficUsedMB) => {
+    const proxies = makeClientStub({ listKeys: [{ id: 'k1', key: 'fixture', trafficUsedMB, trafficUsedGB: 0, trafficCapGB: 1, enabled: true, expiresAt: null }] });
+    const { GET } = createPoolApiHandlers({ proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'k1' });
+    const response = await GET(new Request('https://x/api/pool/me'));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'key_state_unavailable' });
+    expect(response.headers.get('Cache-Control')).toContain('no-store');
+  });
+
+  it.each([undefined, '', 'not-a-date', 0, {}])('withholds state for missing or malformed expiry %s', async (expiresAt) => {
+    const proxies = makeClientStub({ listKeys: [{ id: 'k1', key: 'fixture', trafficUsedMB: 1, trafficCapGB: 2, enabled: true, expiresAt }] });
+    const { GET } = createPoolApiHandlers({ proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'k1' });
+    const response = await GET(new Request('https://x/api/pool/me'));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'key_state_unavailable' });
+  });
+
+  it('does not expose a mismatched provider key response', async () => {
+    const proxies = makeClientStub();
+    proxies.poolKeys.get.mockResolvedValueOnce({ id: 'another', key: 'do-not-expose', trafficUsedMB: 1, trafficCapGB: 2, enabled: true, expiresAt: null });
+    const { GET } = createPoolApiHandlers({ proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'k1' });
+    const response = await GET(new Request('https://x/api/pool/me'));
+    expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain('do-not-expose');
+  });
+
+  it('uses raw MB instead of rounded GB for the customer balance', async () => {
+    const proxies = makeClientStub({ listKeys: [{ id: 'k1', key: 'fixture', trafficUsedMB: 0.015151, trafficUsedGB: 0, trafficCapGB: 1, enabled: true, expiresAt: null }] });
+    const { GET } = createPoolApiHandlers({ proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'k1' });
+    const response = await GET(new Request('https://x/api/pool/me'));
+    expect((await response.json()).usage.usedGB).toBe(0.015151 / 1024);
+  });
   it('throws if the client has no proxyUsername', () => {
     expect(() =>
       createPoolApiHandlers({
@@ -89,6 +121,7 @@ describe('createPoolApiHandlers', () => {
           key: 'pak_secret',
           label: 'customer:1',
           enabled: true,
+          expiresAt: null,
           trafficCapGB: 10,
           trafficUsedMB: 256,
           trafficUsedGB: 0.25,
@@ -284,6 +317,41 @@ describe('createPoolApiHandlers', () => {
     });
     await DELETE(new Request('https://x/api/pool/my-sessions/sess_abc', { method: 'DELETE' }));
     expect(proxies.sessions.close).toHaveBeenCalledWith('sess_abc', { pakId: 'k_customer_1' });
+  });
+
+  it('forwards the observed binding generation and does not audit a refused release', async () => {
+    const proxies = makeClientStub();
+    proxies.sessions.close.mockResolvedValueOnce({ success: false, message: 'Changed generation' });
+    const onAudit = vi.fn();
+    const { DELETE } = createPoolApiHandlers({ proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'owned', onAudit });
+    const res = await DELETE(new Request('https://x/api/pool/my-sessions/binding?generation=fixture_generation', { method: 'DELETE' }));
+    expect(proxies.sessions.close).toHaveBeenCalledWith('binding', { pakId: 'owned', generation: 'fixture_generation' });
+    expect(await res.json()).toMatchObject({ success: false });
+    expect(res.headers.get('Cache-Control')).toContain('no-store');
+    expect(onAudit).not.toHaveBeenCalled();
+  });
+
+  it.each(['binding', ''])('does not turn acknowledged release into 502 when its audit hook fails (%s)', async (binding) => {
+    const proxies = makeClientStub();
+    const { DELETE } = createPoolApiHandlers({ proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'owned',
+      onAudit: async () => { throw new Error('fixture audit unavailable'); } });
+    const path = binding ? `/my-sessions/${binding}` : '/my-sessions';
+    const res = await DELETE(new Request(`https://x/api/pool${path}`, { method: 'DELETE' }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ success: true, auditStatus: 'failed' });
+    expect(res.headers.get('Cache-Control')).toContain('no-store');
+  });
+
+  it('reports lost release response as unknown without retry or success audit', async () => {
+    const proxies = makeClientStub();
+    proxies.sessions.close.mockRejectedValueOnce(new TypeError('fixture response lost'));
+    const onAudit = vi.fn();
+    const { DELETE } = createPoolApiHandlers({ proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'owned', onAudit });
+    const res = await DELETE(new Request('https://x/api/pool/my-sessions/binding', { method: 'DELETE' }));
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ outcome: 'unknown', retryAllowed: false });
+    expect(proxies.sessions.close).toHaveBeenCalledTimes(1);
+    expect(onAudit).not.toHaveBeenCalled();
   });
 
   it('unknown path returns 404', async () => {

@@ -1,5 +1,9 @@
 # Building your own Private Pool product
 
+> **Shared-pool contract update — 4 November 2026:** the [current release table and recovery contract](SHARED-POOL-CONTRACT.md) supersede older shared-key retry, automatic resume and session-release guidance here. Candidate APIs require verified provider deployment; package installation alone does not activate them. Persist intent, make one mutation attempt, recover by read-only operation lookup, and never resume from routine sync. Private-pool and provider-managed x402 payment flows remain separate.
+
+**Choose the pool explicitly in every connection setup.** Do not rely on the SDK's `mbl` default; use the intended pool and matching stock scope. See [pool selection](./USERNAME-DSL.md#choose-the-pool-explicitly), including residential-only filtering and the `safe` PAK override.
+
 [`PRIVATE-POOL.md`](./PRIVATE-POOL.md) explains what Private Pool *is* and how to
 sell it. This guide is the other half: **how to re-create the
 [client.proxies.sx/private-pool](https://client.proxies.sx/private-pool) page and
@@ -133,7 +137,7 @@ import { ProxiesClient } from '@proxies-sx/pool-sdk';
 const client = new ProxiesClient({ apiKey: process.env.PROXIES_SX_API_KEY! });
 
 // Public, unauthenticated, counts only — never exit IPs.
-const stock = await client.pool.getCarrierStock({ country: 'us' });
+const stock = await client.pool.getCarrierStock({ country: 'us', pool: 'peer' });
 // { pool, country:'US', total:294, carriers:[{asn,name,ipType,count}, ...] }
 
 if (stock.total < requestedDeviceCount * 2) {
@@ -172,7 +176,10 @@ Three constraints that will 400 you:
 - The cap ceiling is `RESELLER_MAX_PAK_CAP_GB`, default **1000**.
 
 `idempotencyKey` should be derived from your pool id, not generated at retry
-time — that's what makes the 24h platform dedupe actually protect you.
+time. Persist immutable intent and reconcile uncertain provider effects. Do not
+assume a 24-hour replay cache makes concurrent or crash-window retries safe.
+The shared-key lifecycle candidate does not authorize changes to this product's
+separate payment/ownership flow.
 
 ### Step 3 — Generate the customer's proxies
 
@@ -215,11 +222,12 @@ changed". Set it to the length of their workday or longer.
 ```ts
 // Live usage for the dashboard
 const key = await client.poolKeys.get(pool.pakId);
-const usedGB = key.trafficUsedMB / 1024;
-const pctUsed = (usedGB / key.trafficCapGB) * 100;
+const usedGB = key.trafficUsedMB === null ? null : key.trafficUsedMB / 1024;
+// Show unknown if usage/cap is missing or invalid; never substitute zero.
 
 // Per-day series for the chart (SDK 0.14.0+). Oldest → newest, gap-filled
-// with zeroes so the x-axis is continuous; ?days= up to 365. Ownership-scoped:
+// with compatibility zeroes; absent coverage is unknown, not measured zero.
+// ?days= up to 365 does not extend the approximate 90-day retention. Ownership-scoped:
 // 404s unless the key belongs to you, so it is safe to call with an
 // individual customer's keyId.
 const usage = await client.poolKeys.usage(pool.pakId, { days: 30 });
@@ -232,18 +240,13 @@ await client.poolKeys.topUp(pool.pakId, {
 });
 ```
 
-**The trap:** `topUp()` raises the cap but does **not** re-enable a key the
-platform auto-suspended at 100%. You must explicitly re-enable:
-
-```ts
-if (!key.enabled) {
-  await client.poolKeys.update(pool.pakId, { enabled: true });
-}
-```
-
-That is deliberate — a leaked key that auto-recovered would defeat the suspend —
-but it means "customer paid and still can't connect" is your most likely support
-ticket. Re-enable in the same transaction as the top-up.
+`topUp()` raises the cap but leaves a disabled key disabled. A confirmed
+payment is not evidence that every hold can be cleared. Use the owning product
+service's reviewed recovery procedure after reconciling entitlement, raw quota,
+expiry, account eligibility and holds. Do not apply shared-key resume routes to
+a private-pool-managed key or modify paid-product flows from this example. A
+key created directly through the shared-key API follows the release-gated
+[shared-pool conditional resume contract](SHARED-POOL-CONTRACT.md#conditional-resume).
 
 ### Step 5 — Rotate the credential
 

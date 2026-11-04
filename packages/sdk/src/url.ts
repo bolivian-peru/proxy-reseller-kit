@@ -171,9 +171,14 @@ function slugToken(value: string): string {
  * CONNECT path (port 7000) if its SOCKS service is briefly down, so both ports
  * are equally reliable — choose with `protocol: 'http' | 'socks5'`.
  *
+ * Explicitly choose `pool`; do not rely on the SDK mobile-pool default.
+ * Omission retains `mbl`; `peer` is mixed unless `ipType` narrows it.
+ * A `qualityTier: 'safe'` PAK forces `mbl` regardless of the requested pool.
+ *
  * @example
  * ```ts
  * buildProxyUrl('psx_abc123', 'pak_xxxxxxxxxxxxxxxxxxxxxxxx', {
+ *   pool: 'mbl',
  *   country: 'us',
  *   sid: 'alice_session1',
  *   rotation: 'sticky',
@@ -181,21 +186,23 @@ function slugToken(value: string): string {
  * // → "http://psx_abc123-mbl-us-sid-alice_session1-rot-sticky:pak_...@gw.proxies.sx:7000"
  * ```
  *
- * @example Held residential IP (strongest stability):
+ * @example Residential-only peer selection with sticky routing:
  * ```ts
  * buildProxyUrl('psx_abc123', 'pak_xxxxxxxxxxxxxxxxxxxxxxxx', {
  *   country: 'us',
  *   pool: 'peer',
+ *   ipType: 'residential',
  *   sid: 'alice_session1',
  *   rotation: 'sticky',
  * });
- * // → "http://psx_abc123-peer-us-sid-alice_session1-rot-sticky:pak_...@gw.proxies.sx:7000"
- * // (peer = community network: real mobile + residential home IPs)
+ * // → "http://psx_abc123-peer-us-iptype-residential-sid-alice_session1-rot-sticky:pak_...@gw.proxies.sx:7000"
+ * // peer is mixed; ipType explicitly narrows this example to residential.
  * ```
  *
  * @example Strict sticky — only the calmest modems are eligible:
  * ```ts
  * buildProxyUrl('psx_abc123', 'pak_xxxxxxxxxxxxxxxxxxxxxxxx', {
+ *   pool: 'mbl',
  *   country: 'us',
  *   sid: 'checkout_flow',
  *   rotation: 'sticky',
@@ -208,6 +215,7 @@ function slugToken(value: string): string {
  * @example Reserved IP (Private Pool lease) — the held-endpoint product:
  * ```ts
  * buildProxyUrl('psx_abc123', 'pak_xxxxxxxxxxxxxxxxxxxxxxxx', {
+ *   pool: 'mbl',
  *   country: 'us',
  *   pin: { type: 'lease', id: 'l23d4e83c5b' },
  * });

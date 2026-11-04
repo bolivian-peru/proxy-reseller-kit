@@ -1,5 +1,7 @@
 # Private Pool - reserve dedicated capacity
 
+**Choose the pool explicitly in every connection setup.** Do not rely on the SDK's `mbl` default; use the intended pool and matching stock scope. See [pool selection](./USERNAME-DSL.md#choose-the-pool-explicitly), including residential-only filtering and the `safe` PAK override.
+
 The shared Pool Gateway is first-come, first-served across every online device.
 **Private Pool** reserves a private allocation of devices on the *same* gateway, so
 a customer gets isolation and predictable capacity instead of competing for the

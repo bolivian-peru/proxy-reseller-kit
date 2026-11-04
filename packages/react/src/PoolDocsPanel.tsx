@@ -111,10 +111,10 @@ function HowItWorks({ classNames }: { classNames: PoolPortalClassNames }): JSX.E
     <section className={cn('psx-docs-section', classNames.card)}>
       <h3 className="psx-docs-h3">How the Pool Gateway works</h3>
       <p className="psx-docs-p">
-        Every request you send to <code>{`${'gw.proxies.sx'}:7000`}</code> (HTTP) or
-        <code>{` ${'gw.proxies.sx'}:7001`}</code> (SOCKS5) is auth-checked, routed to
-        a real mobile or residential device, and proxied to your target — typically
-        in under 200 ms total.
+        Requests to <code>gw.proxies.sx:7000</code> (HTTP) or{' '}
+        <code>gw.proxies.sx:7001</code> (SOCKS5) authenticate before routing to an
+        eligible endpoint. Availability and response time depend on the selected
+        pool, filters and destination.
       </p>
 
       <ol className="psx-docs-flow">
@@ -124,35 +124,36 @@ function HowItWorks({ classNames }: { classNames: PoolPortalClassNames }): JSX.E
             <strong>Auth.</strong> The gateway parses your username (e.g.{' '}
             <code>psx_xxx-mbl-us-sid-bot07</code>) into routing tokens, then validates
             the password — either your proxy-password or a <code>pak_</code> access key.
-            The result is cached for 30 s, so a rotated or disabled key can keep
-            opening new connections for up to that long.
+            Authentication caches and existing sockets can outlive a credential
+            change. There is no guaranteed fixed revocation deadline.
           </div>
         </li>
         <li>
           <span className="psx-docs-step-num">2</span>
           <div>
             <strong>Routing.</strong> The pool token (<code>mbl</code> = carrier
-            modems in 6 countries, <code> peer</code> = the flagship network:
-            mobile + residential across 80+ countries), country, optional
-            carrier/city, and session id pick a candidate device from Redis.
-            Sticky sessions keep you on the same device until TTL or rotation.
+            modems, <code> peer</code> = mixed residential/mobile peers), country,
+            supported network filters and SID choose an eligible endpoint. Choose
+            the pool explicitly and check its live stock. Sticky prefers a binding;
+            it does not reserve a device or guarantee a fixed public IP.
           </div>
         </li>
         <li>
           <span className="psx-docs-step-num">3</span>
           <div>
             <strong>Tunnel.</strong> Mobile traffic flows through a ProxySmart-managed
-            modem; peer traffic flows through a relay-server WebSocket to a customer's
-            phone running our SDK. Both expose a real carrier-grade exit IP — verifiable
-            by ASN.
+            modem; peer traffic flows through a relay to a participating SDK device.
+            Use the supported IP-class and network filters for your requirements;
+            the peer pool name alone does not guarantee residential-only exits.
           </div>
         </li>
         <li>
           <span className="psx-docs-step-num">4</span>
           <div>
-            <strong>Metering.</strong> Bytes are accounted per (account, session,
-            endpoint) and flushed every 5 s. Your dashboard's traffic counter
-            updates within ~5–15 s of any activity.
+            <strong>Metering.</strong> Raw PAK usage counts upload plus download, in MB = bytes / 1024².
+            Country-weighted account charges are a separate meter. Updates are
+            asynchronous; stale or missing readings remain unknown. Top-up increases
+            the cumulative cap without resetting usage or clearing holds.
           </div>
         </li>
         <li>
@@ -162,8 +163,9 @@ function HowItWorks({ classNames }: { classNames: PoolPortalClassNames }): JSX.E
             for a connection with no <code>-sid-</code>, otherwise 1 h or whatever{' '}
             <code>-ttl-</code> you passed when the session row was first created
             (the TTL is fixed for the life of that row; changing the token on a live
-            sid does nothing). Rotation mode does not affect it. Closing a session
-            manually only releases the pinned device early.
+            sid does nothing). Rotation mode does not affect it. Releasing a binding
+            does not close existing sockets, revoke a password or prevent an
+            exported URL from creating a new binding.
           </div>
         </li>
       </ol>
@@ -204,7 +206,7 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
             <td><code>-peer-{'{country}'}</code></td>
             <td>
               Use the peer network (the flagship pool — mobile + residential
-              across 80+ countries) instead of mobile modems. Available stock
+              with country coverage reported live) instead of mobile modems. Available stock
               varies; check <code>/stock</code>.
             </td>
           </tr>
@@ -217,9 +219,9 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
           <tr>
             <td><code>-sid-{'{id}'}</code></td>
             <td>
-              Names the session. Requests carrying the same id land on the same
-              device — <em>not</em> necessarily the same exit IP (see{' '}
-              <code>-rot-</code> below).
+              Names a saved binding. Persist a unique opaque SID for each customer
+              and logical configuration. Separate SIDs can still select the same
+              device or IP; no capacity is reserved.
               <br />
               <span className="psx-docs-muted">
                 1–64 chars, <code>[a-z0-9_]</code>, self-healing. It takes ONE
@@ -233,7 +235,8 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
               <span className="psx-docs-muted">
                 A sid on its own is <strong>not</strong> sticky — with no{' '}
                 <code>-rot-</code> the default <code>auto10</code> still re-picks a
-                device every ~10 min. Pair it with <code>-rot-sticky</code>.
+                device on a subsequent connection after 10 minutes. Pair it with
+                <code> -rot-sticky</code> for a binding preference.
               </span>
               <br />
               <span className="psx-docs-muted">
@@ -255,8 +258,8 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
               <br />
               <span className="psx-docs-muted">
                 <strong>Omitting the token is not "no rotation"</strong> — the
-                gateway default is <code>auto10</code>, so a device change roughly
-                every 10 minutes is what you get by saying nothing. An
+                gateway default is <code>auto10</code>. With a saved SID, the timer
+                is checked on a subsequent connection; a different IP is not guaranteed. An
                 unrecognised mode also falls back to <code>auto10</code>, silently.
               </span>
               <br />
@@ -283,7 +286,7 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
                 A no-op for <code>auto*</code> and <code>ondemand</code>. It buys
                 the longest-holding device we can find — still not an IP
                 guarantee. Pairs best with the residential <code>peer</code> pool,
-                where home-ISP IPs hold for hours rather than minutes.
+                when residential-only classification is required; it still does not reserve an immutable IP.
               </span>
             </td>
           </tr>
@@ -383,15 +386,15 @@ function UsernameTokens({ classNames }: { classNames: PoolPortalClassNames }): J
 
 function RotationModes({ classNames }: { classNames: PoolPortalClassNames }): JSX.Element {
   const rows: Array<{ token: string; interval: string; behavior: string; defaultMark?: boolean }> = [
-    { token: '-rot-auto5', interval: '5 min', behavior: 'Soft rotation: re-pick a different device every 5 minutes.' },
-    { token: '-rot-auto10', interval: '10 min', behavior: 'Soft rotation every 10 minutes. Applied whenever no -rot- token is present.', defaultMark: true },
-    { token: '-rot-auto20', interval: '20 min', behavior: 'Soft rotation every 20 minutes.' },
-    { token: '-rot-auto60', interval: '60 min', behavior: 'Soft rotation every 60 minutes.' },
+    { token: '-rot-auto5', interval: '5 min', behavior: 'Eligible to select again on a new connection after 5 minutes using the same SID.' },
+    { token: '-rot-auto10', interval: '10 min', behavior: 'Eligible to select again on a new connection after 10 minutes with the same SID. Default when -rot- is omitted.', defaultMark: true },
+    { token: '-rot-auto20', interval: '20 min', behavior: 'Eligible to select again on a new connection after 20 minutes using the same SID.' },
+    { token: '-rot-auto60', interval: '60 min', behavior: 'Eligible to select again on a new connection after 60 minutes using the same SID.' },
     {
       token: '-rot-sticky',
       interval: '—',
       behavior:
-        'Pin to one device for the full session. The gateway smart-selects the most IP-stable device in the country (mobile carriers vary widely in CGNAT aggressiveness; we pick the one whose IP holds longest). NOTE: the IP itself can still change inside the carrier\'s CGNAT pool — sticky pins the DEVICE, not the IP. Append -strict (i.e. -rot-sticky-strict) to weight stability harder still.',
+        'Prefer the same eligible binding across connections. This is not a device reservation or a fixed-IP guarantee. Carrier NAT and device availability can change the observed exit.',
     },
     {
       token: '-rot-hard',
@@ -407,7 +410,8 @@ function RotationModes({ classNames }: { classNames: PoolPortalClassNames }): JS
       <h3 className="psx-docs-h3">IP rotation modes</h3>
       <p className="psx-docs-p">
         Rotation tokens control how the gateway selects endpoints. The interval
-        column is how often a soft rotation re-picks a device — it is <em>not</em>{' '}
+        column is the elapsed interval before selection is checked on a new connection.
+        It does not close existing sockets or guarantee a different IP. It is separate from{' '}
         the session TTL, which is a separate token (<code>-ttl-</code>, default
         1 h with a <code>-sid-</code>, 5 min for a connection without one).{' '}
         <strong>Every mode needs a <code>-sid-</code></strong> to persist across
@@ -472,7 +476,7 @@ function ExampleCurl(props: {
 
   return (
     <section className={cn('psx-docs-section', classNames.card)}>
-      <h3 className="psx-docs-h3">Example: US proxy, named session, new device every 5 min</h3>
+      <h3 className="psx-docs-h3">Example: US proxy, saved session, five-minute rotation interval</h3>
       <div className="psx-docs-curl-wrap">
         <pre className="psx-docs-code-block psx-docs-curl">{example}</pre>
         <button

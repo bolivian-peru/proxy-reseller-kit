@@ -78,14 +78,13 @@ export type Country = KnownCountry | (string & {});
  */
 export type RotationMode =
   | 'none'          // no -rot- token; gateway uses default
-  | 'auto5'         // new modem every 5 min
-  | 'auto10'        // new modem every 10 min (default)
-  | 'auto20'        // new modem every 20 min
-  | 'auto60'        // new modem every 60 min
+  | 'auto5'         // eligible for reselection on a subsequent connection after 5 min
+  | 'auto10'        // subsequent-connection reselection after 10 min (default)
+  | 'auto20'        // subsequent-connection reselection after 20 min
+  | 'auto60'        // subsequent-connection reselection after 60 min
   | 'ondemand'      // reuse while connected; no timer
   | 'sticky'        // pin one modem; gateway smart-picks the most IP-stable.
-                    // Needs a sid to persist. Pair with the `peer`
-                    // (community/residential) pool for a near-immutable IP.
+                    // Needs a sid to persist. The exit IP can still change.
   | 'hard';         // EXACTLY equivalent to `sticky` at routing time. Not a new
                     // modem per connection, not a new IP per request.
 
@@ -129,7 +128,8 @@ export interface PoolAccessKey {
    * immediate but the gateway is not — see the revocation-latency note on
    * {@link key}. Auto-flipped to `false` by the platform when the key passes
    * {@link trafficCapGB} or {@link expiresAt}; {@link PoolKeysApi.topUp} does
-   * NOT re-enable a suspended key, you must `update({ enabled: true })`.
+   * NOT re-enable a suspended key. Use versioned conditional resume after
+   * checking quota, expiry, account state and all independent holds.
    */
   enabled: boolean;
   /**
@@ -164,9 +164,24 @@ export interface PoolAccessKey {
    * Country-tier pricing (see {@link PoolPricing}) applies to the reseller's
    * own GB balance, not to this counter.
    */
-  trafficUsedMB: number;
+  trafficUsedMB: number | null;
   /** Same value as {@link trafficUsedMB} but expressed in GB for display. */
-  trafficUsedGB?: number;
+  trafficUsedGB?: number | null;
+  usageState?: 'observed' | 'unknown';
+  expiryState?: 'observed' | 'unknown';
+  observedAt?: string;
+  lifecycleVersion?: number;
+  credentialVersion?: number;
+  lifecycleHolds?: string[];
+  isDeleted?: boolean;
+  operation?: {
+    id: string;
+    state: 'applied';
+    appliedVersion: number;
+    credentialObservation: 'current';
+    observedAt: string;
+    replayed: boolean;
+  };
   /**
    * Optional ISO datetime when this key stops working. After this moment,
    * gateway requests are rejected and the platform's nightly cron flips
@@ -189,6 +204,22 @@ export interface PoolAccessKey {
   createdAt: number;
   /** Unix ms when the key was last modified. */
   updatedAt?: number;
+}
+
+/** Secret-free outcome evidence for a durable shared-pool mutation. */
+export interface PoolKeyOperation {
+  id: string;
+  action: string;
+  targetId?: string;
+  fingerprint: string;
+  state: 'accepted' | 'submitted' | 'applied' | 'uncertain' | 'rejected';
+  expectedLifecycleVersion?: number;
+  targetCredentialVersion?: number;
+  appliedVersion?: number;
+  errorCode?: string;
+  keyWriteState: 'ready' | 'reconciliation_pending' | 'held' | 'unknown';
+  observedAt: string;
+  evidenceRetention: 'durable';
 }
 
 /** Input to {@link PoolKeysApi.create}. */
@@ -564,7 +595,11 @@ export interface BuildProxyUrlOpts {
   sid?: string;
   /** Rotation policy. See {@link RotationMode}. */
   rotation?: RotationMode;
-  /** Target pool. Defaults to `"mbl"`. */
+  /**
+   * Choose explicitly; omission retains the mobile `mbl` default.
+   * `peer` is mixed; add `ipType: 'residential'` for residential-only routes.
+   * `any` / `best` intentionally allow both pools. A `safe` PAK forces `mbl`.
+   */
   pool?: Pool;
   /** Transport. Defaults to `"http"` (port 7000). */
   protocol?: Protocol;
@@ -862,6 +897,8 @@ export interface PoolFacets {
 export interface ActiveSession {
   /** Internal Redis key — used as the id when calling `sessions.close()`. */
   sessionKey: string;
+  /** Opaque binding generation, when supplied by the gateway. Use for conditional release. */
+  bindingGeneration?: string | null;
   /** The accountId (proxyUsername) the session belongs to. */
   accountId: string;
   /**
@@ -929,6 +966,22 @@ export interface ActiveSessionsResponse {
   count: number;
   /** Present and `true` when the account's session index was too large to read fully (bounded scan). */
   truncated?: boolean;
+}
+
+/** Exact owned binding observation. Absence does not revoke an exported URL. */
+export interface SessionBindingObservation {
+  contractVersion: 2;
+  observedAt: string;
+  success: true;
+  binding: {
+    sessionKey: string;
+    accountId: string;
+    pakKeyId: string | null;
+    bindingGeneration: string;
+    sessionId: string;
+    createdAt: number;
+    expiresAt: number;
+  };
 }
 
 /**

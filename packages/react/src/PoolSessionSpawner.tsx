@@ -96,7 +96,7 @@ export interface PoolSessionSpawnerProps {
   carrierStock?: CarrierStockEntry[];
   /**
    * Live city + region facets for the selected country (peer pool), e.g. from
-   * `usePoolFacets(apiRoute, { country, city, state, carrier }).data`. When
+   * `usePoolFacets(apiRoute, { pool: 'peer', country, city, state, carrier }).data`. When
    * provided and the pool is `peer`, City and Region selects appear and the
    * chosen values route as hard `-city-` / `-state-` filters. Because the facets
    * endpoint is cross-filtered, feeding the current City/Region/Carrier
@@ -107,7 +107,7 @@ export interface PoolSessionSpawnerProps {
   facets?: PoolFacets;
   /** Default country selected on mount. */
   defaultCountry?: Country;
-  /** Default pool selected on mount. */
+  /** Choose explicitly; omitted defaultPool retains the mobile `mbl` default. */
   defaultPool?: Pool;
   /** Default protocol selected on mount. */
   defaultProtocol?: Protocol;

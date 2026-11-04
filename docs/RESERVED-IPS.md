@@ -1,5 +1,7 @@
 # Reserved IPs — exclusively leased devices
 
+**Choose the pool explicitly in every connection setup.** Do not rely on the SDK's `mbl` default; use the intended pool and matching stock scope. See [pool selection](./USERNAME-DSL.md#choose-the-pool-explicitly), including residential-only filtering and the `safe` PAK override.
+
 A **Reserved IP** is a lease on one specific device. While the lease is live,
 that device is held for a single customer: the gateway refuses to serve it to
 anyone else, and the customer's credential keeps pointing at it even after the
