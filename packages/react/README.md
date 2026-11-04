@@ -474,11 +474,31 @@ Customers whose key has an expiry will see the countdown; those without an expir
 
 ---
 
+## Shared-pool regeneration recovery
+
+The regeneration handler forwards a caller-supplied `Idempotency-Key` unchanged
+and validates `[A-Za-z0-9_-]{8,128}` before dispatch. It does not create or persist
+an operation ID. Existing callers without a header remain compatible; production
+hosts must persist intent, serialize writes and retain ambiguous outcomes.
+
+With the SDK's mutation boundary, shared-pool writes make one attempt. An upstream
+error includes `mutationOutcome: "unknown"` and `retryAllowed: false`; it does not
+prove the old password survived. Recover the current scoped key without issuing
+another regeneration. The provider's cached replay may hold an obsolete secret.
+A current read does not fence another writer that is still running.
+
+If the provider responds successfully but `onAudit` throws, the handler preserves
+the successful key response with `auditStatus: "failed"` and HTTP 200. Record that
+warning and repair the local audit separately; do not rotate again. Responses use
+`Cache-Control: private, no-store`. The optional audit hook is not a durable
+mutation journal or a delivery guarantee. No provider exactly-once guarantee is
+created by this handler.
+
 ## Security
 
 - Your `PROXIES_SX_API_KEY` lives **only on the server**. The component never sees it.
 - `pak_` keys are only sent to the customer they belong to (enforced by your `getSessionUserId` + `getUserKeyId`).
-- If a `pak_` leaks, the user can hit `POST /api/pool/regenerate` (wired to `onRegenerateKey`) to rotate it. The platform invalidates the old secret at once, but the gateway caches auth for **up to 30 s**, so the leaked value can still open new connections for that long — and tunnels already open are not torn down. Rotation is a ~30 s cutoff, not an instant kill. To end it now, also close the sessions (`DELETE /api/pool/my-sessions`).
+- A leaked `pak_` needs an authorized regeneration with durable recovery. Caches, outage grace and tunnel rechecks can delay enforcement; no fixed revocation deadline is promised. Session release removes bindings and does not close existing sockets. After an ambiguous write, read the current scoped credential without rotating again.
 - `/me` responses are sent with `Cache-Control: private, no-store` so they don't leak via CDN/browser cache.
 - Public endpoints (`/stock`, `/incidents`) are cacheable (30s / 60s).
 

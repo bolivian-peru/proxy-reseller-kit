@@ -128,7 +128,14 @@ export class ProxiesClient {
 
   /** @internal Low-level request used by the sub-APIs. Not stable API. */
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const attempts = this.retry?.attempts ?? 1;
+    const method = (init.method ?? 'GET').toUpperCase();
+    const sharedPoolMutation =
+      method !== 'GET' && method !== 'HEAD' &&
+      (/^\/reseller\/pool-keys(?:[/?]|$)/.test(path) ||
+        /^\/gateway\/pool\/my-sessions(?:[/?]|$)/.test(path));
+    // A replay token does not close the provider's concurrent/crash window.
+    // An ambiguous write needs host-owned recovery, not automatic redispatch.
+    const attempts = sharedPoolMutation ? 1 : (this.retry?.attempts ?? 1);
     let lastErr: unknown;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -237,9 +244,10 @@ export class PoolKeysApi {
    * Mint a new Pool Access Key. Returns the full key record including the secret `key`.
    *
    * Pass `idempotencyKey` (UUIDv4 or a deterministic ID tied to a domain
-   * object like a `payment_intent_id`) to dedupe retries — if a network
-   * blip causes you to retry, the platform returns the cached response
-   * instead of minting a second key. Idempotency keys live for 24h.
+   * object like a `payment_intent_id`) for sequential cached replay. The
+   * provider's nominal 24h cache is not concurrent/crash-safe admission.
+   * Persist intent before dispatch and reconcile ambiguous writes; the SDK
+   * does not automatically retry shared-pool mutations.
    *
    * @example
    * ```ts
@@ -296,13 +304,13 @@ export class PoolKeysApi {
   /**
    * Update a key. Any field left undefined is untouched.
    *
-   * @remarks Setting `enabled: false` takes effect immediately — in-flight
-   *   gateway sessions using this key are rejected on the next auth check.
+   * @remarks Setting `enabled: false` changes the stored key. Gateway caches
+   *   and existing tunnels may outlive that change; no immediate cutoff is promised.
    *
    *   For top-ups (extending an existing credit), prefer {@link topUp}
-   *   over `update` — it's a single atomic write that handles
-   *   `expiresAt = max(now, current) + days` server-side, avoiding the
-   *   read-modify-write race when concurrent top-ups land on the same key.
+   *   over `update` for its atomic cap increment. Serialize expiry extensions:
+   *   the provider computes them from a prior read, so concurrent extensions
+   *   can overwrite one another.
    */
   async update(keyId: string, input: UpdatePoolAccessKeyInput): Promise<PoolAccessKey> {
     if (!keyId) throw new ProxiesConfigError('poolKeys.update: keyId is required');
@@ -313,15 +321,17 @@ export class PoolKeysApi {
   }
 
   /**
-   * Top up a key with additional GB and/or extended expiry, atomically.
+   * Top up a key with additional GB and/or extended expiry.
    *
    * - `addTrafficGB` is added to the current cap server-side via a single
    *   `$inc`. If the existing cap is `null` (unbounded), it stays `null`.
-   * - `extendDays` extends `expiresAt` from `max(now, current_expiresAt)` —
-   *   never shortens. If the key has no expiry, sets one to `now + days`.
+   * - `extendDays` computes from `max(now, observed_expiresAt)` — if no
+   *   expiry was observed, from `now`. The read and update are separate;
+   *   concurrent extensions can be lost or overwrite a newer expiry.
    *
-   * Pass `idempotencyKey` (e.g. your invoice id) to make the call safe to
-   * retry — duplicate calls with the same key return the same result.
+   * Pass a persisted `idempotencyKey` (e.g. your invoice id) for sequential
+   * replay. It does not guarantee one effect under concurrent calls or a
+   * provider crash. Ambiguous outcomes require reconciliation before retry.
    *
    * @example
    * ```ts
@@ -365,11 +375,12 @@ export class PoolKeysApi {
 
   /**
    * Rotate the secret value of a key. Use this if the old value was leaked.
-   * The previous `pak_` value is invalidated immediately.
+   * The stored secret changes; gateway caches and existing tunnels may lag.
    *
-   * Pass `idempotencyKey` to make the call safe to retry — duplicate
-   * regenerate calls with the same key return the same new value, instead
-   * of rotating twice.
+   * Pass a persisted `idempotencyKey` for sequential cached replay. Its
+   * historical response can contain an obsolete secret after another rotation.
+   * Recover an ambiguous result with {@link get}, not another regeneration.
+   * A current read still cannot fence another in-flight writer.
    *
    * @returns The full key record with the new `key` field.
    *   (Until 0.3.0 this returned `{id, key}` only — the old fields are

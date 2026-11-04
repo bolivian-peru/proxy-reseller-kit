@@ -7,7 +7,7 @@
  * @packageDocumentation
  */
 
-import type { ProxiesClient, ProxiesApiError, PakUsageSeries } from '@proxies-sx/pool-sdk';
+import type { ProxiesClient, ProxiesApiError, PakUsageSeries, PoolAccessKey } from '@proxies-sx/pool-sdk';
 import type { MeResponse } from './types';
 // Type-only import: erased at compile time, so the 'use client' module in
 // hooks.ts (and React with it) never reaches your server bundle.
@@ -476,25 +476,47 @@ export function createPoolApiHandlers(options: PoolApiHandlerOptions): RouteHand
   };
 
   const handleRegenerate = async (req: Request): Promise<Response> => {
+    const responseHeaders = { 'Cache-Control': 'private, no-store' };
     const userId = await getSessionUserId(req);
-    if (!userId) return json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return json({ error: 'unauthorized' }, { status: 401, headers: responseHeaders });
 
     const keyId = await getUserKeyId(userId);
-    if (!keyId) return json({ error: 'no_key' }, { status: 404 });
+    if (!keyId) return json({ error: 'no_key' }, { status: 404, headers: responseHeaders });
 
+    const idempotencyKey = req.headers.get('Idempotency-Key');
+    if (idempotencyKey !== null && !/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey)) {
+      return json({ error: 'invalid_idempotency_key' }, { status: 400, headers: responseHeaders });
+    }
+
+    let result: PoolAccessKey;
     try {
-      const result = await proxies.poolKeys.regenerate(keyId);
-      if (onAudit) {
-        await onAudit({ type: 'key.regenerated', userId, keyId });
+      if (idempotencyKey === null) {
+        result = await proxies.poolKeys.regenerate(keyId);
+      } else {
+        result = await proxies.poolKeys.regenerate(keyId, { idempotencyKey });
       }
-      return json(result);
     } catch (err) {
       const apiErr = err as ProxiesApiError;
+      const status =
+        typeof apiErr?.status === 'number' && apiErr.status >= 400 && apiErr.status < 600
+          ? apiErr.status
+          : 502;
       return json(
-        { error: 'upstream_error' },
-        { status: apiErr.status && apiErr.status < 600 ? apiErr.status : 502 },
+        { error: 'upstream_error', mutationOutcome: 'unknown', retryAllowed: false },
+        { status, headers: responseHeaders },
       );
     }
+
+    if (onAudit) {
+      try {
+        await onAudit({ type: 'key.regenerated', userId, keyId });
+      } catch {
+        // Preserve the upstream acknowledgement; a local audit failure is not
+        // evidence that rotation failed and must never prompt another write.
+        return json({ ...result, auditStatus: 'failed' }, { headers: responseHeaders });
+      }
+    }
+    return json(result, { headers: responseHeaders });
   };
 
   /* ── Reserved IPs (Private Pool leases) ─────────────────────────────────

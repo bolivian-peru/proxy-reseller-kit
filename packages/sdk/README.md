@@ -78,10 +78,12 @@ interface RetryConfig {
 }
 ```
 
-The SDK retries on `5xx`, `429`, timeouts, and network errors. It does
-NOT retry on `4xx` (other than `429`) — those are programmer errors.
-Honors the `Retry-After` header on `429`. **Don't wrap your own retry**
-on top — it causes thundering herd. To disable, pass `retry: false`.
+Reads retry on `5xx`, `429`, timeouts and network errors, honoring
+`Retry-After`. Shared-pool key and session mutations make **one attempt**,
+even with an idempotency key. A timeout or 5xx can follow an applied write;
+reconcile the persisted operation instead of retrying automatically.
+Other low-level routes retain their existing retry behavior. To disable
+all retries, pass `retry: false`.
 
 **Scopes the key needs** (the account must already hold the reseller role —
 Proxies.sx grants it; it is not self-serve):
@@ -230,17 +232,20 @@ account's session index was too large to read fully.
 #### Idempotency on writes (v0.3.0+)
 
 `create()`, `topUp()`, and `regenerate()` accept an `idempotencyKey`
-(any 8-128 char `[A-Za-z0-9_-]` value). The platform dedupes within
-a 24h window — retried calls return the cached response instead of
-creating a second resource. Tie it to a domain object for effortless
-correlation:
+(any 8-128 char `[A-Za-z0-9_-]` value). The platform supports sequential
+cached replay for nominally 24 hours. Concurrent requests can both execute;
+changed payloads are not fingerprint-checked; an effect can precede cache
+storage. Keep immutable intent and the operation key in your database before
+dispatch. An ambiguous operation stays blocked until reconciled, including
+after process restart or replay-window expiry. The SDK never invents a key.
+For example:
 
 ```ts
 // In your Stripe webhook handler:
 const key = await proxies.poolKeys.create({
   label: `customer:${session.customer}`,
   trafficCapGB: 10,
-  idempotencyKey: session.id,   // safe to retry on 504
+  idempotencyKey: session.id,   // persist before dispatch; reconcile a 504
 });
 
 // On a top-up triggered by an invoice:
@@ -251,15 +256,19 @@ await proxies.poolKeys.topUp(keyId, {
 });
 ```
 
-If you omit `idempotencyKey`, the call is NOT idempotent — a network
-retry could mint a second key. Always pass one in webhook/payment paths.
+The SDK does not automatically retry these mutations, with or without a key.
+Your payment handler still needs its own durable operation state and serialized
+recovery. A cached regeneration result is historical: a later regeneration
+may have replaced its password. Recover the current scoped record with
+`poolKeys.get(keyId)` rather than regenerating again. That read is an observation,
+not a lock against another writer completing later.
 
 #### Expiry — `expiresAt` (v0.2.0+)
 
 Ship time-bounded GB credits ("10 GB, use within 60 days") by passing an
 `expiresAt` (ISO datetime or `Date`) on `create` / `update`. Past the
-expiry, the gateway rejects the key immediately, and our nightly cron
-flips `enabled=false` on the record.
+expiry, backend auth rejects the key and a nightly cron sets `enabled=false`.
+Gateway caches and existing tunnels can delay enforcement; see Security.
 
 ```ts
 // Mint with a 60-day expiry
@@ -269,7 +278,7 @@ const key = await proxies.poolKeys.create({
   expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString(),
 });
 
-// PREFERRED on top-up: atomic single-write, race-safe, idempotent
+// Persist intent first. Serialize expiry changes and reconcile uncertain writes.
 await proxies.poolKeys.topUp(key.id, {
   addTrafficGB: 15,         // bumps cap by 15 (server $inc, no read-modify-write)
   extendDays: 60,           // expiresAt = max(now, current) + 60 days
@@ -538,9 +547,9 @@ try {
     if (err.isAuth) {
       // 401/403 — API key invalid or revoked
     } else if (err.isRateLimited) {
-      // 429 — already retried by the SDK; surface to user
+      // Reads may retry 429; mutations need outcome reconciliation.
     } else if (err.isServer) {
-      // 5xx — already retried by the SDK; surface to user
+      // A mutation may have applied despite 5xx; do not automatically replay.
     }
   } else if (err instanceof ProxiesTimeoutError) {
     // Request exceeded the configured timeout
@@ -555,14 +564,7 @@ try {
 
 - **Never** ship `PROXIES_SX_API_KEY` to the browser. The SDK is designed for server-side use (API routes, server components, webhooks, cron).
 - The only truly browser-safe export is the standalone `buildProxyUrl()` — and even then, only call it once you've fetched the specific customer's `pak_` from *your own* backend.
-- If a `pak_` key leaks, call `proxies.poolKeys.regenerate(keyId)` — **then close its live sessions.** Rotation is not instant: the gateway caches auth results for **30 s** (`CACHE_TTL_MS = 30000`, keyed on `accountId:password`) and nothing invalidates that entry on rotate, so the old secret keeps authenticating **new** connections for up to 30 s. Connections it already opened are **not** torn down and run until they close on their own. If the platform API is unreachable the gateway additionally serves last-known-good auth for `GW_AUTH_GRACE_MS` (default 15 min). `update(id, { enabled: false })` sits behind the same cache and is no faster. The full revocation is two calls:
-
-  ```ts
-  await proxies.poolKeys.regenerate(keyId);            // new connections stop within ~30s
-  await proxies.sessions.closeAll({ pakId: keyId });   // drop the tunnels it already opened (~5s)
-  ```
-
-  Tell customers "revoked within about 30 seconds", never "revoked instantly."
+- For a leaked key, perform an authorized regeneration through a durable operation. Gateway authentication caches, outage grace and periodic tunnel rechecks can delay enforcement. Source defaults of 30 seconds for auth cache, 60 seconds for tunnel rechecks and 15 minutes for outage grace are implementation settings, not a verified revocation deadline. Binding release (`sessions.closeAll`) does not terminate sockets. After response loss, recover the current scoped key without regenerating again; a cached historical response can hold an obsolete password.
 - Each `pak_` key is scoped to your reseller account. A leaked key can only consume traffic from *your* GB pool, not from other resellers.
 
 ---
@@ -590,17 +592,18 @@ This SDK is a thin wrapper around a public REST API. Any language with an HTTP c
 | `GET` | `/v1/reseller/pool-keys` | List your keys with usage |
 | `GET` | `/v1/reseller/pool-keys/:keyId` | Fetch a single key (v0.3.0+) |
 | `PATCH` | `/v1/reseller/pool-keys/:keyId` | Update label / cap / enabled / expiresAt |
-| `POST` | `/v1/reseller/pool-keys/:keyId/topup` | Atomic cap-and/or-expiry extension (v0.3.0+) |
-| `POST` | `/v1/reseller/pool-keys/:keyId/regenerate` | Rotate the secret. The old value keeps working for **up to 30 s** (gateway auth cache) and does not drop live tunnels — see [Security](#security) |
+| `POST` | `/v1/reseller/pool-keys/:keyId/topup` | Atomic cap increment; expiry uses a prior read (serialize changes) |
+| `POST` | `/v1/reseller/pool-keys/:keyId/regenerate` | Rotate the stored secret; propagation has no promised fixed cutoff — see [Security](#security) |
 | `POST` | `/v1/reseller/pool-keys/:keyId/reveal` | Audit-logged unmask |
 | `GET` | `/v1/reseller/pool-keys/audit` · `/:keyId/audit` | 90-day forensic log (all keys / one key) |
 | `GET` | `/v1/reseller/pool-keys/:keyId/usage?days=30` | Per-day MB series for one key |
 | `GET` | `/v1/reseller/analytics/pak-usage?days=30` | Daily GB across all keys + per-key breakdown (`traffic:read`) |
 | `DELETE` | `/v1/reseller/pool-keys/:keyId` | Permanently delete |
 
-**Idempotency:** `POST` and `PATCH` endpoints accept an `Idempotency-Key`
-header. Same key within 24h → cached response. Use it on every retry-prone
-write (webhook handlers, payment flows).
+**Idempotency:** create, top-up and regenerate accept an `Idempotency-Key`
+for nominally 24-hour sequential cached replay. PATCH and session release have
+no such contract. Concurrent and crash-window guarantees are absent; see the
+write-recovery limitations above.
 
 **Request correlation:** every response carries `X-Request-ID`. Paste this
 in support tickets; it's how we look up your request server-side.

@@ -112,29 +112,14 @@ export interface PoolAccessKey {
   /**
    * The secret key itself, `pak_{24 hex}`. Treat as credential material.
    *
-   * **Revocation is not instantaneous — budget ~30 seconds, plus open
-   * tunnels.** Rotating via {@link PoolKeysApi.regenerate}, disabling via
-   * `update({ enabled: false })`, deleting, and expiry all take effect at the
-   * platform the moment the write lands, but the gateway caches each
-   * `(username, password)` auth result for **30 s** (`CACHE_TTL_MS`,
-   * `gateway/src/auth/http-auth.ts`). Until that entry ages out, the OLD
-   * secret still authenticates new connections. Connections already
-   * established are never re-authenticated, so an open CONNECT tunnel keeps
-   * flowing until the client or the endpoint closes it — a long-lived tunnel
-   * can outlive revocation by far more than 30 s. There is also a fail-open
-   * grace path (`GW_AUTH_GRACE_MS`, default 15 min) that serves the
-   * last-known-good result **only while the platform API is unreachable**; a
-   * real rejection from a reachable API is always honoured.
-   *
-   * Practical consequence for a leaked key: regenerate immediately, then treat
-   * the old value as live for at least the next 30 s of new connections and
-   * for the lifetime of whatever tunnels are already open. Note that
-   * {@link SessionsApi.closeAll} does NOT shorten this — it deletes the Redis
-   * session rows, so the next connection re-selects an endpoint, but it does
-   * not destroy sockets that are already carrying traffic. Cutting live
-   * traffic dead is a support/ops action, not an API one. Metering is
-   * unaffected throughout — every byte is still billed to the key that
-   * carried it.
+   * Rotation, disable and expiry do not imply an immediate gateway cutoff.
+   * Auth caches, outage grace and periodic tunnel rechecks can delay enforcement.
+   * Source defaults (30s auth cache, 60s tunnel recheck, 15min outage grace)
+   * are implementation settings, not a verified revocation deadline.
+   * {@link SessionsApi.closeAll} releases bindings; it does not destroy sockets.
+   * After an ambiguous regeneration, read the current scoped record rather than
+   * regenerating again. A cached mutation response may contain an older secret.
+
    */
   key: string;
   /** Human-friendly label shown in your admin (e.g. `"customer:alice@acme.com"`). */
@@ -239,15 +224,11 @@ export interface CreatePoolAccessKeyInput {
    */
   expiresAt?: string | Date | null;
   /**
-   * Idempotency key (UUIDv4 recommended). When set, the platform dedupes
-   * retries within a 24h window: the first call mints a key and records
-   * the response; subsequent calls with the same `idempotencyKey` return
-   * the cached response without minting a second key.
-   *
-   * Critical for webhook handlers and payment flows where a 504/network
-   * blip would otherwise cause double-mints. If omitted, the SDK auto-
-   * generates one (recommended) — but pass your own when you want it tied
-   * to a domain object (e.g. your `payment_intent_id`).
+   * Optional caller-persisted operation key (UUIDv4 recommended). The SDK
+   * never generates one automatically. The provider caches sequential replay
+   * for nominally 24h, but concurrent calls and crash windows can repeat effects.
+   * Persist immutable intent before dispatch and reconcile ambiguous outcomes.
+   * Shared-pool mutations are not automatically retried, even with this key.
    *
    * @since 0.3.0
    */
@@ -389,9 +370,9 @@ export interface UpdatePoolAccessKeyInput {
    * Pass an ISO/Date in the future to set or extend, `null` to remove an
    * existing expiry, or omit to leave unchanged.
    *
-   * For top-ups (extending an existing credit), prefer {@link PoolKeysApi.topUp}
-   * — it's a single atomic write and protects against read-modify-write
-   * races when concurrent top-ups land on the same key.
+   * {@link PoolKeysApi.topUp} increments cap atomically, but its expiry is
+   * computed from a prior read. Serialize expiry extensions and reconcile
+   * uncertain writes; competing extensions can overwrite one another.
    */
   expiresAt?: string | Date | null;
 }
@@ -411,18 +392,16 @@ export interface TopUpPoolAccessKeyInput {
   addTrafficGB?: number;
   /**
    * Days to extend the expiry. The new `expiresAt` is computed server-side
-   * as `max(now, current_expiresAt) + extendDays` — so a top-up always
-   * extends from the *later* of "now" and the existing expiry, never
-   * shortens. If the key has no expiry, this sets one to `now + extendDays`.
+   * as `max(now, observed_expiresAt) + extendDays`, or from now if no expiry
+   * was observed. The provider reads then updates; concurrent extensions can
+   * overwrite newer values. This is not an atomic accumulation of days.
    */
   extendDays?: number;
   /**
    * Idempotency key (UUIDv4 recommended). Same semantics as
-   * {@link CreatePoolAccessKeyInput.idempotencyKey} — protects against
-   * double-credits if the request is retried after a 504.
-   *
-   * Tie this to your top-up's domain ID (e.g. `topup_${invoiceId}`) for
-   * effortless deduplication across retries.
+   * {@link CreatePoolAccessKeyInput.idempotencyKey}. Persist before dispatch;
+   * it is not a guarantee against duplicate effects after a crash or timeout.
+   * An uncertain outcome requires reconciliation before another write.
    */
   idempotencyKey?: string;
 }
@@ -1051,10 +1030,10 @@ export interface ClientConfig {
    * - Pass an object to tune.
    * - Omit to use the default (3 attempts, 250ms / 1s / 4s + jitter).
    *
-   * Retries are SDK-internal — the host app sees a single `await` either
-   * resolving or rejecting after backoff is exhausted. Use the SDK's retry
-   * by default and remove your own retry wrappers; combining the two
-   * causes thundering-herd on transient gateway failures.
+   * Shared-pool key and session mutations always make one attempt. A supplied
+   * idempotency key does not make an ambiguous write safe to retry. Reads use
+   * this policy; other low-level routes retain their existing retry behavior.
+   * Use durable host-side recovery rather than another retry wrapper.
    *
    * @since 0.3.0
    */

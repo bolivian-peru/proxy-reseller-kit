@@ -190,6 +190,65 @@ describe('createPoolApiHandlers', () => {
     expect(onAudit).toHaveBeenCalledWith({ type: 'key.regenerated', userId: 'user_1', keyId: 'k1' });
   });
 
+
+  it('forwards the caller regeneration operation key unchanged', async () => {
+    const proxies = makeClientStub();
+    const { POST } = createPoolApiHandlers({
+      proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'key1',
+    });
+    const res = await POST(new Request('http://x/api/pool/regenerate', {
+      method: 'POST', headers: { 'Idempotency-Key': 'persisted_operation_1' },
+    }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(proxies.poolKeys.regenerate).toHaveBeenCalledWith('key1', {
+      idempotencyKey: 'persisted_operation_1',
+    });
+  });
+
+  it.each(['tiny', 'operation bad chars', 'x'.repeat(129)])(
+    'rejects invalid regeneration operation key %s before dispatch', async (key) => {
+      const proxies = makeClientStub();
+      const { POST } = createPoolApiHandlers({
+        proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'key1',
+      });
+      const res = await POST(new Request('http://x/api/pool/regenerate', {
+        method: 'POST', headers: { 'Idempotency-Key': key },
+      }));
+      expect(res.status).toBe(400);
+      expect(proxies.poolKeys.regenerate).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves upstream success with an explicit audit warning when the local hook fails', async () => {
+    const proxies = makeClientStub();
+    const { POST } = createPoolApiHandlers({
+      proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'key1',
+      onAudit: async () => { throw new Error('fixture_private_audit_error'); },
+    });
+    const res = await POST(new Request('http://x/api/pool/regenerate', { method: 'POST' }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+    const body = await res.json();
+    expect(body).toMatchObject({ id: 'key1', key: 'pak_new', auditStatus: 'failed' });
+    expect(JSON.stringify(body)).not.toContain('fixture_private_audit_error');
+    expect(proxies.poolKeys.regenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an ambiguous regeneration without claiming the old password survived', async () => {
+    const proxies = makeClientStub();
+    proxies.poolKeys.regenerate.mockRejectedValueOnce(new TypeError('fixture_network_lost'));
+    const { POST } = createPoolApiHandlers({
+      proxies, getSessionUserId: () => 'u1', getUserKeyId: () => 'key1',
+    });
+    const res = await POST(new Request('http://x/api/pool/regenerate', { method: 'POST' }));
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      error: 'upstream_error', mutationOutcome: 'unknown', retryAllowed: false,
+    });
+    expect(proxies.poolKeys.regenerate).toHaveBeenCalledTimes(1);
+  });
+
   it('GET /my-sessions scopes to the caller pak (multi-tenant isolation)', async () => {
     const proxies = makeClientStub();
     const { GET } = createPoolApiHandlers({
