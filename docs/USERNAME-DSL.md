@@ -7,6 +7,11 @@
 > (`redis/lua/select-endpoint.lua`) of the gateway build that is live
 > (release `d2e9f99e`, 2026-10-21; re-checked 2026-11-03).
 
+For the complete customer page, live selection and pricing presentation, use
+[the Pool Proxy workspace guide](POOL-PROXY-WORKSPACE.md). Binding ownership and
+release follow the newer [r86 contract](SHARED-POOL-CONTRACT.md); the parser review
+date above is not a claim that all older session guarantees remain unchanged.
+
 Your customer's HTTP or SOCKS5 client connects to a single endpoint:
 
 ```
@@ -138,29 +143,21 @@ Aliases are accepted and corrected silently: `mobile`/`modem`/`lte`/`4g`/`5g` �
 
 | Pool | What it is | Countries |
 |---|---|---|
-| `peer` | **The flagship network.** Community SDK devices sharing bandwidth — **mixed mobile + residential**, not residential-only. Widest reach. | ~82–120, varies with live supply |
-| `mbl` | **The supportive carrier-modem tier.** ProxySmart 4G/5G modems we operate. Smaller, ultra-stable, monitored. | exactly 6: `us` `gb` `fr` `nl` `pl` `ge` |
-| `any` / `best` | No pool filter — the selector picks on health and load across both. | union of the two |
+| `peer` | Shared SDK network with mixed reported IP classes; not residential-only. | Read current `pools.peer` country stock. |
+| `mbl` | Shared carrier-modem pool. This token does not reserve a device. | Read current `pools.mbl` country stock. |
+| `any` / `best` | Intentionally allow selection across both shared networks. | Union of currently eligible country stock. |
 
-> **`ge` is GEORGIA, not Germany.** Germany is `de`, and `de` has **no `mbl`
-> stock** — `mbl-de` always fails. Use `peer-de`.
+`ge` is Georgia and `de` is Germany. Neither the type union nor a documentation
+example establishes today's availability. The country picker must use the chosen
+pool's fresh stock and refuse known zero without silently changing the request.
 
-Both pools bill identically: **$4.00/GB list, volume-discounted to $2.40/GB on
-a single order of 250 GB+. Duration is free — you pay for traffic only.**
-Wholesale terms agreed with Proxies.sx for your account are not in this kit;
-the list price is what the public endpoints publish.
-
-> The discount tier comes from the quantity on **one purchase**, not from a
-> monthly total — nothing accumulates across the month. 25 orders of 10 GB earn
-> **0%**; one order of 250 GB earns 40%. Full table and the margin trap it
-> creates: [`PRIVATE-POOL.md`](./PRIVATE-POOL.md#pricing).
-
-> **Country tiers (live since 2026-10-12).** A GB of traffic that *exits* in a
-> lower-tier country uses only a fraction of a GB of balance: `pricing.tiers[]`
-> in `GET /v1/gateway/pool/stock` lists the tiers (`burnRate` 1 / 0.375 /
-> 0.1875 — Premium, Plus, Standard) and which countries are in each; `pricing.live`
-> says whether the burn is in force. A `pak_` cap still counts **raw** GB carried.
-> Read it from the endpoint; the country lists change without an SDK release.
+Read `pricing` in `GET /v1/gateway/pool/stock` for current platform list rates,
+single-purchase volume discounts and country-tier balance burn. Customer PAK caps
+count **raw** upload + download GB. Country weighting affects the reseller's
+account balance separately; public list pricing is not a negotiated wholesale
+rate or your customer's retail tariff. The [workspace pricing section](POOL-PROXY-WORKSPACE.md#raw-allowance-weighted-account-balance-and-your-retail-price)
+explains the quantities and provides a dated illustration. Do not hardcode tier
+countries or prices into an integration.
 
 **Per-pool stock differs per country.** A country can have modems but no peers,
 or the reverse. Filter your country picker by the selected pool using the live
@@ -200,13 +197,13 @@ dropped.
 
 | Mode | Interval | Behaviour |
 |---|---|---|
-| `auto5` `auto10` `auto20` `auto60` | 5 / 10 / 20 / 60 min | Soft-rotate: re-pick a different endpoint each interval. |
+| `auto5` `auto10` `auto20` `auto60` | 5 / 10 / 20 / 60 min | Evaluate reselection on a subsequent connection with the same SID after the interval; no exact-time or different-IP guarantee. |
 | `ondemand` | — | Re-pick only when a new connection is opened. |
-| `sticky` | — | Pin the endpoint for the session. Selector weights IP-stability. |
+| `sticky` | — | Prefer the existing binding while eligible; neither exclusive hardware nor an immutable public IP. |
 | `hard` | — | **Pins exactly like `sticky`.** It is *not* "a new IP per request". |
 
-**Omitting `-rot-` applies the gateway default, `auto10`** — a different
-endpoint roughly every 10 minutes. It is not "no rotation" and not "a fresh IP
+**Omitting `-rot-` applies the gateway default, `auto10`** — eligible for
+reselection on a subsequent connection after ten minutes using the same SID. It is not "no rotation" and not "a fresh IP
 per request". If you want a held endpoint, ask for `sticky`; if you want faster
 turnover, ask for `auto5`. The SDK's `rotation: 'none'` is a *client-side*
 sentinel meaning "emit no `-rot-` token", so it lands on this same `auto10`
@@ -223,26 +220,15 @@ time `hard` ≡ `sticky`.
 
 ### 1. Sticky pins the MODEM, not the IP
 
-Mobile carriers run CGNAT and re-issue a held modem's egress IP on their own
-cadence — T-Mobile especially. A perfectly pinned modem can still show
-different exit IPs across short calls. Sticky is a contract about *which device
-carries your traffic*, not about the address it presents.
+Mobile carrier NAT and endpoint changes can alter an exit IP independently of
+the saved SID. Sticky is a binding preference; neither the device nor its public
+address is an unconditional reservation. Existing sockets are not rotated by a
+timer, and endpoint failover can replace the binding.
 
-If a workflow genuinely needs one IP held across its whole life
-(`cf_clearance`, banking 2FA, mTLS bound to source IP), the options in
-increasing strength are:
-
-1. `pool: 'peer'` with `rotation: 'sticky'` — home-ISP peers hold IPs for
-   hours-to-days.
-2. Add the `strict` flag — a hard stability floor on top (below).
-3. A **Reserved IP** — an exclusively leased device — see
-   [`RESERVED-IPS.md`](./RESERVED-IPS.md).
-4. A dedicated modem on a static-IP carrier plan (a different product; talk to
-   Proxies.sx).
-
-Telling a customer "sticky = same IP" is the single most common way a reseller
-generates an unwinnable support ticket. Say "same device".
-
+If a workflow needs an immutable IP, do not promise that from a sticky mode,
+a peer label or a shared modem selection. Validate the exact service and its
+contract for that workload. Exclusive leases and dedicated services are separate
+products; their own reservation/failover limits still apply.
 ### 2. `sticky` and `auto*` need a `-sid-`
 
 The sid is the session's name. Without one, **every connection creates a fresh

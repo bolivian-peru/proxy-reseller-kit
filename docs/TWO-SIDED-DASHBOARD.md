@@ -189,6 +189,12 @@ Note `custom_rate_usd_per_gb` per customer — for the "VIP rate" use case. Your
 
 ## Side B: Customer Dashboard
 
+For the complete shared-pool page, use [POOL-PROXY-WORKSPACE.md](POOL-PROXY-WORKSPACE.md).
+Its live picker, saved settings, diagnostic and session requirements supersede
+the simplified composition below. Reuse the host design system; do not copy
+static countries or component defaults as current availability.
+
+
 ### Audience + capabilities
 
 End-customers. Self-service. Capabilities you build:
@@ -338,7 +344,7 @@ If a user asks to "build a Pool dashboard for my reseller business" and you're a
 
 1. **Ask first**: "Admin side, customer side, or both? They have different audiences and different stacks."
 2. **Confirm tech stack** for the side(s) they're building.
-3. **Default recommendation**: build customer side first using `@proxies-sx/pool-portal-react@^0.4.1`. Faster — most components are drop-in. Then layer admin on their existing admin framework, calling `ProxiesClient` methods directly.
+3. **Default recommendation**: use the workspace guide for the customer flow, using the verified installed `@proxies-sx/pool-portal-react` release (0.15.0 at this guide update). Faster — most components are drop-in. Then layer admin on their existing admin framework, calling `ProxiesClient` methods directly.
 4. **Don't reuse customer-side React components for admin pages.** They're shaped for one-customer-self-service; admin needs N-customer tables. Admin pages are bespoke.
 5. **Always pass `idempotencyKey` on writes.** Tie to a domain object — Stripe event id, ledger entry id, support-ticket id, operator-action id. Never generate inside a retry loop.
 6. **Always log `ProxiesApiError.requestId`** — paste in support tickets to trace server-side without describing what time it happened.

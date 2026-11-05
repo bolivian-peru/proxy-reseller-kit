@@ -27,26 +27,43 @@ Source: <https://github.com/bolivian-peru/proxy-reseller-kit>. License: MIT.
 
 ---
 
+## Build the full customer workspace
+
+For a shared Pool Proxy page, read [the complete build guide](docs/POOL-PROXY-WORKSPACE.md)
+before editing the host application. Reuse its own styles and components; the
+[typed example](docs/examples/pool-workspace/model.ts) is host-owned reference code,
+not a published SDK export. It covers explicit pool/discovery mapping, live
+country search and pricing tiers, supported targeting, stable SIDs, actual-protocol
+Test, latest 50 browser settings lists and scoped routing sessions. Preserve raw
+PAK quota separately from weighted reseller balance and your retail price.
+
+Do not persist plaintext passwords/URLs by default, silently change an unavailable
+country, equate session rows with sockets, or promise that local deletion/release
+revokes exported credentials. Use the guide's acceptance checklist and report
+source-only, tested and deployed states separately. Existing unrelated products,
+private pools, x402 and payments remain unchanged by this page work.
+
 ## Pools & per-pool country stock (read before building the picker)
 
-Two pools, selected via the `pool` token in the username DSL:
+Choose connection `pool` explicitly: `peer` for the mixed SDK network, `mbl`
+for shared carrier modems, or `any`/`best` for intentionally mixed selection.
+Discovery uses `peer`/`mbl`/`all`; `all` is not a connection token. A `safe` PAK
+forces mbl and cannot be advertised as peer-capable without a separate authorized
+entitlement change.
 
-| Pool | What it is | Use for |
-|---|---|---|
-| `peer` | **The MAIN / flagship network** — the community SDK network of real user devices sharing bandwidth, across ~82–120 countries depending on live supply. **Mixed IP types: mobile + residential home/ISP** (it is NOT "residential only"). | The primary product. Widest country reach, home-ISP IP stability. Lead with peer. |
-| `mbl` | **The SUPPORTIVE tier** — production ProxySmart mobile modems, real 4G/5G carrier IPs in exactly 6 countries (US, GB, FR, NL, PL, **GE = Georgia**), monitored quality. | Ultra-stable, guaranteed carrier modems. Smaller footprint — for customers who need guaranteed mobile IPs. |
-| `any` / `best` | No pool filter — the selector picks on health and load across both. | "Just give me a working IP." |
+Read `client.pool.getStock()` (`GET /v1/gateway/pool/stock`) for eligible per-pool
+country counts, reported classes, pricing and freshness. Never hardcode stock,
+countries, speed floors or universal uptime/IP-quality promises. `ge` is Georgia;
+`de` is Germany. A country may have stock in only one pool. Known zero means
+unavailable; a failed/stale read remains unknown. Keep the chosen country and
+explain the state instead of silently switching it.
 
-**Never pin a live device count in code or copy.** Routable supply moves hourly; read it from `GET /v1/gateway/pool/availability` (counts per country, never IPs). **`ge` is Georgia** — Germany is `de`, which has **no `mbl` stock**, so `mbl-de` always fails; use `peer-de`.
-
-**Per-pool country stock is different.** A country may have modem stock but no peers, or peers but no modems. When you build a country picker, **filter the country list by the selected pool** — read the per-country `modem` and `peer` counts from `GET /v1/gateway/pool/availability` (`countries[CC].modem` / `.peer`) and only show countries with stock in the chosen pool. `<PoolStockGrid>` and `<PoolSessionSpawner>` model this; if you roll your own, do the same so users never pick a dead country.
-
-**Quality bar.** Peers are throughput-graded; only those clearing the live floor (`PEER_THROUGHPUT_FLOOR_KBPS`, ~500 KB/s) are routable. Plenty for scraping / API / anti-bot work — the value is the clean, in-country IP, not raw bandwidth. The `mbl` pool is the ultra-stable carrier-modem tier — same $4/GB, smaller footprint (6 countries).
-
-**Targeting depth (all peer-pool).** Beyond country you can narrow on carrier, city and region — build the pickers from the discovery methods, never hardcode:
-- `client.pool.getCarrierStock({ country: cc, pool: 'peer' })` → carriers/ASNs. Route with explicit `pool: 'peer'` plus `asn` (exact) or `carrier` (name slug). Both are hard filters.
-- `client.pool.getCities(cc, { pool: 'peer' })` → `{ cities, regions }`. Route with `{ city }` / `{ state }` — **both hard, peer-only**: no routable peer there → `E_NO_STOCK_COUNTRY`, and on `mbl` they always refuse. Only offer what the counts show.
-- `client.pool.getFacets({ pool: 'peer', country, city?, state?, carrier? })` → **cross-filtered** lists: feed the current selection back so each picker narrows the others ("city smallens carrier and vice versa"). This is what keeps a three-picker UI in agreement with what the gateway will actually route. `<PoolSessionSpawner facets={…} carrierStock={…}>` wires all of it; the `usePoolFacets` / `usePoolCarrierStock` hooks fetch it. **(v0.13.0+)**
+Use `getCarrierStock({ country, pool })`, `getCities(country, { pool })` and
+`getFacets({ country, pool, city?, state?, carrier? })` for supported discovery.
+City/state match peers only: with any/best they exclude modem candidates; with
+mbl they are unsatisfiable. Carrier/facet counts do not prove an arbitrary
+carrier+ASN+class+city intersection. Detailed picker, pricing and rendering rules
+are in [the workspace guide](docs/POOL-PROXY-WORKSPACE.md).
 
 ---
 

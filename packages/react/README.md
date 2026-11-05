@@ -19,6 +19,16 @@ a provider contract.
 
 ---
 
+## Full page in your existing design system
+
+Use [the Pool Proxy workspace guide](../../docs/POOL-PROXY-WORKSPACE.md) for a
+complete shared-pool customer page. It maps actual 0.15 component/hook limitations,
+explicit pool and discovery scopes, live country/tier selection, carrier/ASN and
+peer geo filters, safe local saved lists and a host-owned Test route. The typed
+example does not add package exports. Preserve your application's auth and
+styles; do not treat the drop-in components as a durable payment/configuration
+system or an exact active-connection monitor.
+
 ## Install
 
 ```bash

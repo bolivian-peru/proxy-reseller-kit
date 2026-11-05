@@ -33,6 +33,7 @@ a provider contract.
 
 | Doc | What it answers |
 |---|---|
+| **[`docs/POOL-PROXY-WORKSPACE.md`](./docs/POOL-PROXY-WORKSPACE.md)** | Build the shared-pool customer page in your own style: live country/tier selection, targeting, saved settings, actual protocol tests and scoped sessions. |
 | **[`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md)** | **The complete proxy-username grammar — all 15 tokens, hard vs soft, and what each does when nothing matches.** Start here for anything routing-related. |
 | [`docs/RESERVED-IPS.md`](./docs/RESERVED-IPS.md) | Exclusively leased devices: lifecycle, the offline-substitution caveat, how to resell it |
 | [`docs/PRIVATE-POOL.md`](./docs/PRIVATE-POOL.md) | Reserved / committed capacity as a premium tier |
@@ -80,7 +81,7 @@ Traditional proxy resale means buying modem hardware, juggling SIM plans, runnin
 
 The [Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy) takes care of the infrastructure — you get a single endpoint (`gw.proxies.sx:7000`), wholesale pricing with volume tiers, and a per-customer sub-key system (`pak_*`). Live pricing: see [client.proxies.sx](https://client.proxies.sx) or [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing).
 
-Wholesale rates carry automatic volume discounts down to $2.40/GB at 250 GB+, and for high-volume resellers, custom wholesale pricing is negotiable directly with admin.
+Public list prices and single-purchase volume discounts are published in the live stock response. Negotiated reseller wholesale terms are separate. Keep raw customer key caps, country-weighted reseller balance consumption and your own retail prices distinct; see the [pricing explanation](docs/POOL-PROXY-WORKSPACE.md#raw-allowance-weighted-account-balance-and-your-retail-price).
 
 This repo takes care of the **software** — SDK, drop-in React component, full Next.js storefront, and a language-agnostic REST API. Zero paid dependencies beyond what you choose (SMTP provider, hosting).
 
@@ -88,15 +89,15 @@ This repo takes care of the **software** — SDK, drop-in React component, full 
 
 ## Two device networks, one gateway
 
-The same gateway endpoint (`gw.proxies.sx:7000` HTTP / `:7001` SOCKS5) routes through either of two device networks — your customer chooses by a token in their proxy username. Same credentials, same DSL, same **$4/GB (volume-discounted to $2.40/GB at 250 GB+; duration is free)** — only the device pool differs.
+The same gateway endpoint (`gw.proxies.sx:7000` HTTP / `:7001` SOCKS5) routes through either of two device networks — your customer chooses by a token in their proxy username. The credentials and DSL support both pools. Country-tier balance burn and public list pricing come from the live stock response; a customer key cap still counts raw traffic.
 
 | Token | Network | Countries | Best for |
 |---|---|---|---|
-| **`-peer-`** | **The flagship network.** Community devices sharing bandwidth — **mixed mobile + residential home/ISP**, not residential-only. | ~82–120, varies with live supply | The primary product. Widest reach, and home-ISP IPs hold addresses for hours-to-days. Lead with this. |
-| **`-mbl-`** | **The supportive carrier-modem tier.** Our own 4G/5G ProxySmart modems, monitored quality. | exactly 6: `us` `gb` `fr` `nl` `pl` `ge` | When a customer needs guaranteed, ultra-stable carrier modems and can live inside six countries. |
+| **`-peer-`** | SDK network with mixed reported IP classes; not residential-only. | Read live peer stock | Shared network access with explicit class/location filters where supported. |
+| **`-mbl-`** | Shared carrier-modem pool; no exclusive reservation from this token. | Read live modem stock | Explicit modem routing. Availability and network behaviour still vary. |
 | **`-any-`** / **`-best-`** | No pool filter — the selector picks on health and load across both. | union of the two | "Just give me a working IP." |
 
-> **`ge` is GEORGIA, not Germany.** Germany is `de`, and `de` has **no `mbl` stock** — `mbl-de` always fails. Use `peer-de`.
+> **`ge` is Georgia; `de` is Germany.** Check the selected pool's fresh stock. Never assume a country is available or switch pools silently.
 
 Example proxy URLs (same `pak_` everywhere — only the token changes):
 

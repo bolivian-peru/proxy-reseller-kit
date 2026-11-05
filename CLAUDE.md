@@ -9,7 +9,7 @@ when mixed pools are intended. A `qualityTier: 'safe'` PAK forces `mbl`.
 Keep discovery and generated connections on the same chosen pool.
 See [pool selection](./docs/USERNAME-DSL.md#choose-the-pool-explicitly) before copying examples.
 
-> Reading this means you're an AI agent (Claude Code, Cursor, etc.) helping a human build on top of the Proxies.sx Pool Gateway. This file tells you everything you need to know without having to read source. Treat it as authoritative.
+> Reading this means you're an AI agent (Claude Code, Cursor, etc.) helping a human build on top of the Proxies.sx Pool Gateway. Use this file for navigation and engineering conventions. Verify source, installed versions and the released provider contract before making runtime promises.
 
 ## What this project is
 
@@ -21,7 +21,12 @@ See [pool selection](./docs/USERNAME-DSL.md#choose-the-pool-explicitly) before c
 
 ## The product this depends on
 
-Upstream service: **Proxies.sx Pool Gateway** at `gw.proxies.sx:7000` (HTTP) and `:7001` (SOCKS5). The **peer** network is the flagship pool — mixed mobile + residential IPs across ~82–120 countries. The **mbl** (production ProxySmart modem) tier is the supportive tier: exactly 6 countries — **US, GB, FR, NL, PL, GE (Georgia — *not* Germany; `de` has no `mbl` stock)**. Both bill at $4/GB, volume-discounted to $2.40/GB at 250 GB+; duration is free. Live rates in the `client.proxies.sx` dashboard — don't hardcode prices anywhere.
+Upstream service: **Proxies.sx Pool Gateway** at `gw.proxies.sx:7000` (HTTP)
+and `:7001` (SOCKS5 TCP). `peer` is the mixed SDK network; `mbl` is the shared
+carrier-modem pool. Fetch current routable countries, classes, pricing tiers and
+freshness from `/v1/gateway/pool/stock`. Never hardcode country counts or imply
+reserved hardware from a shared-pool selector. Raw PAK caps, country-weighted
+reseller balance and customer retail prices are separate; see the workspace guide.
 
 Reseller API: `https://api.proxies.sx/v1/reseller/pool-keys`. Auth with an API key (`psx_*`) minted at `client.proxies.sx/account` on an account that holds the **reseller role** (granted by Proxies.sx — `RESELLER_SELF_SERVE_ENABLED` is off on the platform, so self-activation answers "Reseller access requires approval"). Scopes the kit needs: **`customers:read`, `customers:write`, `ports:read`, `ports:write`, `traffic:read`**.
 
@@ -91,6 +96,18 @@ proxy-reseller-kit/
 - **Add a new hook** → write in `packages/react/src/hooks.ts`, export from `src/index.ts`.
 - **Add a new server handler** → edit `packages/react/src/server.ts`; keep path-based dispatch simple.
 - **Restyle component without forking it** → users pass `classNames` prop or import/override the CSS custom properties from `styles.css`.
+
+## Shared-pool customer workspace
+
+For a Pool Proxy page, follow [POOL-PROXY-WORKSPACE.md](docs/POOL-PROXY-WORKSPACE.md)
+and its typed model/fixtures. Keep the host application's existing design system.
+Use explicit all/peer/carrier-modem scope, live countries and pricing, safe
+settings-only saved lists (latest 50), scoped observed sessions and real protocol
+diagnostics. Do not invent SDK props or a provider test endpoint. Distinguish raw
+PAK allowance, weighted reseller balance and the host's own retail price. The
+"Private devices" selector means shared mbl stock, not an exclusive Private Pool.
+Keep stock and commercial values dynamic. This guide defines the full page
+behaviour; the existing DSL and shared-pool contract own wire/lifecycle semantics.
 
 ## Two-sided dashboard pattern — ASK FIRST
 
