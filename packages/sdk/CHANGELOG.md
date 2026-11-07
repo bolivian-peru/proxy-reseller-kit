@@ -60,6 +60,10 @@ HTTP + SOCKS5 login, on-demand rotation, auto-renew.
   `BuyPrivateModemInput`, `BuyPrivateModemCartInput`, `PrivateModemCartItem`,
   `RenewPrivateModemInput`.
 - Buying needs an API key with the `modems:purchase` scope (403 `scope_missing` otherwise).
+- Every refusal has a stable `err.data.code`; checkout refusals (`price_changed`,
+  `no_stock`, `expected_price_required`) also carry `err.data.details` with the line's
+  `tariffId`, its `index` in a multi-line cart, the current `priceUsd` or the units
+  `available`. The README's Private modems section lists them.
 
 ### Added — webhook signature verification
 

@@ -289,15 +289,20 @@ and auto-renew. Buying needs an API key with the `modems:purchase` scope
 
 `expectedPriceUsd` is **required** on `buy`, `buyCart` items and `renew`: it is
 the `priceUsd` the user confirmed, and the platform refuses a charge without
-it. Read `err.data.code` on a `ProxiesApiError`:
+it. Read `err.data.code` on a `ProxiesApiError`; checkout refusals also carry
+`err.data.details` naming the line (`tariffId`, and `index` into `items` for a
+cart of several lines):
 
 | Status | `code` | Meaning |
 |---|---|---|
-| `409` | `price_changed` | The price moved; confirm the new one and call again with a **new** key |
+| `400` | `expected_price_required` | `expectedPriceUsd` missing or not a number; `details.priceUsd` is the current price |
+| `409` | `price_changed` | The price moved to `details.priceUsd`; confirm it and call again with a **new** key (`details.index` says which cart line) |
+| `409` | `no_stock` | The plan or region sold out; `details.available` is what is left for that line |
 | `409` | `recent_checkout` | The same items were bought under 2 minutes ago; resend with `confirmAgain: true` only if a second order is really wanted |
 | `409` | `recent_renewal` / `renewal_open` | A renewal succeeded under 2 minutes ago / is still settling |
 | `409` | `line_busy` | A rotation or replacement is already in flight |
 | `403` | `scope_missing` | The API key lacks `modems:purchase` |
+| `502` | `provider_unavailable` | The upstream provider did not answer; nothing was charged, read `mine()` and try later |
 
 ```ts
 const { tariffs } = await proxies.privateModems.catalog();
