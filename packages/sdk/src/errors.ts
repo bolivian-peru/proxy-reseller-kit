@@ -3,6 +3,18 @@
  * in host apps: `if (err instanceof ProxiesError) { ... }`.
  */
 export class ProxiesError extends Error {
+  /**
+   * The `Idempotency-Key` the failed request carried, when it carried one
+   * (`poolKeys.create/update/topUp/regenerate`, `privateModems.buy/buyCart/renew`).
+   * After a {@link ProxiesTimeoutError} or an ambiguous 409 the outcome is
+   * unknown: replay the same call with `idempotencyKey: err.idempotencyKey`
+   * (the platform returns the first result instead of acting twice) or read
+   * the resource back; never call again without it.
+   *
+   * @since 0.10.0
+   */
+  public idempotencyKey?: string;
+
   constructor(message: string) {
     super(message);
     this.name = this.constructor.name;

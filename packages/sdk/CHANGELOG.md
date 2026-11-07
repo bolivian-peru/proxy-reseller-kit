@@ -14,19 +14,27 @@ semver from 0.3.0 onwards (the public surface is everything exported from
   `GET` (`HEAD`, `OPTIONS`), or when it carries an `Idempotency-Key` header. A `POST`
   without a key, every `PATCH` and every `DELETE` are sent exactly once and the error
   surfaces to you. Before 0.10.0 every call was retried up to 3 times regardless of
-  method, which could re-execute an un-keyed write (`poolKeys.reveal`, `sessions.close`,
-  `poolKeys.update`) and, with the new private-modem endpoints, a rotation or a
-  modem replacement.
+  method, which could re-execute an un-keyed write (`poolKeys.reveal`, `sessions.close`)
+  and, with the new private-modem endpoints, a rotation or a modem replacement.
 - A retry always re-sends the **same** `init`, so the identical `Idempotency-Key`
   reaches the platform on every attempt; a key is never generated inside the loop.
-- **`poolKeys.create` / `topUp` / `regenerate` now always send an `Idempotency-Key`**:
-  yours, or one generated per call (the README had claimed this since 0.3.0; it is now
-  true). As a result these three keep retrying on transient failures exactly as before,
-  and a retry can only replay the first response. Keys are validated client-side as
-  8–128 chars of `[A-Za-z0-9_-]` (`ProxiesConfigError` otherwise, before any request).
+- **`poolKeys.create` / `update` / `topUp` / `regenerate` now always send an
+  `Idempotency-Key`**: yours, or one generated per call (the README had claimed this for
+  `create` since 0.3.0; it is now true). As a result these four keep retrying on
+  transient failures exactly as before, and a retry can only replay the first response.
+  `UpdatePoolAccessKeyInput` gains `idempotencyKey?` (the platform accepts the header on
+  `PATCH /reseller/pool-keys/:keyId`). Keys are validated client-side as 8–128 chars of
+  `[A-Za-z0-9_-]` (`ProxiesConfigError` otherwise, before any request).
+- **The key is on the error.** When a keyed call still fails (`ProxiesTimeoutError`, 5xx
+  after the last attempt, or an ambiguous 409 such as `renewal_open`), the thrown
+  `ProxiesError` carries `err.idempotencyKey`: replay the same call with
+  `idempotencyKey: err.idempotencyKey` (the platform returns the first result, never a
+  second key or charge) or read `mine()` / the pool-key operation back. Calling again
+  without it is a new operation; the platform's `recent_checkout` guard covers only
+  2 minutes.
 - If you had wrapped your own retry around un-keyed writes because the SDK's was there,
-  nothing changes for you; if you relied on silent SDK retries of `update()`/`delete()`/
-  `sessions.close()`, pass the call again yourself after inspecting the error.
+  nothing changes for you; if you relied on silent SDK retries of `delete()`/
+  `sessions.close()`/`reveal()`, pass the call again yourself after inspecting the error.
 
 ### Added — `proxies.privateModems`
 

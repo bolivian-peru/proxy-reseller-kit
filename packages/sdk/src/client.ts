@@ -144,9 +144,12 @@ export class ProxiesClient {
    * carries an `Idempotency-Key`. The same `init` (and so the same header
    * object and key) is passed to every attempt — a key is never generated
    * inside the loop, so a retry can only ever replay, never repeat, a charge.
+   * The key is also stamped on the error that finally surfaces
+   * ({@link ProxiesError.idempotencyKey}) so the caller can replay it.
    */
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const attempts = isRetrySafe(init) ? this.retry?.attempts ?? 1 : 1;
+    const idempotencyKey = idempotencyKeyOf(init.headers);
+    const attempts = isRetrySafe(init, idempotencyKey) ? this.retry?.attempts ?? 1 : 1;
     let lastErr: unknown;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -154,6 +157,7 @@ export class ProxiesClient {
         return await this.requestOnce<T>(path, init);
       } catch (err) {
         lastErr = err;
+        if (idempotencyKey && err instanceof ProxiesError) err.idempotencyKey = idempotencyKey;
         if (!this.shouldRetry(err) || attempt === attempts - 1) {
           throw err;
         }
@@ -260,6 +264,12 @@ export class PoolKeysApi {
    * domain object (a `payment_intent_id`) so your own app-level retries dedupe
    * too. Idempotency keys live for 24h.
    *
+   * If the call still fails with a {@link ProxiesTimeoutError} or a 5xx, the
+   * outcome is unknown: replay it with `idempotencyKey: err.idempotencyKey`,
+   * or look the operation up at `GET /v1/reseller/pool-keys/operations/lookup`
+   * (header `Idempotency-Key: <that key>`). Calling again without the key can
+   * mint a second key.
+   *
    * @example
    * ```ts
    * // In your Stripe webhook handler:
@@ -315,12 +325,18 @@ export class PoolKeysApi {
    *   over `update` — it's a single atomic write that handles
    *   `expiresAt = max(now, current) + days` server-side, avoiding the
    *   read-modify-write race when concurrent top-ups land on the same key.
+   *
+   *   Every call carries an `Idempotency-Key` (yours or one generated per call,
+   *   since 0.10.0), so the SDK keeps retrying a transient failure as it did
+   *   before 0.10.0 and the platform applies the change once.
    */
   async update(keyId: string, input: UpdatePoolAccessKeyInput): Promise<PoolAccessKey> {
     if (!keyId) throw new ProxiesConfigError('poolKeys.update: keyId is required');
+    const { idempotencyKey, ...body } = input;
     return this.client.request<PoolAccessKey>(`/reseller/pool-keys/${encodeURIComponent(keyId)}`, {
       method: 'PATCH',
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
+      headers: idempotencyHeader('poolKeys.update', idempotencyKey),
     });
   }
 
@@ -679,6 +695,14 @@ export class SessionsApi {
  * key with the same body returns the same order, so the SDK's retries can
  * never charge twice. Buying needs an API key with the `modems:purchase` scope.
  *
+ * When a money call ends in a {@link ProxiesTimeoutError}, a 5xx or a 409
+ * `renewal_open`, the charge may or may not have happened. The key the SDK
+ * sent is on the error as `err.idempotencyKey`: replay the same call with
+ * `idempotencyKey: err.idempotencyKey` (same order back, no second charge) or
+ * read {@link mine} and look for the order. Do not call again without it: a
+ * fresh key is a fresh order, and the platform's `recent_checkout` guard only
+ * covers the first 2 minutes.
+ *
  * Flow: `catalog()` → show `priceUsd`, get a yes → `buy({ tariffId,
  * expectedPriceUsd })` → poll `mine()` until the modem is `active` and has
  * `credentials` (about 10-60 s).
@@ -827,19 +851,21 @@ export class PrivateModemsApi {
  * reads always, writes only under an `Idempotency-Key` (the platform then
  * replays the first response instead of acting twice).
  */
-function isRetrySafe(init: RequestInit): boolean {
+function isRetrySafe(init: RequestInit, idempotencyKey: string | undefined): boolean {
   const method = (init.method ?? 'GET').toUpperCase();
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
-  return hasIdempotencyKey(init.headers);
+  return !!idempotencyKey;
 }
 
-function hasIdempotencyKey(headers: HeadersInit | undefined): boolean {
-  if (!headers) return false;
+/** The `Idempotency-Key` value in `headers`, whatever shape `HeadersInit` took. */
+function idempotencyKeyOf(headers: HeadersInit | undefined): string | undefined {
+  if (!headers) return undefined;
   if (typeof Headers !== 'undefined' && headers instanceof Headers) {
-    return !!headers.get('Idempotency-Key');
+    return headers.get('Idempotency-Key') ?? undefined;
   }
   const entries = Array.isArray(headers) ? headers : Object.entries(headers);
-  return entries.some(([name, value]) => name.toLowerCase() === 'idempotency-key' && !!value);
+  const match = entries.find(([name, value]) => name.toLowerCase() === 'idempotency-key' && !!value);
+  return match?.[1];
 }
 
 /**

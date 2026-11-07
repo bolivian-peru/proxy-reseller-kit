@@ -270,6 +270,14 @@ export interface UpdatePoolAccessKeyInput {
    * races when concurrent top-ups land on the same key.
    */
   expiresAt?: string | Date | null;
+  /**
+   * Idempotency key, same semantics as {@link CreatePoolAccessKeyInput.idempotencyKey}.
+   * The SDK generates one per call when omitted; pass your own to tie the
+   * change to a domain event (`pause_${ticketId}`) so app-level retries dedupe.
+   *
+   * @since 0.10.0
+   */
+  idempotencyKey?: string;
 }
 
 /**

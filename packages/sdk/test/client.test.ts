@@ -524,14 +524,14 @@ describe('ProxiesClient', () => {
     expect(flaky.calls()).toBe(1);
   });
 
-  it('does NOT retry PATCH or DELETE on 502', async () => {
+  it('does NOT retry an un-keyed PATCH or DELETE on 502', async () => {
     const patch = flakyFetch(1, KEY_FIXTURE);
     const client = new ProxiesClient({
       apiKey: 'psx_x',
       retry: RETRYING,
       fetch: patch.fn as unknown as typeof fetch,
     });
-    await expect(client.poolKeys.update('65fabc', { label: 'x' })).rejects.toBeInstanceOf(ProxiesApiError);
+    await expect(client.request('/x', { method: 'PATCH', body: '{}' })).rejects.toBeInstanceOf(ProxiesApiError);
     expect(patch.calls()).toBe(1);
 
     const del = flakyFetch(1, {});
@@ -542,6 +542,63 @@ describe('ProxiesClient', () => {
     });
     await expect(client2.poolKeys.delete('65fabc')).rejects.toBeInstanceOf(ProxiesApiError);
     expect(del.calls()).toBe(1);
+  });
+
+  it('poolKeys.update is keyed: retried on 502 under the same generated key, key kept out of the body', async () => {
+    const flaky = flakyFetch(1, KEY_FIXTURE);
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: RETRYING,
+      fetch: flaky.fn as unknown as typeof fetch,
+    });
+    const key = await client.poolKeys.update('65fabc', { enabled: false, idempotencyKey: 'pause_ticket_77' });
+    expect(key.id).toBe(KEY_FIXTURE.id);
+    expect(flaky.calls()).toBe(2);
+    for (const [, init] of flaky.fn.mock.calls) {
+      expect(init?.method).toBe('PATCH');
+      expect(headerOf(init, 'Idempotency-Key')).toBe('pause_ticket_77');
+      expect(JSON.parse(init?.body as string)).toEqual({ enabled: false });
+    }
+
+    const plain = mockFetch(200, KEY_FIXTURE);
+    const client2 = new ProxiesClient({ apiKey: 'psx_x', fetch: plain as unknown as typeof fetch });
+    await client2.poolKeys.update('65fabc', { label: 'x' });
+    expect(headerOf(plain.mock.calls[0]![1] as RequestInit, 'Idempotency-Key')).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+  });
+
+  it('stamps the Idempotency-Key on the error when every attempt fails', async () => {
+    const flaky = flakyFetch(99, KEY_FIXTURE);
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: RETRYING,
+      fetch: flaky.fn as unknown as typeof fetch,
+    });
+    const err = await client.poolKeys.create({ label: 'alice', idempotencyKey: 'pi_test_idem_42' }).catch((e) => e);
+    expect(err).toBeInstanceOf(ProxiesApiError);
+    expect(err.idempotencyKey).toBe('pi_test_idem_42');
+    expect(flaky.calls()).toBe(RETRYING.attempts);
+  });
+
+  it('stamps the generated Idempotency-Key on a ProxiesTimeoutError from a money call', async () => {
+    let sent: string | undefined;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      sent = headerOf(init, 'Idempotency-Key');
+      const e = new Error('aborted');
+      e.name = 'AbortError';
+      throw e;
+    });
+    const client = new ProxiesClient({ apiKey: 'psx_x', retry: false, fetch: fetchMock as unknown as typeof fetch });
+    const err = await client.privateModems.buy({ tariffId: 'pt_1', expectedPriceUsd: 33 }).catch((e) => e);
+    expect(err).toBeInstanceOf(ProxiesTimeoutError);
+    expect(sent).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+    expect(err.idempotencyKey).toBe(sent);
+  });
+
+  it('leaves idempotencyKey undefined on an error from an un-keyed request', async () => {
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: mockFetch(502, 'upstream') as unknown as typeof fetch, retry: false });
+    const err = await client.privateModems.rotate('pm_1').catch((e) => e);
+    expect(err).toBeInstanceOf(ProxiesApiError);
+    expect(err.idempotencyKey).toBeUndefined();
   });
 
   it('retries a POST with Idempotency-Key on 502 and sends the same key both times', async () => {
