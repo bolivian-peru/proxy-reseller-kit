@@ -13,6 +13,17 @@ import type {
   RetryConfig,
   ActiveSession,
   ActiveSessionsResponse,
+  PrivateModemCatalog,
+  PrivateModemsMine,
+  PrivateModemOrder,
+  PrivateModemCart,
+  PrivateModemRenewalQuote,
+  PrivateModemRotateResult,
+  PrivateModemAutoRenew,
+  PrivateModemPeriod,
+  BuyPrivateModemInput,
+  BuyPrivateModemCartInput,
+  RenewPrivateModemInput,
 } from './types';
 import {
   ProxiesError,
@@ -31,6 +42,9 @@ const DEFAULT_RETRY: Required<RetryConfig> = {
   baseDelayMs: 250,
   maxDelayMs: 4_000,
 };
+
+/** What the platform accepts as an `Idempotency-Key`: UUIDs, ULIDs, Stripe-style ids, most domain ids. */
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9_-]{8,128}$/;
 
 /**
  * Primary entry point to the Proxies.sx reseller API.
@@ -71,6 +85,9 @@ export class ProxiesClient {
   /** Live gateway session list + close operations for the current user. @since 0.4.0 */
   public readonly sessions: SessionsApi;
 
+  /** Private modems: dedicated 4G/5G modems rented per day, week or month. @since 0.10.0 */
+  public readonly privateModems: PrivateModemsApi;
+
   constructor(config: ClientConfig) {
     if (!config.apiKey) {
       throw new ProxiesConfigError('ProxiesClient: apiKey is required');
@@ -98,6 +115,7 @@ export class ProxiesClient {
     this.poolKeys = new PoolKeysApi(this);
     this.pool = new PoolApi(this);
     this.sessions = new SessionsApi(this);
+    this.privateModems = new PrivateModemsApi(this);
   }
 
   /**
@@ -119,9 +137,16 @@ export class ProxiesClient {
     });
   }
 
-  /** @internal Low-level request used by the sub-APIs. Not stable API. */
+  /**
+   * @internal Low-level request used by the sub-APIs. Not stable API.
+   *
+   * Only a request that is safe to re-send is retried: a GET, or a write that
+   * carries an `Idempotency-Key`. The same `init` (and so the same header
+   * object and key) is passed to every attempt — a key is never generated
+   * inside the loop, so a retry can only ever replay, never repeat, a charge.
+   */
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const attempts = this.retry?.attempts ?? 1;
+    const attempts = isRetrySafe(init) ? this.retry?.attempts ?? 1 : 1;
     let lastErr: unknown;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -229,10 +254,11 @@ export class PoolKeysApi {
   /**
    * Mint a new Pool Access Key. Returns the full key record including the secret `key`.
    *
-   * Pass `idempotencyKey` (UUIDv4 or a deterministic ID tied to a domain
-   * object like a `payment_intent_id`) to dedupe retries — if a network
-   * blip causes you to retry, the platform returns the cached response
-   * instead of minting a second key. Idempotency keys live for 24h.
+   * Every call carries an `Idempotency-Key`: the one you pass, or one the SDK
+   * generates for this call (since 0.10.0). The SDK's own retries reuse it, so a
+   * network blip never mints a second key. Pass a deterministic id tied to a
+   * domain object (a `payment_intent_id`) so your own app-level retries dedupe
+   * too. Idempotency keys live for 24h.
    *
    * @example
    * ```ts
@@ -249,19 +275,12 @@ export class PoolKeysApi {
     if (!input.label) {
       throw new ProxiesConfigError('poolKeys.create: label is required');
     }
-    const headers: Record<string, string> = {};
-    if (input.idempotencyKey !== undefined) {
-      if (!input.idempotencyKey) {
-        throw new ProxiesConfigError('poolKeys.create: idempotencyKey, if set, must be non-empty');
-      }
-      headers['Idempotency-Key'] = input.idempotencyKey;
-    }
     // Strip idempotencyKey from the body (it's a header, not a field).
-    const { idempotencyKey: _omit, ...body } = input;
+    const { idempotencyKey, ...body } = input;
     return this.client.request<PoolAccessKey>('/reseller/pool-keys', {
       method: 'POST',
       body: JSON.stringify(body),
-      headers,
+      headers: idempotencyHeader('poolKeys.create', idempotencyKey),
     });
   }
 
@@ -342,17 +361,10 @@ export class PoolKeysApi {
     if (input.extendDays !== undefined && input.extendDays <= 0) {
       throw new ProxiesConfigError('poolKeys.topUp: extendDays must be > 0');
     }
-    const headers: Record<string, string> = {};
-    if (input.idempotencyKey !== undefined) {
-      if (!input.idempotencyKey) {
-        throw new ProxiesConfigError('poolKeys.topUp: idempotencyKey, if set, must be non-empty');
-      }
-      headers['Idempotency-Key'] = input.idempotencyKey;
-    }
-    const { idempotencyKey: _omit, ...body } = input;
+    const { idempotencyKey, ...body } = input;
     return this.client.request<PoolAccessKey>(
       `/reseller/pool-keys/${encodeURIComponent(keyId)}/topup`,
-      { method: 'POST', body: JSON.stringify(body), headers },
+      { method: 'POST', body: JSON.stringify(body), headers: idempotencyHeader('poolKeys.topUp', idempotencyKey) },
     );
   }
 
@@ -373,16 +385,9 @@ export class PoolKeysApi {
     opts: { idempotencyKey?: string } = {},
   ): Promise<PoolAccessKey> {
     if (!keyId) throw new ProxiesConfigError('poolKeys.regenerate: keyId is required');
-    const headers: Record<string, string> = {};
-    if (opts.idempotencyKey !== undefined) {
-      if (!opts.idempotencyKey) {
-        throw new ProxiesConfigError('poolKeys.regenerate: idempotencyKey, if set, must be non-empty');
-      }
-      headers['Idempotency-Key'] = opts.idempotencyKey;
-    }
     return this.client.request<PoolAccessKey>(
       `/reseller/pool-keys/${encodeURIComponent(keyId)}/regenerate`,
-      { method: 'POST', headers },
+      { method: 'POST', headers: idempotencyHeader('poolKeys.regenerate', opts.idempotencyKey) },
     );
   }
 
@@ -664,9 +669,212 @@ export class SessionsApi {
   }
 }
 
+/**
+ * Private modems — a whole 4G/5G modem rented per day, week or month and paid
+ * from the account balance. Unlimited traffic, own HTTP and SOCKS5 host:port,
+ * rotate on demand, renew and auto-renew.
+ *
+ * Money calls ({@link buy}, {@link buyCart}, {@link renew}) carry an
+ * `Idempotency-Key` on every call: yours, or one generated per call. The same
+ * key with the same body returns the same order, so the SDK's retries can
+ * never charge twice. Buying needs an API key with the `modems:purchase` scope.
+ *
+ * Flow: `catalog()` → show `priceUsd`, get a yes → `buy({ tariffId,
+ * expectedPriceUsd })` → poll `mine()` until the modem is `active` and has
+ * `credentials` (about 10-60 s).
+ *
+ * @since 0.10.0
+ */
+export class PrivateModemsApi {
+  constructor(private readonly client: ProxiesClient) {}
+
+  /** Whether private modems are offered at all (drives a sidebar entry). */
+  status(): Promise<{ enabled: boolean }> {
+    return this.client.request<{ enabled: boolean }>('/private-modems/status');
+  }
+
+  /** Plans in stock with the retail price per period. Read it again before every checkout. */
+  catalog(): Promise<PrivateModemCatalog> {
+    return this.client.request<PrivateModemCatalog>('/private-modems/catalog');
+  }
+
+  /** The caller's modems with live credentials, plus orders still settling and recent failures. */
+  mine(): Promise<PrivateModemsMine> {
+    return this.client.request<PrivateModemsMine>('/private-modems/mine');
+  }
+
+  /**
+   * Buy one modem from the balance. `expectedPriceUsd` is the `priceUsd` the
+   * user confirmed from {@link catalog}; a 409 `price_changed` means the price
+   * moved — confirm the new one and call again with a NEW key.
+   *
+   * Pass `idempotencyKey` (e.g. your invoice id) to make app-level replays
+   * safe as well; the SDK always sends one.
+   *
+   * @throws {ProxiesApiError} 409 `recent_checkout` when the same items were
+   *   bought under 2 minutes ago — use {@link buyCart} with `confirmAgain`.
+   */
+  async buy(input: BuyPrivateModemInput): Promise<PrivateModemOrder> {
+    if (!input.tariffId) throw new ProxiesConfigError('privateModems.buy: tariffId is required');
+    requireExpectedPrice('privateModems.buy', input.expectedPriceUsd);
+    const { idempotencyKey, ...body } = input;
+    return this.client.request<PrivateModemOrder>('/private-modems/orders', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: idempotencyHeader('privateModems.buy', idempotencyKey),
+    });
+  }
+
+  /**
+   * Several modems in one checkout, debited once. `expectedPriceUsd` on each
+   * item is the unit price. At most `catalog().maxCartModems` modems.
+   */
+  async buyCart(input: BuyPrivateModemCartInput): Promise<PrivateModemCart> {
+    if (!Array.isArray(input.items) || input.items.length === 0) {
+      throw new ProxiesConfigError('privateModems.buyCart: items must be a non-empty array');
+    }
+    for (const item of input.items) {
+      if (!item.tariffId) throw new ProxiesConfigError('privateModems.buyCart: every item needs a tariffId');
+      requireExpectedPrice('privateModems.buyCart', item.expectedPriceUsd);
+    }
+    const { idempotencyKey, ...body } = input;
+    return this.client.request<PrivateModemCart>('/private-modems/orders', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: idempotencyHeader('privateModems.buyCart', idempotencyKey),
+    });
+  }
+
+  /** Renewal prices for 24 h, 7 d and 30 d, each with the new end date. */
+  async renewalQuote(modemId: string): Promise<PrivateModemRenewalQuote> {
+    requireModemId('privateModems.renewalQuote', modemId);
+    return this.client.request<PrivateModemRenewalQuote>(
+      `/private-modems/${encodeURIComponent(modemId)}/renewal-quote`,
+    );
+  }
+
+  /**
+   * Renew from the balance. `expectedPriceUsd` is the option's `priceUsd` from
+   * {@link renewalQuote}; `period` defaults to the modem's own term.
+   *
+   * @throws {ProxiesApiError} 409 `renewal_open` while a renewal is settling,
+   *   409 `recent_renewal` within 2 minutes of a success (resend with
+   *   `confirmAgain: true` if a second term really is wanted).
+   */
+  async renew(modemId: string, input: RenewPrivateModemInput): Promise<PrivateModemOrder> {
+    requireModemId('privateModems.renew', modemId);
+    requireExpectedPrice('privateModems.renew', input.expectedPriceUsd);
+    const { idempotencyKey, ...body } = input;
+    return this.client.request<PrivateModemOrder>(
+      `/private-modems/${encodeURIComponent(modemId)}/renew`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: idempotencyHeader('privateModems.renew', idempotencyKey),
+      },
+    );
+  }
+
+  /**
+   * Rotate the IP now (free). The platform does not key this call, so the SDK
+   * never retries it — a timeout here means "check `mine()`", not "call again".
+   * A rotation or replacement already in flight answers 409 `line_busy`.
+   */
+  async rotate(modemId: string): Promise<PrivateModemRotateResult> {
+    requireModemId('privateModems.rotate', modemId);
+    return this.client.request<PrivateModemRotateResult>(
+      `/private-modems/${encodeURIComponent(modemId)}/rotate`,
+      { method: 'POST' },
+    );
+  }
+
+  /**
+   * Renew automatically from the balance before the term ends (opt-in).
+   * `period` defaults to the modem's own term. Tell the user it charges the
+   * balance on its own; `PrivateModem.autoRenewIssue` says when it could not.
+   */
+  async setAutoRenew(
+    modemId: string,
+    input: { enabled: boolean; period?: PrivateModemPeriod },
+  ): Promise<PrivateModemAutoRenew> {
+    requireModemId('privateModems.setAutoRenew', modemId);
+    return this.client.request<PrivateModemAutoRenew>(
+      `/private-modems/${encodeURIComponent(modemId)}/auto-renew`,
+      { method: 'PUT', body: JSON.stringify(input) },
+    );
+  }
+
+  /**
+   * Swap to another modem in the same country, keeping the paid time. The
+   * login details change: read `mine()` afterwards. Not keyed by the platform,
+   * so never retried by the SDK (3 calls per minute).
+   */
+  async replace(modemId: string): Promise<{ replaced: true }> {
+    requireModemId('privateModems.replace', modemId);
+    return this.client.request<{ replaced: true }>(
+      `/private-modems/${encodeURIComponent(modemId)}/replace`,
+      { method: 'POST' },
+    );
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────
 //  Helpers
 // ────────────────────────────────────────────────────────────────────────
+
+/**
+ * A request may be re-sent only when re-sending cannot repeat a side effect:
+ * reads always, writes only under an `Idempotency-Key` (the platform then
+ * replays the first response instead of acting twice).
+ */
+function isRetrySafe(init: RequestInit): boolean {
+  const method = (init.method ?? 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  return hasIdempotencyKey(init.headers);
+}
+
+function hasIdempotencyKey(headers: HeadersInit | undefined): boolean {
+  if (!headers) return false;
+  if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+    return !!headers.get('Idempotency-Key');
+  }
+  const entries = Array.isArray(headers) ? headers : Object.entries(headers);
+  return entries.some(([name, value]) => name.toLowerCase() === 'idempotency-key' && !!value);
+}
+
+/**
+ * The `Idempotency-Key` header for a money or minting call: the caller's key,
+ * or one generated once for this call (before the retry loop, never inside
+ * it). Validated the way the platform does so a bad key fails here, not as a
+ * 400 after the fact.
+ */
+function idempotencyHeader(method: string, key: string | undefined): Record<string, string> {
+  const value = key ?? newIdempotencyKey();
+  if (!IDEMPOTENCY_KEY_RE.test(value)) {
+    throw new ProxiesConfigError(
+      `${method}: idempotencyKey must be 8-128 characters of letters, digits, '_' or '-'`,
+    );
+  }
+  return { 'Idempotency-Key': value };
+}
+
+function newIdempotencyKey(): string {
+  const webCrypto = globalThis.crypto;
+  if (webCrypto && typeof webCrypto.randomUUID === 'function') return webCrypto.randomUUID();
+  // Node 18 has no global crypto; uniqueness is all an idempotency key needs.
+  return `sdk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 14)}`;
+}
+
+function requireModemId(method: string, modemId: string): void {
+  if (!modemId) throw new ProxiesConfigError(`${method}: modemId is required`);
+}
+
+/** The platform refuses a charge without the price the user saw; fail before the network does. */
+function requireExpectedPrice(method: string, expectedPriceUsd: number | undefined): void {
+  if (typeof expectedPriceUsd !== 'number' || !Number.isFinite(expectedPriceUsd)) {
+    throw new ProxiesConfigError(`${method}: expectedPriceUsd (the price shown to the user) is required`);
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

@@ -486,4 +486,220 @@ describe('ProxiesClient', () => {
     });
     await expect(client.pool.getStock()).rejects.toThrow(/PoolStock response shape unexpected/);
   });
+  // ────────────────────────────────────────────────────────────────────
+  //  0.10.0: retry gating by method + Idempotency-Key, private modems
+  // ────────────────────────────────────────────────────────────────────
+
+  /** fetch that fails `failures` times with 502, then answers 200 with `body`. */
+  function flakyFetch(failures: number, body: unknown) {
+    let calls = 0;
+    const fn = vi.fn(async (_url: string, _init?: RequestInit) => {
+      calls++;
+      const ok = calls > failures;
+      return {
+        ok,
+        status: ok ? 200 : 502,
+        text: async () => (ok ? JSON.stringify(body) : 'upstream'),
+        headers: { get: () => null },
+      } as unknown as Response;
+    });
+    return { fn, calls: () => calls };
+  }
+
+  const RETRYING = { attempts: 3, baseDelayMs: 1, maxDelayMs: 2 };
+
+  function headerOf(init: RequestInit | undefined, name: string): string | undefined {
+    return (init?.headers as Record<string, string> | undefined)?.[name];
+  }
+
+  it('does NOT retry a POST without Idempotency-Key on 502', async () => {
+    const flaky = flakyFetch(1, KEY_FIXTURE);
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: RETRYING,
+      fetch: flaky.fn as unknown as typeof fetch,
+    });
+    // reveal is a POST the platform does not key
+    await expect(client.poolKeys.reveal('65fabc')).rejects.toBeInstanceOf(ProxiesApiError);
+    expect(flaky.calls()).toBe(1);
+  });
+
+  it('does NOT retry PATCH or DELETE on 502', async () => {
+    const patch = flakyFetch(1, KEY_FIXTURE);
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: RETRYING,
+      fetch: patch.fn as unknown as typeof fetch,
+    });
+    await expect(client.poolKeys.update('65fabc', { label: 'x' })).rejects.toBeInstanceOf(ProxiesApiError);
+    expect(patch.calls()).toBe(1);
+
+    const del = flakyFetch(1, {});
+    const client2 = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: RETRYING,
+      fetch: del.fn as unknown as typeof fetch,
+    });
+    await expect(client2.poolKeys.delete('65fabc')).rejects.toBeInstanceOf(ProxiesApiError);
+    expect(del.calls()).toBe(1);
+  });
+
+  it('retries a POST with Idempotency-Key on 502 and sends the same key both times', async () => {
+    const flaky = flakyFetch(1, KEY_FIXTURE);
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      retry: RETRYING,
+      fetch: flaky.fn as unknown as typeof fetch,
+    });
+    const key = await client.poolKeys.create({ label: 'alice', idempotencyKey: 'pi_test_idem_42' });
+    expect(key.id).toBe(KEY_FIXTURE.id);
+    expect(flaky.calls()).toBe(2);
+    const [, first] = flaky.fn.mock.calls[0]!;
+    const [, second] = flaky.fn.mock.calls[1]!;
+    expect(headerOf(first, 'Idempotency-Key')).toBe('pi_test_idem_42');
+    expect(headerOf(second, 'Idempotency-Key')).toBe('pi_test_idem_42');
+  });
+
+  it('poolKeys.create / topUp / regenerate generate an Idempotency-Key when none is passed', async () => {
+    const fetchMock = mockFetch(200, KEY_FIXTURE);
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    await client.poolKeys.create({ label: 'alice' });
+    await client.poolKeys.topUp('65fabc', { addTrafficGB: 1 });
+    await client.poolKeys.regenerate('65fabc');
+    const keys = fetchMock.mock.calls.map(([, init]) => headerOf(init as RequestInit, 'Idempotency-Key'));
+    for (const k of keys) expect(k).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  it('rejects a malformed idempotencyKey before calling the server', async () => {
+    const fetchMock = mockFetch(200, KEY_FIXTURE);
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    await expect(client.poolKeys.create({ label: 'a', idempotencyKey: 'short' })).rejects.toThrow(ProxiesConfigError);
+    await expect(client.poolKeys.create({ label: 'a', idempotencyKey: 'has spaces inside' })).rejects.toThrow(ProxiesConfigError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  const ORDER_FIXTURE = {
+    orderId: 'pmb0123456789abcdef',
+    kind: 'buy',
+    status: 'pending',
+    priceUsd: 33,
+    modemId: null,
+    countryName: 'Germany',
+    carrierName: 'O2',
+    period: 'month',
+    quantity: 1,
+    regionName: null,
+    createdAt: '2026-11-07T10:00:00.000Z',
+    error: null,
+    refunded: false,
+  };
+
+  it('privateModems.buy generates one key per call and strips it from the body', async () => {
+    const fetchMock = mockFetch(200, ORDER_FIXTURE);
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    const order = await client.privateModems.buy({ tariffId: 'pt_abc', expectedPriceUsd: 33 });
+    expect(order.orderId).toBe(ORDER_FIXTURE.orderId);
+    await client.privateModems.buy({ tariffId: 'pt_abc', expectedPriceUsd: 33 });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toMatch(/\/private-modems\/orders$/);
+    expect((init as RequestInit).method).toBe('POST');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ tariffId: 'pt_abc', expectedPriceUsd: 33 });
+    const k1 = headerOf(init as RequestInit, 'Idempotency-Key');
+    const k2 = headerOf(fetchMock.mock.calls[1]![1] as RequestInit, 'Idempotency-Key');
+    expect(k1).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+    expect(k2).not.toBe(k1);
+  });
+
+  it('privateModems.buy passes a caller key through and is retried with that same key', async () => {
+    const flaky = flakyFetch(1, ORDER_FIXTURE);
+    const client = new ProxiesClient({ apiKey: 'psx_x', retry: RETRYING, fetch: flaky.fn as unknown as typeof fetch });
+    await client.privateModems.buy({ tariffId: 'pt_abc', expectedPriceUsd: 33, idempotencyKey: 'invoice_2026_0042' });
+    expect(flaky.calls()).toBe(2);
+    for (const [, init] of flaky.fn.mock.calls) {
+      expect(headerOf(init, 'Idempotency-Key')).toBe('invoice_2026_0042');
+    }
+  });
+
+  it('privateModems.buy validates tariffId and expectedPriceUsd client-side', async () => {
+    const fetchMock = mockFetch(200, ORDER_FIXTURE);
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    await expect(client.privateModems.buy({ tariffId: '', expectedPriceUsd: 33 })).rejects.toThrow(/tariffId/);
+    await expect(
+      client.privateModems.buy({ tariffId: 'pt_abc' } as unknown as { tariffId: string; expectedPriceUsd: number }),
+    ).rejects.toThrow(/expectedPriceUsd/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('privateModems.buyCart posts items + confirmAgain under one generated key', async () => {
+    const fetchMock = mockFetch(200, { cartId: 'pmc_1', orders: [ORDER_FIXTURE] });
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    const cart = await client.privateModems.buyCart({
+      items: [{ tariffId: 'pt_abc', quantity: 2, expectedPriceUsd: 33, p0f: true }],
+      confirmAgain: true,
+    });
+    expect(cart.cartId).toBe('pmc_1');
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      items: [{ tariffId: 'pt_abc', quantity: 2, expectedPriceUsd: 33, p0f: true }],
+      confirmAgain: true,
+    });
+    expect(headerOf(init as RequestInit, 'Idempotency-Key')).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+    await expect(client.privateModems.buyCart({ items: [] })).rejects.toThrow(ProxiesConfigError);
+  });
+
+  it('privateModems.renew posts to /:id/renew with period and a key', async () => {
+    const fetchMock = mockFetch(200, { ...ORDER_FIXTURE, kind: 'renew', period: 'week' });
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    const order = await client.privateModems.renew('m/1', { expectedPriceUsd: 12, period: 'week' });
+    expect(order.period).toBe('week');
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/private-modems/m%2F1/renew');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ expectedPriceUsd: 12, period: 'week' });
+    expect(headerOf(init as RequestInit, 'Idempotency-Key')).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+  });
+
+  it('privateModems.rotate and replace are not retried on 502', async () => {
+    for (const call of ['rotate', 'replace'] as const) {
+      const flaky = flakyFetch(1, {});
+      const client = new ProxiesClient({ apiKey: 'psx_x', retry: RETRYING, fetch: flaky.fn as unknown as typeof fetch });
+      await expect(client.privateModems[call]('m1')).rejects.toBeInstanceOf(ProxiesApiError);
+      expect(flaky.calls()).toBe(1);
+      const [url, init] = flaky.fn.mock.calls[0]!;
+      expect(url).toContain(`/private-modems/m1/${call}`);
+      expect(init?.method).toBe('POST');
+      expect(headerOf(init, 'Idempotency-Key')).toBeUndefined();
+    }
+  });
+
+  it('privateModems.setAutoRenew PUTs { enabled, period }', async () => {
+    const fetchMock = mockFetch(200, { autoRenew: true, autoRenewPeriod: 'month' });
+    const client = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    const res = await client.privateModems.setAutoRenew('m1', { enabled: true, period: 'month' });
+    expect(res.autoRenew).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/private-modems/m1/auto-renew');
+    expect((init as RequestInit).method).toBe('PUT');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ enabled: true, period: 'month' });
+  });
+
+  it('privateModems GET methods hit the documented paths and still retry', async () => {
+    const flaky = flakyFetch(1, { maxCartModems: 20, tariffs: [] });
+    const client = new ProxiesClient({ apiKey: 'psx_x', retry: RETRYING, fetch: flaky.fn as unknown as typeof fetch });
+    const catalog = await client.privateModems.catalog();
+    expect(catalog.maxCartModems).toBe(20);
+    expect(flaky.calls()).toBe(2);
+
+    const fetchMock = mockFetch(200, {});
+    const client2 = new ProxiesClient({ apiKey: 'psx_x', fetch: fetchMock as unknown as typeof fetch });
+    await client2.privateModems.status();
+    await client2.privateModems.mine();
+    await client2.privateModems.renewalQuote('m1');
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls[0]).toMatch(/\/private-modems\/status$/);
+    expect(urls[1]).toMatch(/\/private-modems\/mine$/);
+    expect(urls[2]).toMatch(/\/private-modems\/m1\/renewal-quote$/);
+    for (const [, init] of fetchMock.mock.calls) expect((init as RequestInit).method).toBeUndefined();
+  });
 });

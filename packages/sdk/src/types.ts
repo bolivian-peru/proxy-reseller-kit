@@ -492,6 +492,254 @@ export interface Incident {
   affects: string[];
 }
 
+// ────────────────────────────────────────────────────────────────────────
+//  Private modems (v0.10.0) — shapes mirror the live `/v1/private-modems/*`
+//  responses. Ids are opaque platform ids; prices are retail USD.
+// ────────────────────────────────────────────────────────────────────────
+
+/** Rental term of a private modem: 24 hours, 7 days or 30 days. */
+export type PrivateModemPeriod = 'day' | 'week' | 'month';
+
+/**
+ * How many of a plan's modems in stock have a feature: `'all'`, `'some'`
+ * or `'none'`. Order with `p0f: true` only when `p0fStock > 0`.
+ */
+export type PrivateModemFeatureShare = 'all' | 'some' | 'none';
+
+/** Region stock inside one plan (optional targeting; omit `regionId` to let the platform pick). */
+export interface PrivateModemRegion {
+  /** Opaque region id for {@link PrivateModemCartItem.regionId}. */
+  id: string;
+  name: string;
+  /** Modems in stock in this region. */
+  stock: number;
+  /** Of those, modems with OS-fingerprint (p0f) control. */
+  p0f: number;
+}
+
+/** One plan in `GET /private-modems/catalog`: a country + carrier + period with live stock and price. */
+export interface PrivateModemTariff {
+  /** Opaque plan id to pass to {@link PrivateModemsApi.buy}. */
+  tariffId: string;
+  period: PrivateModemPeriod | string;
+  /** Uppercase ISO-3166 code, e.g. `"US"`. */
+  countryCode: string;
+  countryName: string;
+  carrierId: string | null;
+  carrierName: string;
+  /** Modems available right now. Plans with no stock are not listed. */
+  stock: number;
+  /** Retail price for one modem for one period. Send it back as `expectedPriceUsd`. */
+  priceUsd: number;
+  openvpn: PrivateModemFeatureShare;
+  p0f: PrivateModemFeatureShare;
+  p0fStock: number;
+  regions: PrivateModemRegion[];
+}
+
+/** Response of `GET /private-modems/catalog`. Read it again right before every checkout — stock and price move. */
+export interface PrivateModemCatalog {
+  /** Most modems in one {@link PrivateModemsApi.buyCart} checkout. */
+  maxCartModems: number;
+  tariffs: PrivateModemTariff[];
+}
+
+/** One proxy login of a private modem. Treat as credential material. */
+export interface PrivateModemEndpoint {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+/** HTTP and SOCKS5 logins of a modem (`socks5` is `null` on lines without a SOCKS service). */
+export interface PrivateModemCredentials {
+  http: PrivateModemEndpoint;
+  socks5: PrivateModemEndpoint | null;
+}
+
+/** What this line can do; `null` while the platform cannot see it live. */
+export interface PrivateModemCapabilities {
+  rotate: boolean;
+  rotationInterval: boolean;
+  replace: boolean;
+  openvpn: boolean;
+  udp: boolean;
+  /** Only an `active` modem can be renewed (dead: replace first; expired: released). */
+  renew: boolean;
+}
+
+/** One modem the caller rents, as listed by `GET /private-modems/mine`. */
+export interface PrivateModem {
+  /** Platform modem id used in every `/private-modems/:id/*` call. */
+  id: string;
+  /** `active` = serving; `dead` = not working, replace it; `expired` = released, rent a new one. */
+  status: 'active' | 'dead' | 'expired';
+  countryCode: string;
+  countryName: string;
+  carrierName: string;
+  period: PrivateModemPeriod | string;
+  regionName: string | null;
+  /** ISO datetime the paid time ends, or `null` when unknown. */
+  expiresAt: string | null;
+  /** Live online flag from the line, `null` when not visible right now. */
+  online: boolean | null;
+  /** The platform's own check through the login failed several times in a row. */
+  notAnswering: boolean;
+  /**
+   * The modem's current exit IP. This is the caller's own dedicated line, not
+   * shared pool stock — still, never publish it or write it to shared logs.
+   */
+  currentIp: string | null;
+  /** Auto-rotation interval in seconds (0 = off), `null` when not visible. */
+  rotationInterval: number | null;
+  /** Live logins, `null` for an expired modem or while the line is not visible. Poll `mine()` until set. */
+  credentials: PrivateModemCredentials | null;
+  capabilities: PrivateModemCapabilities | null;
+  /** Token of the public rotation link `GET /v1/private-modems/rotate/:token` (no login needed). `null` once expired. */
+  rotationToken: string | null;
+  autoRenew: boolean;
+  /** Why the last automatic renewal did not happen (e.g. balance too low for `priceUsd`), when it is on. */
+  autoRenewIssue: { reason: string; priceUsd: number | null } | null;
+  /** Term auto-renew would buy: the modem's own period unless changed via {@link PrivateModemsApi.setAutoRenew}. */
+  autoRenewPeriod: PrivateModemPeriod | null;
+}
+
+/** A purchase or renewal order. `status` settles from `pending` to `succeeded` or `failed` in about 10-60 s. */
+export interface PrivateModemOrder {
+  /** Derived from your `Idempotency-Key`: the same key returns the same order. */
+  orderId: string;
+  kind: 'buy' | 'renew';
+  /** `reconciling` = the platform is confirming an unanswered upstream call; the debit is held, never doubled. */
+  status: 'pending' | 'reconciling' | 'succeeded' | 'failed';
+  /** Retail USD debited from the balance for this order (quantity included). */
+  priceUsd: number;
+  /** The modem this order created or renewed, once known. */
+  modemId: string | null;
+  countryName: string;
+  carrierName: string;
+  /** For a renewal: the term it bought, not the modem's original plan. */
+  period: PrivateModemPeriod | string;
+  quantity: number;
+  regionName: string | null;
+  createdAt: string | null;
+  /** Customer-facing reason when `status === 'failed'`. */
+  error: string | null;
+  /** A failed order's amount is back on the balance (or was never taken) once `true`. */
+  refunded: boolean;
+}
+
+/** Response of a cart checkout: one order per cart line, debited once. */
+export interface PrivateModemCart {
+  /** Derived from your `Idempotency-Key`; the same key returns the same cart. */
+  cartId: string;
+  orders: PrivateModemOrder[];
+}
+
+/** Response of `GET /private-modems/mine`. */
+export interface PrivateModemsMine {
+  /** `true` when live line details could not be read this call: `credentials`/`online` may be stale or `null`. */
+  liveError: boolean;
+  /** Orders still `pending` or `reconciling`. */
+  openOrders: PrivateModemOrder[];
+  /** Orders that failed in the last 2 hours, newest first. */
+  recentFailed: PrivateModemOrder[];
+  modems: PrivateModem[];
+}
+
+/** One renewal term in a {@link PrivateModemRenewalQuote}. */
+export interface PrivateModemRenewalOption {
+  period: PrivateModemPeriod;
+  days: number;
+  /** Retail price for this term, `null` when unavailable. Send it back as `expectedPriceUsd`. */
+  priceUsd: number | null;
+  available: boolean;
+  reason: string | null;
+  /** ISO datetime the paid time would end after this renewal (extends from the later of now and the current end). */
+  extendsTo: string | null;
+}
+
+/** Response of `GET /private-modems/:id/renewal-quote`. */
+export interface PrivateModemRenewalQuote {
+  /** The modem's own term: what {@link PrivateModemsApi.renew} buys when `period` is omitted. */
+  defaultPeriod: PrivateModemPeriod;
+  /** `days` / `priceUsd` of the default term (shortcut for `options.find(o => o.period === defaultPeriod)`). */
+  days: number;
+  priceUsd: number | null;
+  options: PrivateModemRenewalOption[];
+}
+
+/** Response of `POST /private-modems/:id/rotate`. */
+export interface PrivateModemRotateResult {
+  /** The IP changed. */
+  rotated: boolean;
+  /** Rotation accepted; the new IP shows up in about a minute. */
+  pending: boolean;
+  /** The carrier kept returning the same IP — offer {@link PrivateModemsApi.replace}. */
+  suggestReplace: boolean;
+  /** Customer-facing sentence describing the outcome. */
+  message: string;
+}
+
+/** Response of `PUT /private-modems/:id/auto-renew`. */
+export interface PrivateModemAutoRenew {
+  autoRenew: boolean;
+  autoRenewPeriod: PrivateModemPeriod;
+}
+
+/** Input to {@link PrivateModemsApi.buy}: one modem of one plan. */
+export interface BuyPrivateModemInput {
+  /** `tariffId` from {@link PrivateModemCatalog.tariffs}. */
+  tariffId: string;
+  /** The `priceUsd` the user confirmed. A 409 `price_changed` means it moved: confirm the new one and call again with a new key. */
+  expectedPriceUsd: number;
+  /**
+   * Idempotency key: the same key with the same body returns the same order
+   * instead of charging again. The SDK generates one per call when omitted
+   * and reuses it on its own retries. Pass a domain id (your invoice id) so
+   * your app-level retries dedupe as well. 8-128 chars of `[A-Za-z0-9_-]`.
+   */
+  idempotencyKey?: string;
+}
+
+/** One line of a {@link PrivateModemsApi.buyCart} checkout. */
+export interface PrivateModemCartItem {
+  tariffId: string;
+  /** Whole number ≥ 1. The cart total is capped at {@link PrivateModemCatalog.maxCartModems}. */
+  quantity: number;
+  /** Unit `priceUsd` the user confirmed for this plan. */
+  expectedPriceUsd: number;
+  /** Optional region from {@link PrivateModemTariff.regions}. */
+  regionId?: string | null;
+  /** Only modems with OS-fingerprint (p0f) control; needs `p0fStock` (or the region's `p0f`) ≥ `quantity`. */
+  p0f?: boolean;
+}
+
+/** Input to {@link PrivateModemsApi.buyCart}: several modems, debited once. */
+export interface BuyPrivateModemCartInput {
+  items: PrivateModemCartItem[];
+  /**
+   * The platform answers 409 `recent_checkout` when the same items were
+   * bought under 2 minutes ago (a double click or a retry with a new key).
+   * Send `true` only after the user confirmed a second order is intended.
+   */
+  confirmAgain?: boolean;
+  /** See {@link BuyPrivateModemInput.idempotencyKey}. */
+  idempotencyKey?: string;
+}
+
+/** Input to {@link PrivateModemsApi.renew}. */
+export interface RenewPrivateModemInput {
+  /** The option's `priceUsd` from {@link PrivateModemsApi.renewalQuote}. */
+  expectedPriceUsd: number;
+  /** Term to buy; defaults to the modem's own (`defaultPeriod` in the quote). */
+  period?: PrivateModemPeriod;
+  /** Confirm a second renewal within 2 minutes of a successful one (409 `recent_renewal` otherwise). */
+  confirmAgain?: boolean;
+  /** See {@link BuyPrivateModemInput.idempotencyKey}. */
+  idempotencyKey?: string;
+}
+
 /**
  * Retry behavior for transient failures.
  *
