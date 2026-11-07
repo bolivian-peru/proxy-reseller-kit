@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@proxies-sx/pool-sdk)](https://www.npmjs.com/package/@proxies-sx/pool-sdk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](../../LICENSE)
 
-> Typed TypeScript/JavaScript client for the **[Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy)** reseller API. Mint Pool Access Keys, build proxy URLs, and ship a branded reseller business in an hour instead of a month.
+> Typed TypeScript/JavaScript client for the **[Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy)** reseller API. Mint Pool Access Keys, build proxy URLs, rent [Private modems](#proxiesprivatemodems-v0100), verify webhooks, and ship a branded reseller business in an hour instead of a month.
 
 Wholesale pricing with volume tiers — current rates in your [client.proxies.sx](https://client.proxies.sx) dashboard or via [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing). You set your resale price. One API call mints a per-customer sub-key with its own traffic cap.
 
@@ -78,10 +78,17 @@ interface RetryConfig {
 }
 ```
 
-The SDK retries on `5xx`, `429`, timeouts, and network errors. It does
-NOT retry on `4xx` (other than `429`) — those are programmer errors.
-Honors the `Retry-After` header on `429`. **Don't wrap your own retry**
-on top — it causes thundering herd. To disable, pass `retry: false`.
+**Retries (0.10.0 gate).** On `5xx`, `429`, timeouts and network errors the SDK
+retries a request only when re-sending cannot repeat a side effect: every `GET`,
+and a write that carries an `Idempotency-Key`. `poolKeys.create` / `update` /
+`topUp` / `regenerate` and `privateModems.buy` / `buyCart` / `renew` always carry
+one (yours or one generated per call), so they keep retrying and a retry can only
+replay the first response. Un-keyed `POST` / `PATCH` / `DELETE` (`reveal`,
+`delete`, `sessions.close`, `privateModems.rotate` / `replace` / `setAutoRenew`)
+are sent exactly once and the error surfaces to you. `4xx` other than `429` is
+never retried. `Retry-After` is honoured on `429`. **Don't wrap your own retry**
+on top — it causes thundering herd; to disable, pass `retry: false`. Details in
+[CHANGELOG 0.10.0](./CHANGELOG.md#0100--safe-retries-private-modems-webhook-verification-nov-2026).
 
 ### `proxies.poolKeys`
 
@@ -90,7 +97,7 @@ on top — it causes thundering herd. To disable, pass `retry: false`.
 | `create({ label, trafficCapGB?, qualityTier?, expiresAt?, idempotencyKey? })` | `PoolAccessKey` | Mint a new key |
 | `list()` | `PoolAccessKey[]` | List all your keys with usage |
 | `get(keyId)` | `PoolAccessKey` | Fetch a single key by id |
-| `update(keyId, { label?, enabled?, trafficCapGB?, qualityTier?, expiresAt? })` | `PoolAccessKey` | Change any field |
+| `update(keyId, { label?, enabled?, trafficCapGB?, qualityTier?, expiresAt?, idempotencyKey? })` | `PoolAccessKey` | Change any field. Always keyed (0.10.0) |
 | `topUp(keyId, { addTrafficGB?, extendDays?, idempotencyKey? })` | `PoolAccessKey` | Atomically extend cap and/or expiry — use this for top-up flows |
 | `regenerate(keyId, { idempotencyKey? }?)` | `PoolAccessKey` | Rotate the secret value (invalidates old). Returns full record from 0.3.0+ |
 | `reveal(keyId)` (v0.5.0+) | `PoolAccessKey` | Audit-logged unmask. Records a `reveal` event server-side. Use in customer-facing dashboards instead of displaying `key` from `list()` |
@@ -192,7 +199,7 @@ for full type details.
 
 #### Idempotency on writes (v0.3.0+)
 
-`create()`, `topUp()`, and `regenerate()` accept an `idempotencyKey`
+`create()`, `update()`, `topUp()` and `regenerate()` accept an `idempotencyKey`
 (any 8-128 char `[A-Za-z0-9_-]` value). The platform dedupes within
 a 24h window — retried calls return the cached response instead of
 creating a second resource. Tie it to a domain object for effortless
@@ -214,8 +221,14 @@ await proxies.poolKeys.topUp(keyId, {
 });
 ```
 
-If you omit `idempotencyKey`, the call is NOT idempotent — a network
-retry could mint a second key. Always pass one in webhook/payment paths.
+Since 0.10.0 the SDK always sends an `Idempotency-Key` on these calls: yours,
+or one generated per call and reused on the SDK's own retries, so a network
+blip can never mint a second key. Pass your own domain id (checkout session,
+invoice, ticket) so your app-level retries dedupe too. If the call still fails
+(`ProxiesTimeoutError`, 5xx), the key is on the error as `err.idempotencyKey`:
+replay the same call with it, or look the operation up at
+`GET /v1/reseller/pool-keys/operations/lookup` with that `Idempotency-Key`
+header, rather than calling again without it.
 
 #### Expiry — `expiresAt` (v0.2.0+)
 
@@ -253,6 +266,73 @@ daysUntilPoolKeyExpiry(key);        // number | null — days until expiry, null
 
 The list endpoint also returns `isExpired: boolean` computed server-side
 (useful in dashboards before the nightly cron has flipped `enabled`).
+
+### `proxies.privateModems` (v0.10.0+)
+
+A whole 4G/5G modem rented per day, week or month, paid from the account
+balance: unlimited traffic, own HTTP + SOCKS5 login, rotate on demand, renew
+and auto-renew. Buying needs an API key with the `modems:purchase` scope
+(`403 scope_missing` otherwise).
+
+| Method | Returns | Description |
+|---|---|---|
+| `status()` | `{ enabled }` | Whether private modems are offered at all |
+| `catalog()` | `PrivateModemCatalog` | Plans in stock with `priceUsd` per period. Read it again before every checkout |
+| `mine()` | `PrivateModemsMine` | Your modems with live credentials, orders still settling, recent failures |
+| `buy({ tariffId, expectedPriceUsd, idempotencyKey? })` | `PrivateModemOrder` | One modem from the balance. Always keyed |
+| `buyCart({ items, confirmAgain?, idempotencyKey? })` | `PrivateModemCart` | Several modems in one checkout, debited once. Always keyed |
+| `renewalQuote(modemId)` | `PrivateModemRenewalQuote` | Prices for 24 h / 7 d / 30 d with the new end date |
+| `renew(modemId, { expectedPriceUsd, period?, confirmAgain?, idempotencyKey? })` | `PrivateModemOrder` | Renew from the balance. Always keyed |
+| `rotate(modemId)` | `PrivateModemRotateResult` | New IP now (free). Un-keyed: never auto-retried, a timeout means "check `mine()`" |
+| `setAutoRenew(modemId, { enabled, period? })` | `PrivateModemAutoRenew` | Opt-in renewal from the balance before the term ends |
+| `replace(modemId)` | `{ replaced: true }` | Swap to another modem in the same country, paid time kept, new login. 3 calls/min, un-keyed |
+
+`expectedPriceUsd` is **required** on `buy`, `buyCart` items and `renew`: it is
+the `priceUsd` the user confirmed, and the platform refuses a charge without
+it. Read `err.data.code` on a `ProxiesApiError`:
+
+| Status | `code` | Meaning |
+|---|---|---|
+| `409` | `price_changed` | The price moved; confirm the new one and call again with a **new** key |
+| `409` | `recent_checkout` | The same items were bought under 2 minutes ago; resend with `confirmAgain: true` only if a second order is really wanted |
+| `409` | `recent_renewal` / `renewal_open` | A renewal succeeded under 2 minutes ago / is still settling |
+| `409` | `line_busy` | A rotation or replacement is already in flight |
+| `403` | `scope_missing` | The API key lacks `modems:purchase` |
+
+```ts
+const { tariffs } = await proxies.privateModems.catalog();
+const plan = tariffs.find(t => t.period === 'month')!;   // pick the plan the user chose
+// show plan.priceUsd, get a yes, then:
+try {
+  const order = await proxies.privateModems.buy({
+    tariffId: plan.tariffId,
+    expectedPriceUsd: plan.priceUsd,
+    idempotencyKey: `modem_${checkoutId}`,     // your domain id
+  });
+  // poll mine() until the modem is active and has credentials (10-60 s)
+} catch (err) {
+  if (err instanceof ProxiesTimeoutError) {
+    // Outcome unknown. Replay with the SAME key — never buy() again without it:
+    await proxies.privateModems.buy({ tariffId: plan.tariffId, expectedPriceUsd: plan.priceUsd, idempotencyKey: err.idempotencyKey });
+  }
+}
+```
+
+### Verifying webhooks (v0.10.0+)
+
+The platform has two webhook systems that sign differently, and the one you
+registered with decides which function you call:
+
+| You registered through | Header you receive | Verify with |
+|---|---|---|
+| `POST /v1/reseller/webhooks` (self-serve) | `X-Webhook-Signature: sha256=<hex>` only | `verifyLegacyWebhookSignature(rawBody, header, secret)` |
+| An event subscription Proxies.sx created for you | `X-Proxies-Signature: t=<unix>,v1=<hex>` | `verifyWebhookSignature(rawBody, header, secret)` (5-minute replay window) |
+
+Both verify over the **raw** body (`express.raw()`, `await req.text()`), never
+a re-serialised `JSON.stringify(req.body)`, and both resolve `false` instead of
+throwing on malformed input. Dedupe on the envelope `id`: a delivery without a
+2xx is retried. Routes, envelopes, headers, timeouts and retry schedules of
+both systems: [docs/WEBHOOKS-DESIGN.md](./docs/WEBHOOKS-DESIGN.md).
 
 ### `proxies.pool` (public endpoints)
 
@@ -400,13 +480,15 @@ try {
     if (err.isAuth) {
       // 401/403 — API key invalid or revoked
     } else if (err.isRateLimited) {
-      // 429 — already retried by the SDK; surface to user
+      // 429 — retried by the SDK when the request was retry-safe; surface to user
     } else if (err.isServer) {
-      // 5xx — already retried by the SDK; surface to user
+      // 5xx — retried by the SDK when the request was retry-safe; surface to user
     }
   } else if (err instanceof ProxiesTimeoutError) {
     // Request exceeded the configured timeout
   }
+  // On a keyed write (create/update/topUp/regenerate, privateModems buy/buyCart/renew)
+  // err.idempotencyKey is the key that was sent: replay with it, never call again without it.
   throw err;
 }
 ```

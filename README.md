@@ -375,7 +375,7 @@ Full spec: [api.proxies.sx/docs/api](https://api.proxies.sx/docs/api) (Swagger U
 - `Idempotency-Key` header on writes — dedupes retries within 24h. Critical for webhook handlers and payment flows.
 - `X-Request-ID` returned on every response — paste in support tickets to skip log-grepping.
 - `POST /:id/topup` — atomic single-write that does cap `$inc` and extends `expiresAt = max(now, current) + days`.
-- SDK adds built-in retry (3 attempts, exp + jitter, honors `Retry-After`). Disable with `retry: false`.
+- SDK adds built-in retry (3 attempts, exp + jitter, honors `Retry-After`) for every `GET` and for writes that carry an `Idempotency-Key` (`create` / `update` / `topUp` / `regenerate` and the private-modem money calls always do, since SDK 0.10.0); un-keyed `POST` / `PATCH` / `DELETE` are sent once. Disable with `retry: false`.
 
 Migration guide for existing v0.2.0 integrations: [docs/MIGRATION-0.3.0.md](./docs/MIGRATION-0.3.0.md).
 
