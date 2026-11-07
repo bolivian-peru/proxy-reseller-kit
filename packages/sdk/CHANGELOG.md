@@ -5,6 +5,83 @@ All notable changes to this package are documented here. The format is based on
 semver from 0.3.0 onwards (the public surface is everything exported from
 `dist/index.d.ts`).
 
+## 0.10.0 — Safe retries, Private modems, webhook verification (Nov 2026)
+
+### Changed — retries are gated by method and `Idempotency-Key`
+
+- **The SDK no longer auto-retries a write it cannot prove is safe to re-send.**
+  A request is retried on `429` / `5xx` / timeout / network error only when it is a
+  `GET` (`HEAD`, `OPTIONS`), or when it carries an `Idempotency-Key` header. A `POST`
+  without a key, every `PATCH` and every `DELETE` are sent exactly once and the error
+  surfaces to you. Before 0.10.0 every call was retried up to 3 times regardless of
+  method, which could re-execute an un-keyed write (`poolKeys.reveal`, `sessions.close`,
+  `poolKeys.update`) and, with the new private-modem endpoints, a rotation or a
+  modem replacement.
+- A retry always re-sends the **same** `init`, so the identical `Idempotency-Key`
+  reaches the platform on every attempt; a key is never generated inside the loop.
+- **`poolKeys.create` / `topUp` / `regenerate` now always send an `Idempotency-Key`**:
+  yours, or one generated per call (the README had claimed this since 0.3.0; it is now
+  true). As a result these three keep retrying on transient failures exactly as before,
+  and a retry can only replay the first response. Keys are validated client-side as
+  8–128 chars of `[A-Za-z0-9_-]` (`ProxiesConfigError` otherwise, before any request).
+- If you had wrapped your own retry around un-keyed writes because the SDK's was there,
+  nothing changes for you; if you relied on silent SDK retries of `update()`/`delete()`/
+  `sessions.close()`, pass the call again yourself after inspecting the error.
+
+### Added — `proxies.privateModems`
+
+Typed client for **Private modems** (`/v1/private-modems/*`): a dedicated 4G/5G modem
+rented per day, week or month, paid from the account balance, unlimited traffic, own
+HTTP + SOCKS5 login, on-demand rotation, auto-renew.
+
+- `status()`, `catalog()`, `mine()`, `renewalQuote(id)` — reads (retried as usual).
+- `buy({ tariffId, expectedPriceUsd, idempotencyKey? })`,
+  `buyCart({ items, confirmAgain?, idempotencyKey? })`,
+  `renew(id, { expectedPriceUsd, period?, confirmAgain?, idempotencyKey? })` — money
+  calls; each carries an `Idempotency-Key` (generated per call when omitted) so a retry
+  can only return the same order, never charge twice. `expectedPriceUsd` is required
+  (the platform refuses a charge without the price the user saw; 409 `price_changed`
+  when it moved).
+- `rotate(id)`, `replace(id)` — un-keyed `POST`s, never auto-retried; `setAutoRenew(id,
+  { enabled, period? })` — `PUT`, never auto-retried.
+- New exported types: `PrivateModemCatalog`, `PrivateModemTariff`, `PrivateModemRegion`,
+  `PrivateModem`, `PrivateModemsMine`, `PrivateModemOrder`, `PrivateModemCart`,
+  `PrivateModemRenewalQuote`, `PrivateModemRenewalOption`, `PrivateModemRotateResult`,
+  `PrivateModemAutoRenew`, `PrivateModemCredentials`, `PrivateModemEndpoint`,
+  `PrivateModemCapabilities`, `PrivateModemPeriod`, `PrivateModemFeatureShare`,
+  `BuyPrivateModemInput`, `BuyPrivateModemCartInput`, `PrivateModemCartItem`,
+  `RenewPrivateModemInput`.
+- Buying needs an API key with the `modems:purchase` scope (403 `scope_missing` otherwise).
+
+### Added — webhook signature verification
+
+- **Pick the verifier by the system your endpoint is registered with.** A webhook you
+  create yourself at `POST /v1/reseller/webhooks` receives **only**
+  `X-Webhook-Signature: sha256=<hex>` (plus `X-Webhook-Event` / `X-Webhook-Delivery` /
+  `X-Webhook-Timestamp`) and a `{ id: "evt_…", type, created, data }` envelope: use
+  `verifyLegacyWebhookSignature()` there. `X-Proxies-Signature` is sent by the platform
+  events service, whose subscriptions (`/v1/events/subscriptions`) are not self-serve
+  today; you are on it only if Proxies.sx created a subscription for you.
+- **`verifyWebhookSignature(rawBody, header, secret, opts?)`** — verifies
+  `X-Proxies-Signature: t=<unix seconds>,v1=<hex>` where `v1 = HMAC-SHA256(secret,
+  `${t}.${rawBody}`)`, rejects deliveries more than 5 minutes (`toleranceSec`, default
+  300) from now, compares in constant time via Web Crypto `subtle.verify`, and resolves
+  `false` (never throws) on any malformed input. Async: returns `Promise<boolean>`. It
+  accepts several `v1` values in one header; the platform sends one today, so a future
+  overlapping-secret rotation needs no client change. Regenerating a secret takes effect
+  on the next delivery: update the receiver first, then regenerate, and expect the
+  deliveries in between to fail verification (they are retried).
+- **`verifyLegacyWebhookSignature(rawBody, header, secret)`** — the plain
+  `X-Webhook-Signature` (HMAC-SHA256 of the raw body), accepted as `sha256=<hex>`
+  (self-serve reseller webhooks) or bare hex (events service). No replay protection:
+  dedupe on the event id.
+- `WEBHOOK_TOLERANCE_SEC` (300) and the `VerifyWebhookSignatureOptions` type.
+- Needs a Web Crypto implementation: global `crypto` on Node ≥ 19, Bun, Deno, Workers
+  and Edge; on Node 18 pass `{ crypto: webcrypto }` from `node:crypto`.
+- `docs/WEBHOOKS-DESIGN.md` rewritten from the 2026‑05 proposal: it now documents both
+  delivery contracts as the backend sends them (headers, envelopes, timeouts, retry
+  schedules, routes) and cites the backend files they come from.
+
 ## 0.9.0 — Private Pool quality tier (Jul 2026)
 
 - **`qualityTier` on `poolKeys.create` / `poolKeys.update`** — mint or switch a key

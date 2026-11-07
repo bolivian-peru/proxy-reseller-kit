@@ -3,16 +3,22 @@ import { ProxiesConfigError } from './errors';
 /**
  * Webhook signature verification for receivers of Proxies.sx events.
  *
- * Every delivery carries two signatures over the exact raw body:
+ * The platform has two webhook systems, signing differently over the exact
+ * raw body (see docs/WEBHOOKS-DESIGN.md for which one you are on):
  *
- *   X-Proxies-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>
- *   X-Webhook-Signature: <hex HMAC-SHA256(secret, rawBody)>     (legacy; older
- *                        endpoints receive it as `sha256=<hex>`)
+ *   Self-serve reseller webhooks (`POST /v1/reseller/webhooks`) send ONLY
+ *     X-Webhook-Signature: sha256=<hex HMAC-SHA256(secret, rawBody)>
+ *     → {@link verifyLegacyWebhookSignature}
  *
- * Use {@link verifyWebhookSignature}: binding the timestamp into the MAC is
- * what lets a receiver reject a replayed delivery. The legacy header has no
- * replay protection and exists for integrations written before the
- * timestamped scheme; {@link verifyLegacyWebhookSignature} checks it.
+ *   Every delivery from the platform events service (subscriptions Proxies.sx
+ *   creates for you) carries two signatures:
+ *     X-Proxies-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>
+ *     X-Webhook-Signature: <hex HMAC-SHA256(secret, rawBody)>   (bare hex, legacy)
+ *     → {@link verifyWebhookSignature}: binding the timestamp into the MAC is
+ *       what lets a receiver reject a replayed delivery.
+ *
+ * The legacy header has no replay protection, so a receiver on it must stay
+ * idempotent on the event id.
  *
  * Both functions need the body exactly as received (`express.raw()`,
  * `await req.text()`), never a re-serialised `JSON.stringify(req.body)`.
@@ -76,10 +82,12 @@ export async function verifyWebhookSignature(
 }
 
 /**
- * Verify the legacy `X-Webhook-Signature` header: a plain HMAC-SHA256 of the
- * raw body, sent as bare hex or as `sha256=<hex>`. It carries no timestamp,
- * so it cannot detect a replayed delivery — prefer
- * {@link verifyWebhookSignature} and treat this as a migration aid.
+ * Verify the `X-Webhook-Signature` header: a plain HMAC-SHA256 of the raw
+ * body, sent as `sha256=<hex>` by self-serve `/v1/reseller/webhooks`
+ * endpoints (the only signature they receive) and as bare hex by the events
+ * service. It carries no timestamp, so it cannot detect a replayed delivery:
+ * dedupe on the event id. Use {@link verifyWebhookSignature} wherever an
+ * `X-Proxies-Signature` header is present.
  */
 export async function verifyLegacyWebhookSignature(
   rawBody: string | Uint8Array,
@@ -98,7 +106,10 @@ export async function verifyLegacyWebhookSignature(
 
 interface ParsedSignature {
   timestamp: number;
-  /** Every `v1=` value in the header (a secret rotation may send two). */
+  /**
+   * Every `v1=` value in the header. The platform sends one today; accepting
+   * several means a future overlapping-secret rotation needs no client change.
+   */
   signatures: string[];
 }
 

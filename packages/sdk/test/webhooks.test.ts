@@ -9,7 +9,7 @@ import { ProxiesConfigError } from '../src/errors';
 
 const SECRET = 'whsec_test_0123456789';
 const BODY = JSON.stringify({
-  id: 'dlv_01',
+  id: '672c0f1e9a1b2c3d4e5f6a7b',
   type: 'ping',
   createdAt: '2026-11-07T10:00:00.000Z',
   data: {},
