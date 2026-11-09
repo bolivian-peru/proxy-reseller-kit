@@ -12,7 +12,7 @@ export interface PricingTier {
   id: string;
   /** Shown on the landing page. */
   displayName: string;
-  /** Gigabytes of traffic included. */
+  /** Gigabytes of traffic included. A whole number of 1 or more: the API rejects fractions. */
   gb: number;
   /** Price in US dollars (not cents). Stripe conversion happens in checkout handler. */
   priceUsd: number;

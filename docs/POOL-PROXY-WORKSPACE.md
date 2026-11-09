@@ -334,8 +334,8 @@ API key stays server-side. Shared-key read routes require `customers:read`,
 mutations `customers:write`, session reads `ports:read`, releases `ports:write`,
 aggregate usage `traffic:read`; public stock/incidents need no secret. Expose only
 the routes your product needs. See [React handlers](../packages/react/README.md#server-handlers-v040).
-Do not enable the demonstration starter's live payments without resolving its
-[documented delivery/recovery limitation](SHARED-POOL-CONTRACT.md#independent-starter-payment-limitation).
+Do not enable the starter's live payments without checking its
+[documented delivery limits](SHARED-POOL-CONTRACT.md#starter-payment-delivery).
 
 ## 9. Acceptance before selling this flow
 

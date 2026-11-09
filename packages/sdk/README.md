@@ -120,11 +120,11 @@ scope to add.
 
 | Method | Returns | Description |
 |---|---|---|
-| `create({ label, trafficCapGB?, qualityTier?, expiresAt?, idempotencyKey? })` | `PoolAccessKey` | Mint a new key |
+| `create({ label, trafficCapGB?, qualityTier?, expiresAt?, idempotencyKey? })` | `PoolAccessKey` | Mint a new key. `trafficCapGB` is a whole number of 1 or more and is required unless the account is a partner account (omitting it returns `400`) |
 | `list()` | `PoolAccessKey[]` | List all your keys with usage |
 | `get(keyId)` | `PoolAccessKey` | Fetch a single key by id |
 | `update(keyId, { label?, enabled?, trafficCapGB?, qualityTier?, expiresAt? }, { idempotencyKey? }?)` | `PoolAccessKey` | Update supported fields; shared-key resume requires the separate conditional route |
-| `topUp(keyId, { addTrafficGB?, extendDays?, idempotencyKey? })` | `PoolAccessKey` | Atomically extend cap and/or expiry — use this for top-up flows |
+| `topUp(keyId, { addTrafficGB?, extendDays?, idempotencyKey? })` | `PoolAccessKey` | Atomically extend cap and/or expiry — use this for top-up flows. `addTrafficGB` is a whole number of 1 or more and is ignored on an uncapped (partner) key. A top-up keeps holds and does not resume a disabled key |
 | `regenerate(keyId, { idempotencyKey? }?)` | `PoolAccessKey` | Change the stored secret; caches and existing sockets prevent an immediate revocation guarantee |
 | `reveal(keyId)` (v0.5.0+) | `PoolAccessKey` | Audit-logged unmask. Records a `reveal` event server-side. Use in customer-facing dashboards instead of displaying `key` from `list()` |
 | `audit({ action?, before?, limit? }?)` (v0.5.0+) | `PoolAccessKeyAuditEvent[]` | Forensic log across ALL of your keys (90-day TTL). Filter by action, paginate via `before` |
@@ -577,7 +577,7 @@ All errors extend `ProxiesError`. Use `instanceof` for type narrowing:
 import { ProxiesApiError, ProxiesTimeoutError } from '@proxies-sx/pool-sdk';
 
 try {
-  await proxies.poolKeys.create({ label: 'test' });
+  await proxies.poolKeys.create({ label: 'test', trafficCapGB: 1 });
 } catch (err) {
   if (err instanceof ProxiesApiError) {
     // err.requestId is the X-Request-ID server-side — paste it in support tickets

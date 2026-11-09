@@ -178,7 +178,7 @@ exposes it on `ProxiesApiError`:
 
 ```ts
 try {
-  await proxies.poolKeys.create({ label: 'alice' });
+  await proxies.poolKeys.create({ label: 'alice', trafficCapGB: 10 });
 } catch (err) {
   if (err instanceof ProxiesApiError) {
     logger.error({
