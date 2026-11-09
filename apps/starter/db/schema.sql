@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS customers (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Immutable ledger of completed purchases. One row per successful checkout.
+-- Ledger of paid checkouts and the delivery journal. One row per paid session.
 CREATE TABLE IF NOT EXISTS purchases (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -97,7 +97,18 @@ CREATE TABLE IF NOT EXISTS purchases (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Idempotency log for Stripe webhooks. Inserting a row is the idempotency key.
+-- Delivery journal columns. The webhook inserts a purchase as 'pending', stores
+-- the provider Idempotency-Key in operation_token before it calls the provider,
+-- and sets 'delivered' only after the provider confirmed the mint or top-up.
+-- delivery_attempt grows only when the provider rejected a token, which proves
+-- no effect and needs a new token. The column default is 'delivered' so rows
+-- written before this journal existed are never delivered a second time.
+ALTER TABLE purchases ADD COLUMN IF NOT EXISTS delivery_state TEXT NOT NULL DEFAULT 'delivered';
+ALTER TABLE purchases ADD COLUMN IF NOT EXISTS operation_token TEXT;
+ALTER TABLE purchases ADD COLUMN IF NOT EXISTS delivery_attempt INTEGER NOT NULL DEFAULT 1;
+
+-- Log of fully handled Stripe events. A row is written after the handler
+-- finished, so a retry of an unfinished event runs the handler again.
 CREATE TABLE IF NOT EXISTS webhook_events (
   stripe_event_id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
