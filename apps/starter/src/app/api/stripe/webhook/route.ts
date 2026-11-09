@@ -16,7 +16,8 @@ export const dynamic = 'force-dynamic';
  *
  * Configure in Stripe dashboard:
  *   Endpoint URL: https://YOUR_DOMAIN/api/stripe/webhook
- *   Events: checkout.session.completed
+ *   Events: checkout.session.completed,
+ *           checkout.session.async_payment_succeeded
  *
  * For local dev: `stripe listen --forward-to localhost:3000/api/stripe/webhook`
  *
@@ -53,8 +54,13 @@ export async function POST(req: Request) {
     if (seen.length > 0) {
       return NextResponse.json({ received: true, deduped: true });
     }
-    if (event.type === 'checkout.session.completed') {
-      await handleCheckoutCompleted(event.data.object);
+    // Delayed payment methods complete the session unpaid and confirm later
+    // with async_payment_succeeded. Both events carry the session.
+    if (
+      event.type === 'checkout.session.completed' ||
+      event.type === 'checkout.session.async_payment_succeeded'
+    ) {
+      await handlePaidCheckout(event.data.object);
     }
     // Other events acknowledged but ignored.
     await query(
@@ -70,7 +76,11 @@ export async function POST(req: Request) {
   }
 }
 
-async function handleCheckoutCompleted(sess: Stripe.Checkout.Session): Promise<void> {
+async function handlePaidCheckout(sess: Stripe.Checkout.Session): Promise<void> {
+  // Deliver only for money that arrived. An unpaid completion and a failed
+  // delayed payment grant nothing.
+  if (sess.payment_status !== 'paid') return;
+
   const userIdStr = sess.metadata?.userId;
   const tierId = sess.metadata?.tierId;
   if (!userIdStr || !tierId) {

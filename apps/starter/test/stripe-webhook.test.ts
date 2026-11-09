@@ -114,19 +114,22 @@ vi.mock('@/lib/proxies', () => {
 
 import { POST } from '@/app/api/stripe/webhook/route';
 
-function checkoutEvent(eventId: string, sessionId: string, overrides: Record<string, unknown> = {}) {
+function checkoutEvent(
+  eventId: string,
+  sessionId: string,
+  { type = 'checkout.session.completed', paymentStatus = 'paid' } = {},
+) {
   return {
     id: eventId,
-    type: 'checkout.session.completed',
+    type,
     data: {
       object: {
         id: sessionId,
-        payment_status: 'paid',
+        payment_status: paymentStatus,
         amount_total: 3500,
         metadata: { userId: '1', tierId: 'starter', gb: '5' },
       },
     },
-    ...overrides,
   };
 }
 
@@ -233,5 +236,33 @@ describe('Stripe webhook delivery recovery', () => {
     expect(world.keys.size).toBe(1);
     expect(world.keys.get('key1')!.trafficCapGB).toBe(10);
     expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 10 });
+  });
+});
+
+describe('Stripe webhook payment status', () => {
+  it('grants nothing for an unpaid completed session, then once when the delayed payment succeeds', async () => {
+    expect(await deliver(checkoutEvent('evt_a', 'cs_test_a', { paymentStatus: 'unpaid' }))).toBe(200);
+    expect(world.dispatches).toEqual([]);
+    expect(world.purchases.size).toBe(0);
+
+    const succeeded = { type: 'checkout.session.async_payment_succeeded' };
+    expect(await deliver(checkoutEvent('evt_b', 'cs_test_a', succeeded))).toBe(200);
+    expect(await deliver(checkoutEvent('evt_b', 'cs_test_a', succeeded))).toBe(200);
+    expect(world.dispatches).toEqual(['mint_cs_test_a']);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 5 });
+  });
+
+  it('grants nothing when the delayed payment fails', async () => {
+    expect(await deliver(checkoutEvent('evt_c', 'cs_test_c', { paymentStatus: 'unpaid' }))).toBe(200);
+    const failed = { type: 'checkout.session.async_payment_failed', paymentStatus: 'unpaid' };
+    expect(await deliver(checkoutEvent('evt_d', 'cs_test_c', failed))).toBe(200);
+    expect(world.dispatches).toEqual([]);
+    expect(world.purchases.size).toBe(0);
+  });
+
+  it('grants once when a paid completion is followed by an async success event', async () => {
+    expect(await deliver(checkoutEvent('evt_e', 'cs_test_e'))).toBe(200);
+    expect(await deliver(checkoutEvent('evt_f', 'cs_test_e', { type: 'checkout.session.async_payment_succeeded' }))).toBe(200);
+    expect(world.dispatches).toEqual(['mint_cs_test_e']);
   });
 });
