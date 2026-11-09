@@ -10,10 +10,12 @@ const world = vi.hoisted(() => ({
   purchases: new Map<string, { userId: number; gb: number; state: 'pending' | 'delivered'; token: string | null; attempt: number }>(),
   customers: new Map<number, { keyId: string | null; totalGb: number }>(),
   failComplete: 0,
+  resumeDown: 0,
   // Provider side.
   keys: new Map<string, { id: string; trafficCapGB: number; enabled: boolean; lifecycleHolds: string[]; lifecycleVersion: number }>(),
   operations: new Map<string, { state: string; targetId: string }>(),
   dispatches: [] as string[],
+  resumes: [] as { keyId: string; expectedLifecycleVersion: number; idempotencyKey: string }[],
   /** What the provider does with the next dispatch. */
   next: 'apply' as 'apply' | 'down' | 'lost' | 'reject' | 'uncertain',
 }));
@@ -103,6 +105,19 @@ vi.mock('@/lib/proxies', () => {
         key.lifecycleVersion += 1;
       });
     },
+    async get(keyId: string) {
+      return world.keys.get(keyId)!;
+    },
+    async resume(keyId: string, input: { expectedLifecycleVersion: number; idempotencyKey: string }) {
+      world.resumes.push({ keyId, ...input });
+      if (world.resumeDown-- > 0) throw apiError(503, 'provider unavailable');
+      return dispatch(input.idempotencyKey, keyId, () => {
+        const key = world.keys.get(keyId)!;
+        key.enabled = true;
+        key.lifecycleHolds = [];
+        key.lifecycleVersion += 1;
+      });
+    },
     async operationByToken(token: string) {
       const operation = world.operations.get(token);
       if (!operation) throw apiError(404, 'No retained operation found');
@@ -155,10 +170,13 @@ beforeEach(() => {
   world.keys.clear();
   world.operations.clear();
   world.dispatches.length = 0;
+  world.resumes.length = 0;
   world.failComplete = 0;
+  world.resumeDown = 0;
   world.next = 'apply';
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
 describe('Stripe webhook delivery recovery', () => {
@@ -264,5 +282,58 @@ describe('Stripe webhook payment status', () => {
     expect(await deliver(checkoutEvent('evt_e', 'cs_test_e'))).toBe(200);
     expect(await deliver(checkoutEvent('evt_f', 'cs_test_e', { type: 'checkout.session.async_payment_succeeded' }))).toBe(200);
     expect(world.dispatches).toEqual(['mint_cs_test_e']);
+  });
+});
+
+describe('Stripe webhook resume after a paid top-up', () => {
+  /** A customer with one delivered purchase whose key the provider then disabled. */
+  async function customerWithHeldKey(holds: string[]) {
+    expect(await deliver(checkoutEvent('evt_first', 'cs_test_first'))).toBe(200);
+    Object.assign(world.keys.get('key1')!, { enabled: false, lifecycleHolds: holds, lifecycleVersion: 2 });
+    world.dispatches.length = 0;
+  }
+
+  it('resumes a key that was disabled only by cap exhaustion', async () => {
+    await customerWithHeldKey(['cap']);
+    expect(await deliver(checkoutEvent('evt_r1', 'cs_test_r1'))).toBe(200);
+    // The top-up moved the version from 2 to 3; resume must carry the version it read.
+    expect(world.resumes).toEqual([{ keyId: 'key1', expectedLifecycleVersion: 3, idempotencyKey: 'resume_cs_test_r1' }]);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: true, lifecycleHolds: [], trafficCapGB: 10 });
+  });
+
+  it.each([[['manual']], [['cap', 'manual']], [['expired']]])('leaves a key held by %j disabled', async (holds) => {
+    await customerWithHeldKey(holds);
+    expect(await deliver(checkoutEvent('evt_r2', 'cs_test_r2'))).toBe(200);
+    expect(world.resumes).toEqual([]);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: false, trafficCapGB: 10 });
+    expect(world.customers.get(1)!.totalGb).toBe(10);
+  });
+
+  it('resumes on the retry when the top-up answer was lost', async () => {
+    await customerWithHeldKey(['cap']);
+    world.next = 'lost';
+    expect(await deliver(checkoutEvent('evt_r3', 'cs_test_r3'))).toBe(500);
+    expect(await deliver(checkoutEvent('evt_r3', 'cs_test_r3'))).toBe(200);
+    expect(topUps()).toEqual(['topup_cs_test_r3']);
+    expect(world.resumes).toHaveLength(1);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: true, trafficCapGB: 10 });
+  });
+
+  it('keeps the purchase delivered when the provider refuses the resume', async () => {
+    await customerWithHeldKey(['cap']);
+    world.operations.set('resume_cs_test_r4', { state: 'rejected', targetId: 'key1' });
+    expect(await deliver(checkoutEvent('evt_r4', 'cs_test_r4'))).toBe(200);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: false, trafficCapGB: 10 });
+    expect(world.purchases.get('cs_test_r4')!.state).toBe('delivered');
+  });
+
+  it('retries the resume, not the top-up, when the provider was down for the resume', async () => {
+    await customerWithHeldKey(['cap']);
+    world.resumeDown = 1;
+    expect(await deliver(checkoutEvent('evt_r5', 'cs_test_r5'))).toBe(500);
+    expect(await deliver(checkoutEvent('evt_r5', 'cs_test_r5'))).toBe(200);
+    expect(topUps()).toEqual(['topup_cs_test_r5']);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: true, trafficCapGB: 10 });
+    expect(world.customers.get(1)!.totalGb).toBe(10);
   });
 });

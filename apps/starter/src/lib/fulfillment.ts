@@ -1,4 +1,4 @@
-import type { ProxiesClient } from '@proxies-sx/pool-sdk';
+import type { PoolAccessKey, ProxiesClient } from '@proxies-sx/pool-sdk';
 
 /** A paid Stripe checkout session, as recorded in `purchases`. */
 export interface PaidSession {
@@ -37,7 +37,7 @@ export interface FulfillmentStore {
   complete(sessionId: string, keyId: string): Promise<void>;
 }
 
-type PoolKeys = Pick<ProxiesClient['poolKeys'], 'create' | 'topUp' | 'operationByToken'>;
+type PoolKeys = Pick<ProxiesClient['poolKeys'], 'create' | 'topUp' | 'get' | 'resume' | 'operationByToken'>;
 
 /** Idempotency-Key for the provider operation that delivers one checkout session. */
 export function operationToken(keyId: string | null, sessionId: string, attempt: number): string {
@@ -52,6 +52,9 @@ export function operationToken(keyId: string | null, sessionId: string, attempt:
  * is marked delivered. Any other outcome throws, the webhook answers non-2xx
  * and Stripe retries. A retry reads the operation stored under the same token
  * before it sends anything, so a session is never delivered twice.
+ *
+ * A top-up also resumes the key when cap exhaustion was the only reason it was
+ * disabled, so a customer who ran out and paid can connect again.
  */
 export async function fulfillPaidSession(
   paid: PaidSession,
@@ -60,7 +63,7 @@ export async function fulfillPaidSession(
 ): Promise<void> {
   const delivery = await store.claim(paid);
   if (delivery.delivered) return;
-  const { token, keyId, gb } = delivery;
+  const { token, keyId } = delivery;
 
   const operation = delivery.fresh ? null : await findOperation(poolKeys, token);
   if (operation?.state === 'rejected') {
@@ -73,16 +76,54 @@ export async function fulfillPaidSession(
     throw new Error(`Delivery ${token} is ${operation.state} at the provider; waiting for the next retry`);
   }
 
-  let deliveredKeyId = keyId ?? operation?.targetId;
-  if (!operation) {
-    const dispatched = keyId
-      ? await poolKeys.topUp(keyId, { addTrafficGB: gb, idempotencyKey: token })
-      : await poolKeys.create({ label: `customer:${paid.userId}`, trafficCapGB: gb, idempotencyKey: token });
-    deliveredKeyId = dispatched.id;
-  }
-  if (!deliveredKeyId) throw new Error(`Delivery ${token} is applied but names no key`);
+  const key = operation
+    ? await readDeliveredKey(poolKeys, keyId ?? operation.targetId, token)
+    : await dispatch(poolKeys, paid.userId, delivery);
+  if (keyId) await resumeAfterTopUp(poolKeys, key, paid.sessionId);
 
-  await store.complete(paid.sessionId, deliveredKeyId);
+  await store.complete(paid.sessionId, key.id);
+}
+
+function dispatch(
+  poolKeys: PoolKeys,
+  userId: number,
+  { token, keyId, gb }: Extract<Delivery, { delivered: false }>,
+): Promise<PoolAccessKey> {
+  if (keyId) return poolKeys.topUp(keyId, { addTrafficGB: gb, idempotencyKey: token });
+  return poolKeys.create({ label: `customer:${userId}`, trafficCapGB: gb, idempotencyKey: token });
+}
+
+function readDeliveredKey(poolKeys: PoolKeys, keyId: string | undefined, token: string): Promise<PoolAccessKey> {
+  if (!keyId) throw new Error(`Delivery ${token} is applied but names no key`);
+  return poolKeys.get(keyId);
+}
+
+/**
+ * Resume a topped-up key whose only hold is `cap`. A key that is disabled for
+ * any other reason (manual, expired, account or security hold) stays disabled:
+ * payment adds GB, it does not clear a hold somebody else placed.
+ */
+async function resumeAfterTopUp(poolKeys: PoolKeys, key: PoolAccessKey, sessionId: string): Promise<void> {
+  if (key.enabled) return;
+  const holds = key.lifecycleHolds ?? [];
+  if (holds.length !== 1 || holds[0] !== 'cap' || key.lifecycleVersion === undefined) {
+    console.warn(`Key ${key.id} was topped up but stays disabled (holds: ${holds.join(', ') || 'unknown'}). Review it before enabling.`);
+    return;
+  }
+  try {
+    await poolKeys.resume(key.id, {
+      expectedLifecycleVersion: key.lifecycleVersion,
+      idempotencyKey: `resume_${sessionId}`,
+    });
+  } catch (err) {
+    // A 4xx other than 429 is the provider's final answer (quota still
+    // exhausted, expired, changed meanwhile). The GB is delivered, so the
+    // purchase completes and the key waits for a manual resume. Anything else
+    // is an unknown outcome: rethrow so the Stripe retry tries again.
+    const status = (err as { status?: number }).status;
+    if (!status || status < 400 || status >= 500 || status === 429) throw err;
+    console.warn(`Key ${key.id} was topped up but could not be resumed: ${(err as Error).message}`);
+  }
 }
 
 /** The operation stored under a token, or null when the provider never admitted one. */
