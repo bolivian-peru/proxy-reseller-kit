@@ -81,6 +81,21 @@ Traditional proxy resale means buying modem hardware, juggling SIM plans, runnin
 
 The [Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy) takes care of the infrastructure — you get a single endpoint (`gw.proxies.sx:7000`), wholesale pricing with volume tiers, and a per-customer sub-key system (`pak_*`). Live pricing: see [client.proxies.sx](https://client.proxies.sx) or [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing).
 
+### Pricing at a glance
+
+One balance covers every country. The price per GB depends on the exit country's tier:
+
+| Tier | List price per GB | With the 40% volume discount (single order of 250 GB+) | Example countries |
+| --- | --- | --- | --- |
+| Standard | $0.75 | $0.45 | Mexico, Argentina, Türkiye, Brazil, Ecuador |
+| Plus | $1.50 | $0.90 | Portugal, Spain, Italy, Romania, Chile |
+| Premium | $4.00 | $2.40 | United States, Poland, Canada, Netherlands, United Kingdom, Germany, France, Georgia |
+
+- Balance is bought at $4/GB; a Plus country uses it 2.67x slower and a Standard country 5.33x slower, which is how the lower prices apply.
+- Volume discounts per single order: -10% from 25 GB, -20% from 50 GB, -30% from 100 GB, -40% from 250 GB. They follow the size of one purchase, not a monthly total.
+- Resellers prepaying 1 TB or more get volume pricing from $0.50/GB on the residential pool, by quote (contact us with countries and monthly volume). Carrier-modem traffic stays on the list tiers; dedicated modems are priced per day/week/month.
+- GB never expire. The live tiers, their full country lists and the discounts are always in [`GET /v1/gateway/pool/stock`](https://api.proxies.sx/v1/gateway/pool/stock) → `pricing`; render that response instead of hardcoding this table.
+
 Public list prices and single-purchase volume discounts are published in the live stock response. Negotiated reseller wholesale terms are separate. Keep raw customer key caps, country-weighted reseller balance consumption and your own retail prices distinct; see the [pricing explanation](docs/POOL-PROXY-WORKSPACE.md#raw-allowance-weighted-account-balance-and-your-retail-price).
 
 This repo takes care of the **software** — SDK, drop-in React component, full Next.js storefront, and a language-agnostic REST API. Zero paid dependencies beyond what you choose (SMTP provider, hosting).
@@ -133,7 +148,7 @@ credentials (not exclusive hardware; peers stay community-shared by nature). Sam
 `pak_` keys, same username DSL (`-sid-`, `-rot-`, `-city-`, `-state-`, `-carrier-`), just
 scoped to your allocation - switching the pool token is the whole integration.
 
-Traffic pricing is identical to the shared pool: $4.00/GB with the standard volume
+Traffic pricing is identical to the shared pool: the country-tier prices above ($0.75 / $1.50 / $4.00 per GB) with the standard volume
 tiers (-10% from 25 GB, -20% from 50 GB, -30% from 100 GB, -40% from 250 GB). **The
 tier comes from the size of a single order, not a monthly total** — 25 orders of
 10 GB earn 0%; one order of 250 GB earns 40%. Billed only as used from the same GB
@@ -348,7 +363,7 @@ That's ~80 lines of route handler — full drop-in (Next.js App Router),
 economics, and security model in **[`docs/X402-RESELLER-INTEGRATION.md`](./docs/X402-RESELLER-INTEGRATION.md)**.
 
 You keep the margin between what you charge the agent (USDC) and what
-the platform charges you ($4/GB) — same wholesale economics as your
+the platform charges you (the country-tier price, $0.75 to $4 per GB; see [Pricing at a glance](#pricing-at-a-glance)) — same wholesale economics as your
 Stripe storefront, on a different rail.
 
 ---
@@ -643,7 +658,7 @@ A: You need a Proxies.sx reseller API key to mint `pak_` sub-keys. Sign up at [c
 **Q: What's my cost structure?**
 A: You pay Proxies.sx wholesale (current rates + volume tiers in your [client.proxies.sx](https://client.proxies.sx) dashboard). You set your retail price. Typical markups on resold mobile proxies are 2–5×. Stripe takes 2.9% + 30¢ per transaction on top.
 
-Larger resellers can negotiate custom wholesale pricing. The published $4/GB base and volume tiers are the self-serve list rates (plus the country-tier burn published in `GET /v1/gateway/pool/stock` → `pricing`); your wholesale rate is per agreement and is not published by any endpoint. If you are moving serious volume or want committed pricing, contact us.
+Larger resellers can negotiate custom wholesale pricing. The published country-tier prices ($0.75 / $1.50 / $4.00 per GB) and volume tiers are the self-serve list rates (live in `GET /v1/gateway/pool/stock` → `pricing`); from 1 TB prepaid we quote from $0.50/GB on the residential pool; your wholesale rate is per agreement and is not published by any endpoint. If you are moving serious volume or want committed pricing, contact us.
 
 **Q: Can I fork and re-brand without attribution?**
 A: Yes — MIT license. Do whatever you want. No attribution required.
