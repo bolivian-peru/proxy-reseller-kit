@@ -162,13 +162,28 @@ export interface PoolAccessKey {
   trafficCapGB: number | null;
   /**
    * Bytes consumed so far, in megabytes (fractional). This is the RAW byte
-   * count the key carried; the per-key cap is compared against it as-is.
-   * Country-tier pricing (see {@link PoolPricing}) applies to the reseller's
-   * own GB balance, not to this counter.
+   * count the key carried. With {@link capMode} `'raw'` (the default) the
+   * per-key cap is compared against it as-is.
    */
   trafficUsedMB: number | null;
   /** Same value as {@link trafficUsedMB} but expressed in GB for display. */
   trafficUsedGB?: number | null;
+  /**
+   * What {@link trafficCapGB} counts. `'raw'` (default): real GB in every
+   * country. `'balance'`: balance GB, burnt at each exit country's tier rate
+   * exactly like your own balance (see {@link PoolPricing}): 1 GB of cap
+   * carries 1 GB in a Premium country, 2.67 GB in Plus, 5.33 GB in Standard.
+   * Platform release r106, 2026-11-13.
+   */
+  capMode?: PoolKeyCapMode;
+  /**
+   * Balance MB this key used: real MB x each exit country's tier burn rate.
+   * Accrues for every key from 2026-11-13; with {@link capMode} `'balance'`
+   * the cap is compared against it.
+   */
+  trafficUsedBalanceMB?: number | null;
+  /** Same value as {@link trafficUsedBalanceMB} in GB for display. */
+  trafficUsedBalanceGB?: number | null;
   usageState?: 'observed' | 'unknown';
   expiryState?: 'observed' | 'unknown';
   observedAt?: string;
@@ -240,6 +255,9 @@ export interface PoolKeyOperation {
  */
 export type PoolQualityTier = 'safe' | 'standard';
 
+/** What a pool key's GB cap counts: real GB (`'raw'`) or balance GB burnt per country tier (`'balance'`). */
+export type PoolKeyCapMode = 'raw' | 'balance';
+
 export interface CreatePoolAccessKeyInput {
   /** Human label. Must be non-empty. Shown in your admin; never sent to the gateway. */
   label: string;
@@ -250,6 +268,8 @@ export interface CreatePoolAccessKeyInput {
    * See {@link PoolAccessKey.trafficCapGB} for the exact rules.
    */
   trafficCapGB?: number | null;
+  /** Count the cap in balance GB burnt per country tier (`'balance'`) instead of real GB (`'raw'`, default). See {@link PoolAccessKey.capMode}. */
+  capMode?: PoolKeyCapMode;
   /**
    * Quality tier — pass `'safe'` to mint a modem-only **Private Pool** key, or
    * omit / `'standard'` for the general modems+peer tier. See {@link PoolQualityTier}.
@@ -347,7 +367,10 @@ export interface PakUsageSeries {
   days: number;
   totalMB: number;
   totalGB: number;
-  series: Array<{ date: string; mbIn: number; mbOut: number; mb: number }>;
+  /** Balance MB on days that recorded it (from 2026-11-13). */
+  totalBalanceMB?: number;
+  /** `balanceMB` is real MB x the exit country's tier burn rate; `null` on days before 2026-11-13. */
+  series: Array<{ date: string; mbIn: number; mbOut: number; mb: number; balanceMB?: number | null }>;
 }
 
 /**
@@ -404,6 +427,8 @@ export interface UpdatePoolAccessKeyInput {
   trafficCapGB?: number | null;
   /** Switch a key between the modem-only Private Pool tier and the general tier. See {@link PoolQualityTier}. */
   qualityTier?: PoolQualityTier;
+  /** Switch what the cap counts. See {@link PoolAccessKey.capMode}. The balance counter accrues from 2026-11-13 only. */
+  capMode?: PoolKeyCapMode;
   /**
    * Pass an ISO/Date in the future to set or extend, `null` to remove an
    * existing expiry, or omit to leave unchanged.

@@ -21,6 +21,7 @@ export type {
   Pool,
   Protocol,
   PoolQualityTier,
+  PoolKeyCapMode,
   PoolAccessKey,
   PoolKeyOperation,
   CreatePoolAccessKeyInput,

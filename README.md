@@ -95,6 +95,7 @@ One balance covers every country. The price per GB depends on the exit country's
 - Balance is bought at $4/GB; a Plus country uses it 2.67x slower and a Standard country 5.33x slower, which is how the lower prices apply.
 - Volume discounts per single order: -10% from 25 GB, -20% from 50 GB, -30% from 100 GB, -40% from 250 GB. They follow the size of one purchase, not a monthly total.
 - Resellers prepaying 1 TB or more get volume pricing from $0.50/GB on the residential pool, by quote (contact us with countries and monthly volume). Carrier-modem traffic stays on the list tiers; dedicated modems are priced per day/week/month.
+- Pool keys can count their cap in balance GB (`capMode: 'balance'`), burnt at each country's tier rate like your own balance: one key, any country, and you sell one GB at your own price. See the [workspace guide](docs/POOL-PROXY-WORKSPACE.md#raw-allowance-weighted-account-balance-and-your-retail-price).
 - GB never expire. The live tiers, their full country lists and the discounts are always in [`GET /v1/gateway/pool/stock`](https://api.proxies.sx/v1/gateway/pool/stock) → `pricing`; render that response instead of hardcoding this table.
 
 Public list prices and single-purchase volume discounts are published in the live stock response. Negotiated reseller wholesale terms are separate. Keep raw customer key caps, country-weighted reseller balance consumption and your own retail prices distinct; see the [pricing explanation](docs/POOL-PROXY-WORKSPACE.md#raw-allowance-weighted-account-balance-and-your-retail-price).

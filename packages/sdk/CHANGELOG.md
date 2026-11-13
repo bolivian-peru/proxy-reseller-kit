@@ -7,6 +7,8 @@ semver from 0.3.0 onwards (the public surface is everything exported from
 
 ## Unreleased
 
+- `PoolAccessKey.capMode` (`raw` | `balance`), `trafficUsedBalanceMB` / `trafficUsedBalanceGB`, `capMode` on create/update inputs, and `balanceMB` / `totalBalanceMB` on the per-key usage series (platform r106, 2026-11-13).
+
 - Docs only: the `ondemand` rotation JSDoc and README line now describe gateway
   release `949b4484d` (13 November 2026): with a `sid`, every new connection
   re-picks a different endpoint when another one matches. The same release adds
