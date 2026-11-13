@@ -25,18 +25,42 @@ Total lines of app code: **under 1000** including comments. You can read it all 
 
 ## Production payment gate
 
-This starter is a demonstration until its paid-delivery recovery is implemented
-and verified. The webhook records a unique purchase before its provider call and
-customer update finish. If the call or local save fails, a callback retry can see
-the existing purchase and return without completing delivery. Stripe webhook
-deduplication therefore does not prove that a paid customer received their GB.
+The webhook delivers a paid checkout through a journal on the `purchases` table:
 
-Do not take live payments with this flow as-is. Complete separate payment,
-entitlement-intent, provider-operation and delivery states; serialize writes;
-recover ambiguous provider effects by authoritative reads; and reconcile pending
-work after restart. Verify duplicate callbacks, concurrent first purchases,
-response loss and DB failure using native PostgreSQL tests. Keep uncertain old
-purchases gated rather than blindly replaying them. Required work and acceptance:
+1. It verifies the Stripe signature and ignores a session whose `payment_status`
+   is not `paid`. A delayed payment method is delivered when
+   `checkout.session.async_payment_succeeded` arrives.
+2. It records the purchase as `pending` and stores the provider
+   `Idempotency-Key` (`mint_<session id>` or `topup_<session id>`) before it
+   calls the provider.
+3. It marks the purchase `delivered` only after the provider confirmed. Until
+   then it answers 500, so Stripe retries.
+4. A retry reads the operation stored under the same key. It sends only when the
+   provider never admitted that key or reports it `retryable` (a transient
+   refusal, sent again under the same key), so one payment is delivered once. A
+   key the provider rejected proves no effect and is replaced by `..._2`, `..._3`.
+5. After a top-up it resumes the key when its only hold is `cap`. A key disabled
+   for another reason (manual, expired, account or security review) stays
+   disabled and a warning is logged. Review and resume that key yourself.
+
+A second purchase of the same customer waits (500, retried by Stripe) while an
+earlier one is still undelivered, so two checkouts never mint two keys.
+
+Verify these limits against your own deployment before taking live payments:
+
+- Recovery runs on Stripe retries only. There is no background worker. Stripe
+  retries a failed webhook for a limited time (up to three days in live mode at
+  the time of writing). A purchase that is still pending after that needs a
+  manual look: `SELECT * FROM purchases WHERE delivery_state = 'pending'`.
+- Refund and dispute events are not handled, and the amount paid is not compared
+  with the tier price.
+- Purchases recorded before the journal existed are treated as delivered. They
+  are not reconciled or sent again.
+- The tests use fakes for Stripe and the provider and a real PostgreSQL for the
+  journal. Nothing here was exercised against live Stripe or the live provider.
+
+Existing deployments must run `pnpm db:migrate` to add the journal columns.
+Remaining work is tracked in
 [issue #4](https://github.com/bolivian-peru/proxy-reseller-kit/issues/4).
 
 Provider lifecycle fixes do not automatically repair this application-level
@@ -114,6 +138,8 @@ stripe listen --forward-to localhost:3000/api/stripe/webhook
 5. Stripe test card: `4242 4242 4242 4242`, any future date, any CVC
 6. Webhook fires → pak_ key minted on Proxies.sx → dashboard shows your proxy URL
 
+Run the webhook tests with `pnpm test`. Set `TEST_DATABASE_URL` to a disposable Postgres to include the journal SQL test.
+
 ---
 
 ## Customizing
@@ -182,7 +208,7 @@ server {
 
 1. Dashboard → Developers → Webhooks → **Add endpoint**
 2. Endpoint URL: `https://yourdomain.com/api/stripe/webhook`
-3. Events: `checkout.session.completed`
+3. Events: `checkout.session.completed` and `checkout.session.async_payment_succeeded`
 4. Copy the signing secret into `.env` as `STRIPE_WEBHOOK_SECRET`
 5. Restart the app
 
@@ -218,8 +244,8 @@ Server (Next.js App Router)
 
 Postgres
   ├── users, accounts, sessions, verification_token  (NextAuth)
-  ├── customers, purchases                           (app)
-  ├── webhook_events                                 (idempotency)
+  ├── customers, purchases                           (app; purchases is the delivery journal)
+  ├── webhook_events                                 (handled Stripe events)
   └── audit_log                                      (key rotations, etc.)
 
 Proxies.sx API
@@ -230,25 +256,25 @@ Proxies.sx API
 
 ### Time-bounded credits (optional)
 
-If your retail product is "10 GB, use within 60 days", set `expiresAt` when minting in the Stripe webhook handler. **Persist `idempotencyKey` and immutable intent before dispatch.** After a 504, read the original operation instead of issuing another create:
+If your retail product is "10 GB, use within 60 days", set `expiresAt` where the starter mints, in `dispatch()` in `src/lib/fulfillment.ts`. The key passed as `idempotencyKey` is already stored on the purchase before dispatch, and a retry reads the original operation instead of issuing another create:
 
 ```ts
-// src/app/api/stripe/webhook/route.ts — inside handleCheckoutCompleted
-const key = await proxies.poolKeys.create({
-  label: `customer:${customerId}`,
-  trafficCapGB: gbPurchased,
+// src/lib/fulfillment.ts, inside dispatch()
+return poolKeys.create({
+  label: `customer:${userId}`,
+  trafficCapGB: gb,
   expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString(),
-  idempotencyKey: `mint_${session.id}`,        // persist before dispatch; recover unknown outcomes without another write
+  idempotencyKey: token,                       // stored on the purchase before dispatch
 });
 ```
 
 On top-up (subsequent purchases by the same customer), prefer `poolKeys.topUp()` (SDK ≥ 0.3.0) over a read-modify-write via `update()`. It avoids a lost cap update, but your host still needs durable intent, serialization and read-only recovery:
 
 ```ts
-await proxies.poolKeys.topUp(customer.pakKeyId, {
-  addTrafficGB: gbPurchased,                   // server-side $inc, race-safe
+return poolKeys.topUp(keyId, {
+  addTrafficGB: gb,                            // server-side $inc, race-safe; whole GB only
   extendDays: 60,                              // expiresAt = max(now, current) + 60d
-  idempotencyKey: `topup_${session.id}`,
+  idempotencyKey: token,
 });
 ```
 
@@ -261,7 +287,7 @@ The platform rejects expired keys at the gateway immediately, and the dashboard'
 - [x] `AUTH_SECRET` is a random 32-byte value (not the example)
 - [x] `.env` is in `.gitignore`
 - [x] Stripe webhook signature verified (see `src/app/api/stripe/webhook/route.ts`)
-- [x] Webhook idempotency via unique `stripe_event_id` in `webhook_events` table
+- [x] One delivery per paid checkout session: `purchases.delivery_state` and a stored provider `Idempotency-Key`
 - [x] All SQL queries parameterized (`pg` `$1` placeholders, never string interpolation)
 - [x] `PROXIES_SX_API_KEY` not imported in any `'use client'` file
 - [x] `/me` responses sent with `Cache-Control: private, no-store`
@@ -285,7 +311,9 @@ The platform rejects expired keys at the gateway immediately, and the dashboard'
 | `src/app/api/auth/[...nextauth]/route.ts` | NextAuth routes |
 | `src/app/api/pool/[...path]/route.ts` | Proxies to the Pool Gateway API |
 | `src/app/api/stripe/checkout/route.ts` | Creates Stripe Checkout sessions |
-| `src/app/api/stripe/webhook/route.ts` | Verifies webhooks, mints pak_ keys |
+| `src/app/api/stripe/webhook/route.ts` | Verifies webhooks, delivers paid sessions |
+| `src/lib/fulfillment.ts` | Delivery logic: mint or top-up, recovery, cap-hold resume |
+| `src/lib/fulfillment-store.ts` | Delivery journal SQL on `purchases` |
 | `db/schema.sql` | Every table, every index, one file |
 | `db/migrate.mjs` | Idempotent schema runner |
 | `docker-compose.yml` | Postgres + app |

@@ -67,30 +67,31 @@ const single = await queryOne<{ id: number }>('SELECT id FROM users WHERE email 
 **Always use parameterized queries (`$1`, `$2`, …). Never concatenate.**
 
 ### Add a new Stripe event handler
-Extend `handleCheckoutCompleted` in `src/app/api/stripe/webhook/route.ts`, or branch on `event.type` in the main handler. Idempotency is enforced by the `webhook_events` table (a unique `stripe_event_id`). If your handler throws, the row is deleted so Stripe retries will re-run it.
+Branch on `event.type` in the main handler of `src/app/api/stripe/webhook/route.ts`. An event is written to `webhook_events` only after its handler finished, so if your handler throws, the answer is 500 and the Stripe retry runs it again. Make every handler safe to run twice. Paid checkouts are delivered by `fulfillPaidSession` in `src/lib/fulfillment.ts`: the `purchases` row is the delivery journal (`delivery_state`, `operation_token`), and the webhook answers 2xx only once the provider confirmed. Do not move the provider call back inside a database transaction and do not acknowledge an undelivered purchase.
 
 ### Add an expiry to minted keys (time-bounded credits)
 The platform supports `expiresAt` on `pak_` keys (SDK ≥ 0.2.0). To ship "10 GB, use within 60 days":
 
-1. In `handleCheckoutCompleted`, pass `expiresAt` when minting:
+1. In `dispatch()` in `src/lib/fulfillment.ts`, pass `expiresAt` when minting:
    ```ts
-   const key = await proxies.poolKeys.create({
-     label: `customer:${customerId}`,
-     trafficCapGB: gbPurchased,
+   return poolKeys.create({
+     label: `customer:${userId}`,
+     trafficCapGB: gb,
      expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString(),
-     idempotencyKey: `mint_${session.id}`,  // saved before dispatch; recover a 504 through operation lookup
+     idempotencyKey: token,  // stored on the purchase before dispatch; a retry reads the operation
    });
    ```
 2. On subsequent top-ups, prefer `poolKeys.topUp()` (SDK ≥ 0.3.0) over a
    read-modify-write via `update()`. It avoids a lost cap update; keep durable intent and same-key serialization:
    ```ts
-   await proxies.poolKeys.topUp(customer.pak_key_id, {
-     addTrafficGB: tier.gb,        // server $inc, race-safe
+   return poolKeys.topUp(keyId, {
+     addTrafficGB: gb,             // server $inc, race-safe; whole GB only
      extendDays: 60,               // expiresAt = max(now, current) + 60d
-     idempotencyKey: `topup_${session.id}`,
+     idempotencyKey: token,
    });
-   // Top-up does not resume a disabled key. A separate authorized review
-   // must reconcile raw quota, expiry, account eligibility and every hold.
+   // The provider top-up does not resume a disabled key. The starter then
+   // calls the conditional resume only when the sole hold is `cap`. Any other
+   // hold needs a separate authorized review.
    ```
 3. Surface `expiresAt` and `isExpired` in the `/api/pool/me` response —
    `<PoolPortal />` will render the countdown banner automatically.
@@ -227,7 +228,8 @@ Every variable used by the app is documented in `.env.example`. The agent rule: 
 - **"DATABASE_URL is not set"** — `src/lib/db.ts` throws at import time. Fix `.env` and restart.
 - **Magic link never arrives** — if SMTP isn't configured, check the server console. If SMTP is configured, check your provider's logs and `EMAIL_FROM` DNS (SPF/DKIM).
 - **Stripe webhook 400** — signature mismatch. Make sure `STRIPE_WEBHOOK_SECRET` matches the one `stripe listen` printed (dev) or the dashboard endpoint secret (prod).
-- **Customer paid but no key** — check the `webhook_events` table for their event; check `purchases` for the row; check the server console for the Pool API error.
+- **Customer paid but no key**: check `purchases` for the row. `delivery_state = 'pending'` means delivery is not confirmed yet and the next Stripe retry continues it. `operation_token` is the provider `Idempotency-Key` to look up. Check the server console for the Pool API error. A row in `webhook_events` means the event was fully handled.
+- **Customer topped up but still cannot connect**: the key is disabled for a reason other than cap exhaustion, or the provider refused the resume (see the server console warning). Review the key's `lifecycleHolds` and resume it yourself.
 
 ## Further reading
 

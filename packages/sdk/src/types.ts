@@ -212,7 +212,12 @@ export interface PoolKeyOperation {
   action: string;
   targetId?: string;
   fingerprint: string;
-  state: 'accepted' | 'submitted' | 'applied' | 'uncertain' | 'rejected';
+  /**
+   * `rejected` proves no effect and consumes the token for good. `retryable` is a
+   * transient refusal that also proved no effect, but the same token may be sent
+   * again (and must be: a new token would be a second operation).
+   */
+  state: 'accepted' | 'submitted' | 'applied' | 'uncertain' | 'rejected' | 'retryable';
   expectedLifecycleVersion?: number;
   targetCredentialVersion?: number;
   appliedVersion?: number;

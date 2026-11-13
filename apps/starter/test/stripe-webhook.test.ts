@@ -1,0 +1,355 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { operationToken, type Delivery, type FulfillmentStore, type PaidSession } from '@/lib/fulfillment';
+
+/**
+ * Drives the real webhook route and the real fulfillment logic. Only the
+ * edges are replaced: Stripe signature parsing, Postgres and the provider API.
+ */
+const world = vi.hoisted(() => ({
+  events: new Set<string>(),
+  purchases: new Map<string, { userId: number; gb: number; state: 'pending' | 'delivered'; token: string | null; attempt: number }>(),
+  customers: new Map<number, { keyId: string | null; totalGb: number }>(),
+  failComplete: 0,
+  resumeDown: 0,
+  // Provider side.
+  keys: new Map<string, { id: string; trafficCapGB: number; enabled: boolean; lifecycleHolds: string[]; lifecycleVersion: number }>(),
+  operations: new Map<string, { state: string; targetId: string }>(),
+  dispatches: [] as string[],
+  resumes: [] as { keyId: string; expectedLifecycleVersion: number; idempotencyKey: string }[],
+  /** What the provider does with the next dispatch. */
+  next: 'apply' as 'apply' | 'down' | 'lost' | 'reject' | 'transient' | 'uncertain',
+}));
+
+vi.mock('@/lib/stripe', () => ({
+  stripe: { webhooks: { constructEvent: (raw: string) => JSON.parse(raw) } },
+}));
+
+vi.mock('@/lib/db', () => ({
+  query: async (sql: string, params: string[]) => {
+    if (sql.startsWith('SELECT')) return world.events.has(params[0]) ? [{}] : [];
+    world.events.add(params[0]);
+    return [];
+  },
+}));
+
+vi.mock('@/lib/fulfillment-store', () => {
+  const purchaseStore: FulfillmentStore = {
+    async claim(paid: PaidSession): Promise<Delivery> {
+      if (!world.purchases.has(paid.sessionId)) {
+        world.purchases.set(paid.sessionId, { userId: paid.userId, gb: paid.gb, state: 'pending', token: null, attempt: 1 });
+      }
+      if (!world.customers.has(paid.userId)) world.customers.set(paid.userId, { keyId: null, totalGb: 0 });
+      const row = world.purchases.get(paid.sessionId)!;
+      if (row.state === 'delivered') return { delivered: true };
+      const keyId = world.customers.get(paid.userId)!.keyId;
+      const fresh = !row.token;
+      if (!row.token) {
+        const busy = [...world.purchases.values()].some((p) => p.userId === paid.userId && p.state === 'pending' && p.token);
+        if (busy) throw new Error('another purchase is still being delivered');
+        row.token = operationToken(keyId, paid.sessionId, row.attempt);
+      }
+      return { delivered: false, token: row.token, fresh, keyId, gb: row.gb };
+    },
+    async reissue(sessionId, rejectedToken) {
+      const row = world.purchases.get(sessionId)!;
+      if (row.token !== rejectedToken || row.state !== 'pending') return;
+      row.token = null;
+      row.attempt += 1;
+    },
+    async complete(sessionId, keyId) {
+      if (world.failComplete-- > 0) throw new Error('local write failed');
+      const row = world.purchases.get(sessionId)!;
+      if (row.state !== 'pending') return;
+      row.state = 'delivered';
+      const customer = world.customers.get(row.userId)!;
+      customer.keyId = keyId;
+      customer.totalGb += row.gb;
+    },
+  };
+  return { purchaseStore };
+});
+
+vi.mock('@/lib/proxies', () => {
+  const apiError = (status: number, message: string) => Object.assign(new Error(message), { status });
+  /** One provider write under an Idempotency-Key, with the outcome chosen by `world.next`. */
+  function dispatch(token: string, targetId: string, effect: () => void) {
+    world.dispatches.push(token);
+    const outcome = world.next;
+    world.next = 'apply';
+    if (outcome === 'down') throw apiError(503, 'provider unavailable');
+    // A transient refusal is the one retained state the provider runs again under the same token.
+    if (world.operations.has(token) && world.operations.get(token)!.state !== 'retryable') throw apiError(409, 'replayed token');
+    if (outcome === 'reject') {
+      world.operations.set(token, { state: 'rejected', targetId });
+      throw apiError(400, 'MUTATION_REJECTED');
+    }
+    if (outcome === 'transient') {
+      world.operations.set(token, { state: 'retryable', targetId });
+      throw apiError(409, 'KEY_MUTATION_BUSY');
+    }
+    if (outcome === 'uncertain') {
+      world.operations.set(token, { state: 'uncertain', targetId });
+      throw apiError(504, 'timeout');
+    }
+    effect();
+    world.operations.set(token, { state: 'applied', targetId });
+    if (outcome === 'lost') throw new TypeError('response lost');
+    return world.keys.get(targetId)!;
+  }
+  const poolKeys = {
+    async create(input: { trafficCapGB: number; idempotencyKey: string }) {
+      const id = `key${world.keys.size + 1}`;
+      return dispatch(input.idempotencyKey, id, () => {
+        world.keys.set(id, { id, trafficCapGB: input.trafficCapGB, enabled: true, lifecycleHolds: [], lifecycleVersion: 1 });
+      });
+    },
+    async topUp(keyId: string, input: { addTrafficGB: number; idempotencyKey: string }) {
+      return dispatch(input.idempotencyKey, keyId, () => {
+        const key = world.keys.get(keyId)!;
+        key.trafficCapGB += input.addTrafficGB;
+        key.lifecycleVersion += 1;
+      });
+    },
+    async get(keyId: string) {
+      return world.keys.get(keyId)!;
+    },
+    async resume(keyId: string, input: { expectedLifecycleVersion: number; idempotencyKey: string }) {
+      world.resumes.push({ keyId, ...input });
+      if (world.resumeDown-- > 0) throw apiError(503, 'provider unavailable');
+      return dispatch(input.idempotencyKey, keyId, () => {
+        const key = world.keys.get(keyId)!;
+        key.enabled = true;
+        key.lifecycleHolds = [];
+        key.lifecycleVersion += 1;
+      });
+    },
+    async operationByToken(token: string) {
+      const operation = world.operations.get(token);
+      if (!operation) throw apiError(404, 'No retained operation found');
+      return operation;
+    },
+  };
+  return { proxies: { poolKeys } };
+});
+
+import { POST } from '@/app/api/stripe/webhook/route';
+
+function checkoutEvent(
+  eventId: string,
+  sessionId: string,
+  { type = 'checkout.session.completed', paymentStatus = 'paid' } = {},
+) {
+  return {
+    id: eventId,
+    type,
+    data: {
+      object: {
+        id: sessionId,
+        payment_status: paymentStatus,
+        amount_total: 3500,
+        metadata: { userId: '1', tierId: 'starter', gb: '5' },
+      },
+    },
+  };
+}
+
+async function deliver(event: object): Promise<number> {
+  const res = await POST(
+    new Request('http://localhost/api/stripe/webhook', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'test' },
+      body: JSON.stringify(event),
+    }),
+  );
+  return res.status;
+}
+
+const mints = () => world.dispatches.filter((t) => t.startsWith('mint_'));
+const topUps = () => world.dispatches.filter((t) => t.startsWith('topup_'));
+
+beforeEach(() => {
+  process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test';
+  world.events.clear();
+  world.purchases.clear();
+  world.customers.clear();
+  world.keys.clear();
+  world.operations.clear();
+  world.dispatches.length = 0;
+  world.resumes.length = 0;
+  world.failComplete = 0;
+  world.resumeDown = 0;
+  world.next = 'apply';
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
+
+describe('Stripe webhook delivery recovery', () => {
+  it('delivers on the Stripe retry after the provider was down', async () => {
+    world.next = 'down';
+    expect(await deliver(checkoutEvent('evt_1', 'cs_test_1'))).toBe(500);
+    expect(world.purchases.get('cs_test_1')).toMatchObject({ state: 'pending', token: 'mint_cs_test_1' });
+
+    expect(await deliver(checkoutEvent('evt_1', 'cs_test_1'))).toBe(200);
+    expect(world.keys.size).toBe(1);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 5 });
+    expect(world.purchases.get('cs_test_1')!.state).toBe('delivered');
+  });
+
+  it('reads the operation instead of minting again when the provider answer was lost', async () => {
+    world.next = 'lost';
+    expect(await deliver(checkoutEvent('evt_2', 'cs_test_2'))).toBe(500);
+    expect(world.customers.get(1)!.keyId).toBeNull();
+
+    expect(await deliver(checkoutEvent('evt_2', 'cs_test_2'))).toBe(200);
+    expect(mints()).toEqual(['mint_cs_test_2']);
+    expect(world.keys.size).toBe(1);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 5 });
+  });
+
+  it('adopts the minted key when the local write failed after the provider confirmed', async () => {
+    world.failComplete = 1;
+    expect(await deliver(checkoutEvent('evt_3', 'cs_test_3'))).toBe(500);
+    expect(world.keys.size).toBe(1);
+
+    expect(await deliver(checkoutEvent('evt_3', 'cs_test_3'))).toBe(200);
+    expect(mints()).toEqual(['mint_cs_test_3']);
+    expect(world.keys.size).toBe(1);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 5 });
+  });
+
+  it('keeps answering 500 and sends nothing more while the outcome is uncertain', async () => {
+    world.next = 'uncertain';
+    expect(await deliver(checkoutEvent('evt_4', 'cs_test_4'))).toBe(500);
+    expect(await deliver(checkoutEvent('evt_4', 'cs_test_4'))).toBe(500);
+    expect(await deliver(checkoutEvent('evt_4', 'cs_test_4'))).toBe(500);
+    expect(world.dispatches).toEqual(['mint_cs_test_4']);
+    expect(world.purchases.get('cs_test_4')!.state).toBe('pending');
+    expect(world.events.size).toBe(0);
+  });
+
+  it('tops up once under a new token after the provider rejected the first one', async () => {
+    expect(await deliver(checkoutEvent('evt_5', 'cs_test_5'))).toBe(200);
+    world.next = 'reject';
+    expect(await deliver(checkoutEvent('evt_6', 'cs_test_6'))).toBe(500);
+
+    expect(await deliver(checkoutEvent('evt_6', 'cs_test_6'))).toBe(200);
+    expect(topUps()).toEqual(['topup_cs_test_6', 'topup_cs_test_6_2']);
+    expect(world.keys.get('key1')!.trafficCapGB).toBe(10);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 10 });
+  });
+
+  it('tops up again under the same token after a transient refusal', async () => {
+    expect(await deliver(checkoutEvent('evt_5t', 'cs_test_5t'))).toBe(200);
+    world.next = 'transient';
+    expect(await deliver(checkoutEvent('evt_6t', 'cs_test_6t'))).toBe(500);
+
+    expect(await deliver(checkoutEvent('evt_6t', 'cs_test_6t'))).toBe(200);
+    expect(topUps()).toEqual(['topup_cs_test_6t', 'topup_cs_test_6t']);
+    expect(world.keys.get('key1')!.trafficCapGB).toBe(10);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 10 });
+  });
+
+  it('grants once for a duplicate event and for a second event of the same session', async () => {
+    expect(await deliver(checkoutEvent('evt_7', 'cs_test_7'))).toBe(200);
+    expect(await deliver(checkoutEvent('evt_7', 'cs_test_7'))).toBe(200);
+    expect(await deliver(checkoutEvent('evt_7b', 'cs_test_7'))).toBe(200);
+    expect(world.dispatches).toEqual(['mint_cs_test_7']);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 5 });
+  });
+
+  it('holds a second purchase until the first one is delivered, so only one key is minted', async () => {
+    world.next = 'lost';
+    expect(await deliver(checkoutEvent('evt_8', 'cs_test_8'))).toBe(500);
+    expect(await deliver(checkoutEvent('evt_9', 'cs_test_9'))).toBe(500);
+    expect(world.dispatches).toEqual(['mint_cs_test_8']);
+
+    expect(await deliver(checkoutEvent('evt_8', 'cs_test_8'))).toBe(200);
+    expect(await deliver(checkoutEvent('evt_9', 'cs_test_9'))).toBe(200);
+    expect(world.dispatches).toEqual(['mint_cs_test_8', 'topup_cs_test_9']);
+    expect(world.keys.size).toBe(1);
+    expect(world.keys.get('key1')!.trafficCapGB).toBe(10);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 10 });
+  });
+});
+
+describe('Stripe webhook payment status', () => {
+  it('grants nothing for an unpaid completed session, then once when the delayed payment succeeds', async () => {
+    expect(await deliver(checkoutEvent('evt_a', 'cs_test_a', { paymentStatus: 'unpaid' }))).toBe(200);
+    expect(world.dispatches).toEqual([]);
+    expect(world.purchases.size).toBe(0);
+
+    const succeeded = { type: 'checkout.session.async_payment_succeeded' };
+    expect(await deliver(checkoutEvent('evt_b', 'cs_test_a', succeeded))).toBe(200);
+    expect(await deliver(checkoutEvent('evt_b', 'cs_test_a', succeeded))).toBe(200);
+    expect(world.dispatches).toEqual(['mint_cs_test_a']);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 5 });
+  });
+
+  it('grants nothing when the delayed payment fails', async () => {
+    expect(await deliver(checkoutEvent('evt_c', 'cs_test_c', { paymentStatus: 'unpaid' }))).toBe(200);
+    const failed = { type: 'checkout.session.async_payment_failed', paymentStatus: 'unpaid' };
+    expect(await deliver(checkoutEvent('evt_d', 'cs_test_c', failed))).toBe(200);
+    expect(world.dispatches).toEqual([]);
+    expect(world.purchases.size).toBe(0);
+  });
+
+  it('grants once when a paid completion is followed by an async success event', async () => {
+    expect(await deliver(checkoutEvent('evt_e', 'cs_test_e'))).toBe(200);
+    expect(await deliver(checkoutEvent('evt_f', 'cs_test_e', { type: 'checkout.session.async_payment_succeeded' }))).toBe(200);
+    expect(world.dispatches).toEqual(['mint_cs_test_e']);
+  });
+});
+
+describe('Stripe webhook resume after a paid top-up', () => {
+  /** A customer with one delivered purchase whose key the provider then disabled. */
+  async function customerWithHeldKey(holds: string[]) {
+    expect(await deliver(checkoutEvent('evt_first', 'cs_test_first'))).toBe(200);
+    Object.assign(world.keys.get('key1')!, { enabled: false, lifecycleHolds: holds, lifecycleVersion: 2 });
+    world.dispatches.length = 0;
+  }
+
+  it('resumes a key that was disabled only by cap exhaustion', async () => {
+    await customerWithHeldKey(['cap']);
+    expect(await deliver(checkoutEvent('evt_r1', 'cs_test_r1'))).toBe(200);
+    // The top-up moved the version from 2 to 3; resume must carry the version it read.
+    expect(world.resumes).toEqual([{ keyId: 'key1', expectedLifecycleVersion: 3, idempotencyKey: 'resume_cs_test_r1' }]);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: true, lifecycleHolds: [], trafficCapGB: 10 });
+  });
+
+  it.each([[['manual']], [['cap', 'manual']], [['expired']]])('leaves a key held by %j disabled', async (holds) => {
+    await customerWithHeldKey(holds);
+    expect(await deliver(checkoutEvent('evt_r2', 'cs_test_r2'))).toBe(200);
+    expect(world.resumes).toEqual([]);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: false, trafficCapGB: 10 });
+    expect(world.customers.get(1)!.totalGb).toBe(10);
+  });
+
+  it('resumes on the retry when the top-up answer was lost', async () => {
+    await customerWithHeldKey(['cap']);
+    world.next = 'lost';
+    expect(await deliver(checkoutEvent('evt_r3', 'cs_test_r3'))).toBe(500);
+    expect(await deliver(checkoutEvent('evt_r3', 'cs_test_r3'))).toBe(200);
+    expect(topUps()).toEqual(['topup_cs_test_r3']);
+    expect(world.resumes).toHaveLength(1);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: true, trafficCapGB: 10 });
+  });
+
+  it('keeps the purchase delivered when the provider refuses the resume', async () => {
+    await customerWithHeldKey(['cap']);
+    world.operations.set('resume_cs_test_r4', { state: 'rejected', targetId: 'key1' });
+    expect(await deliver(checkoutEvent('evt_r4', 'cs_test_r4'))).toBe(200);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: false, trafficCapGB: 10 });
+    expect(world.purchases.get('cs_test_r4')!.state).toBe('delivered');
+  });
+
+  it('retries the resume, not the top-up, when the provider was down for the resume', async () => {
+    await customerWithHeldKey(['cap']);
+    world.resumeDown = 1;
+    expect(await deliver(checkoutEvent('evt_r5', 'cs_test_r5'))).toBe(500);
+    expect(await deliver(checkoutEvent('evt_r5', 'cs_test_r5'))).toBe(200);
+    expect(topUps()).toEqual(['topup_cs_test_r5']);
+    expect(world.keys.get('key1')).toMatchObject({ enabled: true, trafficCapGB: 10 });
+    expect(world.customers.get(1)!.totalGb).toBe(10);
+  });
+});

@@ -44,6 +44,19 @@ jobs:
   starter:
     name: Starter (Next.js)
     runs-on: ubuntu-latest
+    services:
+      # Disposable database for the delivery journal test.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +76,12 @@ jobs:
       - name: Typecheck starter
         working-directory: apps/starter
         run: pnpm typecheck
+
+      - name: Test starter
+        working-directory: apps/starter
+        env:
+          TEST_DATABASE_URL: postgres://postgres:ci@localhost:5432/postgres
+        run: pnpm test
 
       - name: Build starter
         working-directory: apps/starter

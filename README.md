@@ -216,19 +216,33 @@ Why two: different audiences, different authz domains, different scale concerns,
 
 ## Starter payment-delivery gate
 
-`apps/starter` is a checkout/integration demonstration, **not production payment
-fulfillment**. It currently records a purchase before provider delivery finishes.
-If create/top-up or local persistence then fails, a repeated Stripe callback can
-find the purchase marker and skip the unfinished delivery. A payment record is
-not proof that the customer received the allowance.
+`apps/starter` delivers a paid checkout through a recoverable journal on its
+`purchases` table. The webhook records the purchase as pending, stores the
+provider `Idempotency-Key` (`mint_<session id>` or `topup_<session id>`) before
+it calls the provider, and marks the purchase delivered only after the provider
+confirmed the mint or top-up. Until then it answers Stripe with 500, so Stripe
+retries. A retry reads the operation stored under the same key before it sends
+anything, so one payment is delivered once. Only a session with
+`payment_status: 'paid'` is delivered. After a top-up the webhook resumes a key
+whose only hold is `cap`; a key disabled for any other reason stays disabled.
 
-Before taking live payments with the starter, implement durable delivery states,
-serialized provider intents, read-only recovery of uncertain effects and a
-restart-safe reconciliation worker. Track the required tests and migration in
+Verify these limits against your own deployment before taking live payments:
+
+- Recovery runs on Stripe retries only. There is no background worker. Stripe
+  retries a failed webhook for a limited time (up to three days in live mode at
+  the time of writing). A purchase that is still pending after that needs a
+  manual look: `SELECT * FROM purchases WHERE delivery_state = 'pending'`.
+- Refund and dispute events are not handled, and the amount paid is not compared
+  with the tier price.
+- Purchases recorded before the journal existed are treated as delivered. They
+  are not reconciled or sent again.
+- The tests use fakes for Stripe and the provider and a real PostgreSQL for the
+  journal. Nothing here was exercised against live Stripe or the live provider.
+
+Remaining work is tracked in
 [issue #4](https://github.com/bolivian-peru/proxy-reseller-kit/issues/4).
-The provider operation journal and SDK update alone do not implement this local
-workflow. Custom integrations, including Portproof, do not use this starter and
-must be assessed against their own code and deployment.
+Custom integrations, including Portproof, do not use this starter and must be
+assessed against their own code and deployment.
 
 ## Pick an integration path
 
@@ -410,7 +424,7 @@ In another terminal:
 stripe listen --forward-to localhost:3000/api/stripe/webhook
 ```
 
-Visit `http://localhost:3000`, click **Sign in** (the magic link prints to the server console in dev — no SMTP needed), click **Buy**, pay with test card `4242 4242 4242 4242`. The webhook mints your `pak_` key and the dashboard shows your live proxy URL.
+Visit `http://localhost:3000`, click **Sign in** (the magic link prints to the server console in dev — no SMTP needed), click **Buy**, pay with test card `4242 4242 4242 4242`. The webhook mints your `pak_` key and the dashboard shows your live proxy URL. If the mint fails, the webhook answers 500 and the next Stripe retry completes it.
 
 ### Embed the dashboard in an existing app
 
@@ -618,7 +632,7 @@ every release has passed an independent audit:
 - ✅ **No secrets are ever committed.** Only `.env.example` with placeholders.
 - ✅ **SQL is parameterized** — `pg` `$1` placeholders, never string interpolation.
 - ✅ **Stripe webhooks verify signatures** — required signature check, never disabled.
-- ✅ **Webhook idempotency** via unique `stripe_event_id` in `webhook_events`.
+- ✅ **One delivery per paid checkout session.** The `purchases` row is unique per Stripe session and carries the delivery state; `webhook_events` logs handled events.
 - ✅ **`/me` responses uncacheable** (`Cache-Control: private, no-store`).
 - ✅ **API keys stay server-side.** The `proxies` client is never imported in `'use client'` files.
 - ✅ **Sessions are database-backed** — not JWTs — so signout is instant.

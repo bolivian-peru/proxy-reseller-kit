@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
 import { proxies } from '@/lib/proxies';
-import { pool, query } from '@/lib/db';
+import { query } from '@/lib/db';
+import { fulfillPaidSession } from '@/lib/fulfillment';
+import { purchaseStore } from '@/lib/fulfillment-store';
 import { tierById, config } from '@/config';
 
 // Stripe signs the raw body; never parse before verifying.
@@ -14,9 +16,14 @@ export const dynamic = 'force-dynamic';
  *
  * Configure in Stripe dashboard:
  *   Endpoint URL: https://YOUR_DOMAIN/api/stripe/webhook
- *   Events: checkout.session.completed
+ *   Events: checkout.session.completed,
+ *           checkout.session.async_payment_succeeded
  *
  * For local dev: `stripe listen --forward-to localhost:3000/api/stripe/webhook`
+ *
+ * The answer is 2xx only once the purchase is delivered. While delivery is
+ * pending or its outcome is unknown the answer is 500, so Stripe retries, and
+ * the retry continues the same delivery (see lib/fulfillment.ts).
  */
 export async function POST(req: Request) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -40,37 +47,40 @@ export async function POST(req: Request) {
     );
   }
 
-  // Idempotency: try to insert the event id. If it's already there, skip.
+  // An event is marked only after it was fully handled, so a crash or a failed
+  // delivery leaves no marker and the Stripe retry runs the handler again.
   try {
-    await query(
-      'INSERT INTO webhook_events (stripe_event_id, type) VALUES ($1, $2)',
-      [event.id, event.type],
-    );
-  } catch (err) {
-    // Duplicate → already processed. Acknowledge 200 so Stripe stops retrying.
-    if ((err as { code?: string }).code === '23505') {
+    const seen = await query('SELECT 1 FROM webhook_events WHERE stripe_event_id = $1', [event.id]);
+    if (seen.length > 0) {
       return NextResponse.json({ received: true, deduped: true });
     }
-    console.error('webhook_events insert failed:', err);
-    return NextResponse.json({ error: 'db_error' }, { status: 500 });
-  }
-
-  try {
-    if (event.type === 'checkout.session.completed') {
-      await handleCheckoutCompleted(event.data.object);
+    // Delayed payment methods complete the session unpaid and confirm later
+    // with async_payment_succeeded. Both events carry the session.
+    if (
+      event.type === 'checkout.session.completed' ||
+      event.type === 'checkout.session.async_payment_succeeded'
+    ) {
+      await handlePaidCheckout(event.data.object);
     }
     // Other events acknowledged but ignored.
+    await query(
+      `INSERT INTO webhook_events (stripe_event_id, type) VALUES ($1, $2)
+       ON CONFLICT (stripe_event_id) DO NOTHING`,
+      [event.id, event.type],
+    );
     return NextResponse.json({ received: true });
   } catch (err) {
     console.error(`Error handling ${event.type}:`, err);
-    // Non-2xx tells Stripe to retry. Delete our idempotency marker so the retry
-    // actually runs the handler again instead of being silently deduped.
-    await query('DELETE FROM webhook_events WHERE stripe_event_id = $1', [event.id]).catch(() => {});
+    // Non-2xx tells Stripe to retry.
     return NextResponse.json({ error: 'handler_failed' }, { status: 500 });
   }
 }
 
-async function handleCheckoutCompleted(sess: Stripe.Checkout.Session): Promise<void> {
+async function handlePaidCheckout(sess: Stripe.Checkout.Session): Promise<void> {
+  // Deliver only for money that arrived. An unpaid completion and a failed
+  // delayed payment grant nothing.
+  if (sess.payment_status !== 'paid') return;
+
   const userIdStr = sess.metadata?.userId;
   const tierId = sess.metadata?.tierId;
   if (!userIdStr || !tierId) {
@@ -79,94 +89,12 @@ async function handleCheckoutCompleted(sess: Stripe.Checkout.Session): Promise<v
   }
   const userId = Number(userIdStr);
   const tier = tierById(tierId);
-  const paidCents = sess.amount_total ?? 0;
 
-  // Atomic: if this stripe_session_id was already processed we'll get a
-  // unique-violation and stop here (makes retries safe).
-  const inserted = await query(
-    `INSERT INTO purchases (user_id, stripe_session_id, amount_usd_cents, gb_purchased, tier_id)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (stripe_session_id) DO NOTHING
-     RETURNING id`,
-    [userId, sess.id, paidCents, tier.gb, tier.id],
+  await fulfillPaidSession(
+    { sessionId: sess.id, userId, amountCents: sess.amount_total ?? 0, gb: tier.gb, tierId: tier.id },
+    purchaseStore,
+    proxies.poolKeys,
   );
-  if (inserted.length === 0) {
-    return; // Already processed
-  }
-
-  // Ensure a customers row exists.
-  await query(
-    `INSERT INTO customers (user_id) VALUES ($1)
-     ON CONFLICT (user_id) DO NOTHING`,
-    [userId],
-  );
-
-  // Lock the customer row + mint/topup + write back, all inside one
-  // transaction. Without this, two near-simultaneous checkouts for the
-  // same user can BOTH read pak_key_id IS NULL, mint TWO keys with
-  // different idempotency keys, and the second UPDATE wins — orphaning
-  // the first paid-for key. (`FOR UPDATE` blocks the second webhook
-  // until the first commits.)
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const lockRes = await client.query<{
-      pak_key_id: string | null;
-      total_gb_purchased: string;
-    }>(
-      'SELECT pak_key_id, total_gb_purchased FROM customers WHERE user_id = $1 FOR UPDATE',
-      [userId],
-    );
-    const customer = lockRes.rows[0] ?? null;
-
-    const newTotalGb = Number(customer?.total_gb_purchased ?? 0) + tier.gb;
-
-    if (!customer?.pak_key_id) {
-      // First purchase — mint the key with this tier's GB as the cap.
-      // idempotencyKey tied to the Stripe session id makes the SDK
-      // call retry-safe; the FOR UPDATE above prevents the OTHER race
-      // (two concurrent first-purchase checkouts for same user).
-      const key = await proxies.poolKeys.create({
-        label: `customer:${userId}`,
-        trafficCapGB: newTotalGb,
-        idempotencyKey: `mint_${sess.id}`,
-      });
-      await client.query(
-        `UPDATE customers
-           SET pak_key_id = $1,
-               total_gb_purchased = $2,
-               updated_at = NOW()
-         WHERE user_id = $3`,
-        [key.id, newTotalGb, userId],
-      );
-    } else {
-      // Top-up — atomic $inc on the platform side. The local mirror
-      // is updated inside the same txn so the row-lock prevents
-      // stale-read undercounting on concurrent top-ups.
-      await proxies.poolKeys.topUp(customer.pak_key_id, {
-        addTrafficGB: tier.gb,
-        idempotencyKey: `topup_${sess.id}`,
-      });
-      // Payment adds entitlement; it does not authorize clearing an independent
-      // account, security or operator hold. Conditional resume belongs to an
-      // explicit reviewed recovery flow, outside this payment callback.
-      await client.query(
-        `UPDATE customers
-           SET total_gb_purchased = $1,
-               updated_at = NOW()
-         WHERE user_id = $2`,
-        [newTotalGb, userId],
-      );
-    }
-
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
 
   console.log(
     `Provisioned ${tier.gb} GB (${config.brand.name} ${tier.id}) for user ${userId}`,

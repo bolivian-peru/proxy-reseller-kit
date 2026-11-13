@@ -109,6 +109,9 @@ operation is reconciled rather than dispatched again. An unresolved claim stays
 blocked through restart; elapsed time does not authorize a second effect. The
 scheduled recovery job finalizes proven outcomes and alerts on unresolved ones.
 It does not guess success from a missing receipt.
+Operation lookup reports a transient refusal as `retryable`: it proved no
+effect, and replaying the same token runs the operation again. Never send a new
+token for it. `rejected` stays terminal.
 
 SDK: `poolKeys.operationByToken(savedToken)` or
 `poolKeys.operation(savedOperationId)`. Read-only results include `keyWriteState`
@@ -226,21 +229,27 @@ guarantees or reserved stock. Do not promise per-key fairness without a released
 enforcement contract. Continue verified polling unless PAK webhook delivery,
 signature, ordering and replay contracts are explicitly released.
 
-## Independent starter payment limitation
+## Starter payment delivery
 
-The optional `apps/starter` is a checkout/integration demonstration and is not
-ready for production payment fulfillment. Its purchase row is written before
-provider delivery finishes; a failure can leave that row present while a repeated
-webhook returns early, without delivering or reconciling the entitlement.
-Neither provider idempotency nor local webhook deduplication closes that gap.
+The optional `apps/starter` keeps a delivery journal on its `purchases` row. It
+stores the provider `Idempotency-Key` before dispatch, marks the purchase
+delivered only after the provider confirmed, and answers Stripe non-2xx until
+then. A retry reads the retained operation by the same key and dispatches only
+after a lookup `404`. A `rejected` operation proves no effect and permanently
+consumes its key, so it is the one case where the starter sends a new key for
+the same payment (`topup_<session id>_2`). A `retryable` operation is a
+transient refusal that also proved no effect; the starter sends the same call
+again under the same key. `accepted`, `submitted` and `uncertain` are never
+dispatched again. After an applied top-up the starter
+calls the conditional resume only for a sole `cap` hold.
 
-Gate live starter payments until it has durable payment/intent/provider/delivery
-states, cross-worker serialization, authoritative uncertain-outcome recovery and
-a restart-safe worker. Native failure/race acceptance and existing-purchase
-reconciliation are tracked in [issue #4](https://github.com/bolivian-peru/proxy-reseller-kit/issues/4).
-Do not replay an old uncertain grant just to clear a pending state. Portproof's
-custom integration does not use this starter; its local implementation and
-production deployment must be evaluated separately.
+Recovery runs on Stripe retries only; there is no restart-safe worker, no refund
+or dispute handling, and purchases recorded before the journal are treated as
+delivered. The flow is tested with fakes and a real PostgreSQL, not against the
+live provider. Remaining work is tracked in
+[issue #4](https://github.com/bolivian-peru/proxy-reseller-kit/issues/4).
+Portproof's custom integration does not use this starter; its local
+implementation and production deployment must be evaluated separately.
 
 ## Joint rollout
 

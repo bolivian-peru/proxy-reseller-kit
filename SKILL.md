@@ -818,18 +818,28 @@ This means a reseller built on this stack inherits a clean IP-reputation posture
 ### Customer pays → mint key (Stripe webhook)
 
 ```ts
-// Pseudocode — works in any framework
-async function onStripeCheckoutCompleted(event) {
+// Pseudocode, works in any framework. apps/starter has the tested version
+// (src/lib/fulfillment.ts).
+async function onStripeCheckoutPaid(event) {
   const session = event.data.object;
+  if (session.payment_status !== 'paid') return;      // also handle async_payment_succeeded
   const customerId = session.client_reference_id;
-  const gbPurchased = Number(session.metadata.gb);
+  const gbPurchased = Number(session.metadata.gb);    // whole GB, 1 or more
+
+  // Save the pending purchase and the operation key BEFORE the call.
+  const token = `mint_${session.id}`;
+  await db.savePendingPurchase(session.id, { customerId, gbPurchased, token });
 
   const key = await proxies.poolKeys.create({
     label: `customer:${customerId}`,
     trafficCapGB: gbPurchased,
+    idempotencyKey: token,
   });
 
-  await db.update(customerId, { pakKeyId: key.id, pakKey: key.key });
+  await db.markDelivered(session.id, { pakKeyId: key.id });
+  // Answer 2xx only now. If anything above throws, answer non-2xx so Stripe
+  // retries, and on the retry read poolKeys.operationByToken(token) before
+  // sending again.
 }
 ```
 

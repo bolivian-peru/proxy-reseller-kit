@@ -5,6 +5,12 @@ All notable changes to this package are documented here. The format is based on
 semver from 0.3.0 onwards (the public surface is everything exported from
 `dist/index.d.ts`).
 
+## Unreleased
+
+- `PoolKeyOperation.state` gains `'retryable'`: the live operation lookup reports a
+  transient refusal this way since 9 November 2026. It proved no effect; send the
+  same call again under the same `Idempotency-Key`. `'rejected'` stays terminal.
+
 ## 0.15.0 — shared-pool lifecycle and session contracts (4 November 2026)
 
 - Mutations make one attempt; ambiguous responses are retained for reconciliation instead of retried automatically.
