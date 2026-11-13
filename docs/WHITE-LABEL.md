@@ -12,7 +12,7 @@ domain** in front of it with nothing more than a DNS record + one config value.
 
 ```
 customer's HTTP client
-  → proxy.yourbrand.com:7000        (DNS A record → gateway IP)
+  → proxy.yourbrand.com:7000        (DNS A record → white-label edge address)
   → (same machine as gw.proxies.sx) → authenticates by username + pak_ → routes
 ```
 
@@ -22,13 +22,23 @@ customer never sees ours.
 
 ## Setup (2 steps)
 
-### 1. DNS — alias your domain to the gateway IP
-Add an **A record** (DNS-only — NOT a CDN/Cloudflare-proxied "orange-cloud"
+### 1. DNS — point your domain at the white-label edge address
+Ask your account manager for the **white-label edge address** (support or your
+Proxies.sx contact sends it privately). It is a dedicated address that answers
+only on the proxy ports 7000 (HTTP) and 7001 (SOCKS5), carries no Proxies.sx
+hostname or certificate, and has a generic reverse lookup, so your customers do
+not see our name.
+
+Add an **A record** to it (DNS-only — NOT a CDN/Cloudflare-proxied "orange-cloud"
 record; proxy ports aren't web HTTPS):
 
 ```
-proxy.yourbrand.com.   A   46.224.98.3
+proxy.yourbrand.com.   A   <white-label edge address>
 ```
+
+Do **not** CNAME your hostname to `gw.proxies.sx`: a CNAME shows our name in
+DNS. Pointing an A record at the main gateway address also works technically,
+but a reverse-IP lookup shows that address is shared with Proxies.sx sites.
 
 No TLS certificate is needed on your domain for the proxy ports — the proxy
 protocol carries its own auth. (HTTPS only matters for your dashboard, not the
@@ -60,11 +70,11 @@ socks5://psx_xxx-mbl-us:pak_xxx@proxy.yourbrand.com:7001
 ```
 
 ## Notes
-- The gateway IP (`46.224.98.3`) is shared **infrastructure** — safe to point DNS
-  at. It is **not** a peer/exit IP, so this does not expose any device.
+- The white-label edge address is **infrastructure**, not a peer/exit IP, so
+  pointing DNS at it does not expose any device. Same credentials, same pool keys.
 - Use a single `gatewayHost` constant in your app and pass it to all components
   so you can't miss one. (`<PoolPortal>` already reads it from `/me`.)
-- Multiple resellers can each alias their own domain to the same gateway IP —
+- Multiple resellers can each point their own domain at the same edge address —
   hostnames are cosmetic to the proxy; routing is decided by the `pak_` + the
   username token DSL, not the hostname.
 - Ports 7000/7001 must be reachable from your customers (they are, publicly).
