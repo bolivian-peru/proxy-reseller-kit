@@ -131,8 +131,9 @@ Example: you sell your customers one GB at your own Premium price and give each 
 `balance` key with that many GB. A customer who uses 1 GB in the US, 1 GB in Spain and
 1 GB in Mexico uses 1 + 0.375 + 0.1875 = 1.56 GB of their key's cap and the same 1.56 GB of
 your balance, so your margin is the same in every country and countries mix freely on one key.
-`capMode: 'raw'` (the default) keeps today's behaviour. The balance counter accrues from
-13 November 2026; a key switched to `balance` starts from what it accrued since then.
+`capMode: 'raw'` (the default) keeps today's behaviour. Burn-weighted counting started on
+13 November 2026 (17:29 UTC); usage from before that counts at rate 1 (1 balance GB per GB),
+so a key switched to `balance` is never undercounted.
 
 Render the live response instead of copying those numbers into constants. When
 `pricing.live` is false, the described balance burn is 1:1; absent or invalid

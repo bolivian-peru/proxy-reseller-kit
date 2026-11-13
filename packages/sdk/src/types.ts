@@ -178,7 +178,8 @@ export interface PoolAccessKey {
   capMode?: PoolKeyCapMode;
   /**
    * Balance MB this key used: real MB x each exit country's tier burn rate.
-   * Accrues for every key from 2026-11-13; with {@link capMode} `'balance'`
+   * Usage from before 2026-11-13 17:29 UTC (platform r106) counts at rate 1, so a key
+   * switched to `'balance'` is never undercounted; with {@link capMode} `'balance'`
    * the cap is compared against it.
    */
   trafficUsedBalanceMB?: number | null;
@@ -367,9 +368,9 @@ export interface PakUsageSeries {
   days: number;
   totalMB: number;
   totalGB: number;
-  /** Balance MB on days that recorded it (from 2026-11-13). */
+  /** Sum of the series' balanceMB (days before r106 count at rate 1). */
   totalBalanceMB?: number;
-  /** `balanceMB` is real MB x the exit country's tier burn rate; `null` on days before 2026-11-13. */
+  /** `balanceMB` is real MB x the exit country's tier burn rate; days before r106 (2026-11-13 17:29 UTC) count at rate 1; `null` only on days with no usage record. */
   series: Array<{ date: string; mbIn: number; mbOut: number; mb: number; balanceMB?: number | null }>;
 }
 
@@ -427,7 +428,7 @@ export interface UpdatePoolAccessKeyInput {
   trafficCapGB?: number | null;
   /** Switch a key between the modem-only Private Pool tier and the general tier. See {@link PoolQualityTier}. */
   qualityTier?: PoolQualityTier;
-  /** Switch what the cap counts. See {@link PoolAccessKey.capMode}. The balance counter accrues from 2026-11-13 only. */
+  /** Switch what the cap counts. See {@link PoolAccessKey.capMode}. Earlier usage already counts at rate 1. */
   capMode?: PoolKeyCapMode;
   /**
    * Pass an ISO/Date in the future to set or extend, `null` to remove an
