@@ -33,6 +33,7 @@ a provider contract.
 
 | Doc | What it answers |
 |---|---|
+| [`docs/RESELLER-INTEGRATION-QUESTIONNAIRE.md`](./docs/RESELLER-INTEGRATION-QUESTIONNAIRE.md) | Engineering audit prompt for your AI agent plus the integration questionnaire to send back (anti-detection, DNS, sessions, errors) |
 | **[`docs/POOL-PROXY-WORKSPACE.md`](./docs/POOL-PROXY-WORKSPACE.md)** | Build the shared-pool customer page in your own style: live country/tier selection, targeting, saved settings, actual protocol tests and scoped sessions. |
 | **[`docs/USERNAME-DSL.md`](./docs/USERNAME-DSL.md)** | **The complete proxy-username grammar — all 15 tokens, hard vs soft, and what each does when nothing matches.** Start here for anything routing-related. |
 | [`docs/RESERVED-IPS.md`](./docs/RESERVED-IPS.md) | Exclusively leased devices: lifecycle, the offline-substitution caveat, how to resell it |
