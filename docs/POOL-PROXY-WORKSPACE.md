@@ -113,6 +113,27 @@ For illustration only, the public response checked on 5 November had:
 | 2 — Plus | 0.375 GB | $1.50 |
 | 3 — Standard | 0.1875 GB | $0.75 |
 
+#### Selling one GB that burns per country (`capMode: 'balance'`, live since 13 November 2026)
+
+A key's cap can count **balance GB** instead of raw GB. Create or update the key with
+`capMode: 'balance'`; the key then burns its cap at each exit country's tier rate, exactly as
+your own account balance does. Every key also reports `trafficUsedBalanceMB` (and
+`trafficUsedBalanceGB`), and the per-key usage series carries `balanceMB` per day, so you can
+bill each customer for the tier they actually used even on raw-capped keys.
+
+| 1 GB of a `balance` key's cap carries | Traffic |
+| --- | --- |
+| Premium country (burn 1) | 1 GB |
+| Plus country (burn 0.375) | 2.67 GB |
+| Standard country (burn 0.1875) | 5.33 GB |
+
+Example: you sell your customers one GB at your own Premium price and give each customer a
+`balance` key with that many GB. A customer who uses 1 GB in the US, 1 GB in Spain and
+1 GB in Mexico uses 1 + 0.375 + 0.1875 = 1.56 GB of their key's cap and the same 1.56 GB of
+your balance, so your margin is the same in every country and countries mix freely on one key.
+`capMode: 'raw'` (the default) keeps today's behaviour. The balance counter accrues from
+13 November 2026; a key switched to `balance` starts from what it accrued since then.
+
 Render the live response instead of copying those numbers into constants. When
 `pricing.live` is false, the described balance burn is 1:1; absent or invalid
 pricing remains unknown. Volume discounts apply to the amount on a single
