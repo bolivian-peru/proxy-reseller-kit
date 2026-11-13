@@ -54,7 +54,9 @@ export type Country = KnownCountry | (string & {});
  *   explicitly: `sticky` to hold, `auto5` to turn over faster.
  * - `auto5` / `auto10` / `auto20` / `auto60` — Soft rotation: every N
  *   minutes the gateway swaps the modem, preferring empty and healthy ones.
- * - `ondemand` — No auto-rotate timer; reuse the chosen modem while connected.
+ * - `ondemand` — No timer. With a `sid`, every new connection re-picks a
+ *   different endpoint when another one matches (gateway `949b4484d`,
+ *   13 Nov 2026); an open connection keeps its endpoint.
  * - `sticky` — Pin to one modem for the session lifetime. Selector weights
  *   `ipStabilityScore` at 50% — picks the most IP-stable modem available.
  * - `hard` — **Identical to `sticky` at routing time.** The gateway maps both
@@ -82,7 +84,7 @@ export type RotationMode =
   | 'auto10'        // subsequent-connection reselection after 10 min (default)
   | 'auto20'        // subsequent-connection reselection after 20 min
   | 'auto60'        // subsequent-connection reselection after 60 min
-  | 'ondemand'      // reuse while connected; no timer
+  | 'ondemand'      // no timer; each new connection re-picks (needs a sid)
   | 'sticky'        // pin one modem; gateway smart-picks the most IP-stable.
                     // Needs a sid to persist. The exit IP can still change.
   | 'hard';         // EXACTLY equivalent to `sticky` at routing time. Not a new

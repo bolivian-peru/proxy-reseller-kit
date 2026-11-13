@@ -198,9 +198,13 @@ dropped.
 | Mode | Interval | Behaviour |
 |---|---|---|
 | `auto5` `auto10` `auto20` `auto60` | 5 / 10 / 20 / 60 min | Evaluate reselection on a subsequent connection with the same SID after the interval; no exact-time or different-IP guarantee. |
-| `ondemand` | — | Re-pick only when a new connection is opened. |
-| `sticky` | — | Prefer the existing binding while eligible; neither exclusive hardware nor an immutable public IP. |
+| `ondemand` | — | With a `-sid-`, every new connection re-picks a different endpoint on `peer` and `mbl` when another one matches the filters (it keeps the current one only when nothing else matches). Existing connections are not moved. |
+| `sticky` | — | Keep the existing binding while eligible; neither exclusive hardware nor an immutable public IP. |
 | `hard` | — | **Pins exactly like `sticky`.** It is *not* "a new IP per request". |
+
+`ondemand` re-picks per connection since gateway release `949b4484d`
+(13 November 2026); before it, a named `ondemand` session could keep its
+endpoint. If a workflow relied on that, use `sticky`.
 
 **Omitting `-rot-` applies the gateway default, `auto10`** — eligible for
 reselection on a subsequent connection after ten minutes using the same SID. It is not "no rotation" and not "a fresh IP
@@ -397,7 +401,12 @@ exactly that, and a leaked inventory poisons the pool for every customer on it.
 
 ## Error codes you will see
 
-Returned as `CODE: message (req: uuid)`.
+Returned as `CODE: message (req: uuid)`. On the HTTP port every refusal,
+including the 407 auth refusals, also carries the code in the
+`X-Proxies-Error-Code` response header (since gateway `949b4484d`, 13 November
+2026). Branch on the header, not on the message text. SOCKS5 has no headers: a
+refused CONNECT returns a SOCKS reply code, and a balance or key-cap refusal
+fails SOCKS authentication.
 
 | Code | Status | Meaning |
 |---|---|---|
@@ -412,9 +421,23 @@ Returned as `CODE: message (req: uuid)`.
 | `E_GATEWAY_CAPACITY` | 503 | The gateway's shared socket ceiling, not your account's — retry shortly. |
 | `E_WRONG_PORT` | 400 | An HTTP request on the SOCKS5 port (7001) or a SOCKS handshake on 7000. |
 | `E_NO_STOCK_COUNTRY` | 502 | Nothing online matched the filters. The message suggests a nearest alternative. |
+| `E_POOL_BUSY` | 503 | Matching endpoints exist but every one is at its connection capacity — retry in about 2 s. |
 | `E_STOCK_DEGRADED` | 502 | Endpoint selected, then went away mid-request. |
 | `E_SSRF_BLOCKED` | 403 | Target is private, localhost, or cloud metadata. |
+| `E_PORT_BLOCKED` | 403 | Destination port refused by policy (mail ports: SMTP, IMAP, POP). |
 | `E_INTERNAL` | 503 | Unexpected — file a ticket with the `req:` id. |
+
+### Back off on refusals
+
+Honour `Retry-After` when the HTTP refusal carries one: 30 s on
+`E_NO_STOCK_COUNTRY`, 1–2 s on `E_RATE_LIMITED_CONN`, `E_SESSION_LIMIT`,
+`E_POOL_BUSY`, `E_GATEWAY_CAPACITY` and `E_INTERNAL`. Do not retry in a tight
+loop. After 10 identical refusals of one credential within a minute for
+`E_NO_STOCK_COUNTRY`, `E_BALANCE_EXHAUSTED` or `E_CAP_EXCEEDED`, the gateway
+answers that same refusal immediately for a few seconds without re-checking.
+Hammering therefore learns nothing new, and a top-up or returning stock can take
+a few seconds to be seen. Fix the cause (top up, raise the key cap, choose
+another country or pool) and retry with backoff.
 
 If you are debugging a token that "does nothing", check its spelling first:
 an unknown token name is skipped without an error, so a misspelt filter looks

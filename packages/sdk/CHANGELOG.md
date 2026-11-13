@@ -7,6 +7,12 @@ semver from 0.3.0 onwards (the public surface is everything exported from
 
 ## Unreleased
 
+- Docs only: the `ondemand` rotation JSDoc and README line now describe gateway
+  release `949b4484d` (13 November 2026): with a `sid`, every new connection
+  re-picks a different endpoint when another one matches. The same release adds
+  `X-Proxies-Error-Code` to every HTTP refusal including 407s, and briefly repeats
+  a credential's refusal after 10 identical ones in a minute; back off and honour
+  `Retry-After`. See [error codes](../../docs/USERNAME-DSL.md#error-codes-you-will-see).
 - `PoolKeyOperation.state` gains `'retryable'`: the live operation lookup reports a
   transient refusal this way since 9 November 2026. It proved no effect; send the
   same call again under the same `Idempotency-Key`. `'rejected'` stays terminal.

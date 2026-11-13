@@ -135,6 +135,13 @@ The reseller kit exposes the pool toggle in `<PoolSessionSpawner>`; `<PoolPortal
 
 **Reliability — auto-failover is built in (nothing for you or your customers to handle).** The gateway runs connect-phase auto-failover: if the modem it selects has dropped, that modem is demoted from the pool and a healthy one is retried *before any response is returned* — this is what prevents the occasional `503 / temporarily unavailable`. Your customer controls how wide the replacement may be with the `-failover-` token (`samecountry` default, `samecarrier`, `samenode`, `any`, or `strict` to disable substitution and fail clean). SOCKS5 (`:7001`) additionally falls back to a modem's HTTP CONNECT path (`:7000`) if its SOCKS service is briefly down, so **both ports are equally reliable** — pick whichever your customer's tooling prefers.
 
+**Refusals and retries (gateway `949b4484d`, 13 November 2026).**
+
+- Every HTTP refusal on `:7000`, including the 407 auth refusals (`E_AUTH_REQUIRED`, `E_AUTH_INVALID`, `E_BALANCE_EXHAUSTED`, `E_CAP_EXCEEDED`), carries the stable code in the `X-Proxies-Error-Code` header and the body `CODE: message (req: uuid)`. Branch on the header. SOCKS5 has no headers: it returns a SOCKS reply code, and balance or cap refusals fail SOCKS auth. Full table: [error codes](./docs/USERNAME-DSL.md#error-codes-you-will-see).
+- Back off on refusals and honour `Retry-After` (30 s on `E_NO_STOCK_COUNTRY`). After 10 identical refusals of one credential in a minute for no stock, balance exhausted or key cap, the gateway answers that refusal immediately for a few seconds without re-checking, so a tight retry loop learns nothing. Fix the cause (top up, raise the cap, choose another country or pool), then retry.
+- `-rot-ondemand` with a `-sid-` now gives a different endpoint on every new connection, on `peer` and `mbl`, whenever another one matches. `-rot-sticky` keeps its binding as before.
+- Exits rated low on IP reputation (block lists, hosting ranges) were taken off sale on 13 November 2026. Stock counts show only what is on sale.
+
 ---
 
 ## Private Pool - reserve dedicated capacity

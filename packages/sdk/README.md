@@ -675,7 +675,7 @@ does when nothing matches, in [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.m
 
 - `peer` / `mbl` / `any` — pool. `peer` is the flagship network (~82–120 countries); `mbl` is our carrier-modem tier, exactly `us` `gb` `fr` `nl` `pl` `ge`. **`ge` is Georgia**; Germany is `de` and has no `mbl` stock.
 - `sid-<id>` — session name, `[a-z0-9_]{1,64}`, no hyphens. **Required for stickiness to persist across connections**, but not sufficient on its own. The canonical token is `sid`; the gateway rewrites `-session-<id>` to it.
-- `rot-sticky` / `rot-auto5|10|20|60` / `rot-ondemand` / `rot-hard` — `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, NOT a new IP per request); `auto*` re-pick every N min. **Omit the token and the gateway default `auto10` applies** — omitting is not "no rotation".
+- `rot-sticky` / `rot-auto5|10|20|60` / `rot-ondemand` / `rot-hard` — `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, NOT a new IP per request); `auto*` re-pick every N min; `ondemand` re-picks a different endpoint on every new connection (with a `sid`). **Omit the token and the gateway default `auto10` applies** — omitting is not "no rotation".
 - `strict` — bare flag; hardens `sticky`/`hard` with an IP-stability floor.
 - `iptype-<class>` / `isp-<slug>` / `asn-<n>` / `carrier-<name>` — **hard** filters; no match returns 502.
 - `city-<slug>` / `state-<code>` — **hard, peer-only**; no match returns 502 and they always refuse on `mbl`.

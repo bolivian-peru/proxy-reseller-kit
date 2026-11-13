@@ -701,7 +701,7 @@ username fails auth. Use `buildProxyUrl(proxyUsername, pakKey, opts)`.
 | Pool | `peer`, `mbl`, `any` | `peer` = **the flagship network** (~82–120 countries, mixed mobile + residential). `mbl` = our carrier modems, **exactly 6 countries: US GB FR NL PL GE**. `any`/`best` = no pool filter. |
 | Country | `us`, `gb`, `fr`, `nl`, `pl`, `ge` | ISO alpha-2. Those 6 are the `mbl` set; `peer` spans far more. **`ge` is GEORGIA** — Germany is `de` and has **no `mbl` stock** (`mbl-de` always fails; use `peer-de`). An unrecognised country silently becomes `any` (global). |
 | `sid-{id}` | `sid-cust_8f3a21bd` | Session name. 1–64 chars `[a-z0-9_]`, no `-`. **Required for `sticky`/`auto*` to persist across connections** — without it every connection starts a fresh synthetic session. **A sid alone is NOT sticky**: with no `-rot-`, the default `auto10` still rotates it. The canonical token is `sid`; the gateway rewrites `-session-<id>` to it. |
-| `rot-{mode}` | `rot-sticky`, `rot-auto5` | `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, **not** a new IP per request). `auto5/10/20/60` re-pick every N min. `ondemand` re-picks per connection. **Omitting `-rot-` applies the gateway default `auto10`** (~10 min) — it is not "no rotation". Unrecognised value → `auto10`, silently. |
+| `rot-{mode}` | `rot-sticky`, `rot-auto5` | `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, **not** a new IP per request). `auto5/10/20/60` re-pick every N min. `ondemand` re-picks a different endpoint on every new connection (with a `sid`, on `peer` and `mbl`, when another one matches). **Omitting `-rot-` applies the gateway default `auto10`** (~10 min) — it is not "no rotation". Unrecognised value → `auto10`, silently. |
 | `strict` | `rot-sticky-strict` | **Bare flag, no value.** Only active with `sticky`/`hard`: adds a hard IP-stability floor and heavier stability weighting. No-op elsewhere. |
 | `carrier-{name}` | `carrier-att` | **Hard** exact slug match on the device's carrier or ISP name, never widened. No match → `E_NO_STOCK_COUNTRY` 502. Prefer `asn` when you have it. |
 | `city-{name}` / `state-{code}` | `city-brooklyn`, `state-ny` | **Hard, peer-only.** No routable peer there → 502; modems never match, so they refuse on `mbl`. Offer only what `getCities()` / `getFacets()` report. |
@@ -1038,6 +1038,13 @@ necessarily a bug — see
 If a country returns `E_NO_STOCK_COUNTRY`, check live stock before blaming the
 code: `curl -s https://api.proxies.sx/v1/gateway/pool/availability` (counts per
 country, never IPs).
+
+Every HTTP refusal, 407s included, carries the code in the
+`X-Proxies-Error-Code` header; branch on it. Never generate a tight retry loop:
+honour `Retry-After` (30 s on `E_NO_STOCK_COUNTRY`). After 10 identical
+refusals of one credential in a minute (no stock, balance exhausted, key cap),
+the gateway repeats that refusal immediately for a few seconds without
+re-checking. See [error codes](./docs/USERNAME-DSL.md#error-codes-you-will-see).
 
 ---
 
