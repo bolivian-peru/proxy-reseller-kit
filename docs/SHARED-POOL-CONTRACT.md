@@ -109,6 +109,9 @@ operation is reconciled rather than dispatched again. An unresolved claim stays
 blocked through restart; elapsed time does not authorize a second effect. The
 scheduled recovery job finalizes proven outcomes and alerts on unresolved ones.
 It does not guess success from a missing receipt.
+Operation lookup reports a transient refusal as `retryable`: it proved no
+effect, and replaying the same token runs the operation again. Never send a new
+token for it. `rejected` stays terminal.
 
 SDK: `poolKeys.operationByToken(savedToken)` or
 `poolKeys.operation(savedOperationId)`. Read-only results include `keyWriteState`
@@ -234,8 +237,10 @@ delivered only after the provider confirmed, and answers Stripe non-2xx until
 then. A retry reads the retained operation by the same key and dispatches only
 after a lookup `404`. A `rejected` operation proves no effect and permanently
 consumes its key, so it is the one case where the starter sends a new key for
-the same payment (`topup_<session id>_2`). `accepted`, `submitted` and
-`uncertain` are never dispatched again. After an applied top-up the starter
+the same payment (`topup_<session id>_2`). A `retryable` operation is a
+transient refusal that also proved no effect; the starter sends the same call
+again under the same key. `accepted`, `submitted` and `uncertain` are never
+dispatched again. After an applied top-up the starter
 calls the conditional resume only for a sole `cap` hold.
 
 Recovery runs on Stripe retries only; there is no restart-safe worker, no refund

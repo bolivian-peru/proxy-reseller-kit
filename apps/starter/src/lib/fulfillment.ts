@@ -72,11 +72,13 @@ export async function fulfillPaidSession(
     await store.reissue(paid.sessionId, token);
     return fulfillPaidSession(paid, store, poolKeys);
   }
-  if (operation && operation.state !== 'applied') {
+  // `retryable` is a transient refusal that proved no effect: the same token
+  // may run again, so it is dispatched exactly like a token never admitted.
+  if (operation && operation.state !== 'applied' && operation.state !== 'retryable') {
     throw new Error(`Delivery ${token} is ${operation.state} at the provider; waiting for the next retry`);
   }
 
-  const key = operation
+  const key = operation?.state === 'applied'
     ? await readDeliveredKey(poolKeys, keyId ?? operation.targetId, token)
     : await dispatch(poolKeys, paid.userId, delivery);
   if (keyId) await resumeAfterTopUp(poolKeys, key, paid.sessionId);

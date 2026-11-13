@@ -36,8 +36,9 @@ The webhook delivers a paid checkout through a journal on the `purchases` table:
 3. It marks the purchase `delivered` only after the provider confirmed. Until
    then it answers 500, so Stripe retries.
 4. A retry reads the operation stored under the same key. It sends only when the
-   provider never admitted that key, so one payment is delivered once. A key the
-   provider rejected proves no effect and is replaced by `..._2`, `..._3`.
+   provider never admitted that key or reports it `retryable` (a transient
+   refusal, sent again under the same key), so one payment is delivered once. A
+   key the provider rejected proves no effect and is replaced by `..._2`, `..._3`.
 5. After a top-up it resumes the key when its only hold is `cap`. A key disabled
    for another reason (manual, expired, account or security review) stays
    disabled and a warning is logged. Review and resume that key yourself.

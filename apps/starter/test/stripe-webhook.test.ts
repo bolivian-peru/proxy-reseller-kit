@@ -17,7 +17,7 @@ const world = vi.hoisted(() => ({
   dispatches: [] as string[],
   resumes: [] as { keyId: string; expectedLifecycleVersion: number; idempotencyKey: string }[],
   /** What the provider does with the next dispatch. */
-  next: 'apply' as 'apply' | 'down' | 'lost' | 'reject' | 'uncertain',
+  next: 'apply' as 'apply' | 'down' | 'lost' | 'reject' | 'transient' | 'uncertain',
 }));
 
 vi.mock('@/lib/stripe', () => ({
@@ -77,9 +77,14 @@ vi.mock('@/lib/proxies', () => {
     const outcome = world.next;
     world.next = 'apply';
     if (outcome === 'down') throw apiError(503, 'provider unavailable');
-    if (world.operations.has(token)) throw apiError(409, 'replayed token');
+    // A transient refusal is the one retained state the provider runs again under the same token.
+    if (world.operations.has(token) && world.operations.get(token)!.state !== 'retryable') throw apiError(409, 'replayed token');
     if (outcome === 'reject') {
       world.operations.set(token, { state: 'rejected', targetId });
+      throw apiError(400, 'MUTATION_REJECTED');
+    }
+    if (outcome === 'transient') {
+      world.operations.set(token, { state: 'retryable', targetId });
       throw apiError(409, 'KEY_MUTATION_BUSY');
     }
     if (outcome === 'uncertain') {
@@ -230,6 +235,17 @@ describe('Stripe webhook delivery recovery', () => {
 
     expect(await deliver(checkoutEvent('evt_6', 'cs_test_6'))).toBe(200);
     expect(topUps()).toEqual(['topup_cs_test_6', 'topup_cs_test_6_2']);
+    expect(world.keys.get('key1')!.trafficCapGB).toBe(10);
+    expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 10 });
+  });
+
+  it('tops up again under the same token after a transient refusal', async () => {
+    expect(await deliver(checkoutEvent('evt_5t', 'cs_test_5t'))).toBe(200);
+    world.next = 'transient';
+    expect(await deliver(checkoutEvent('evt_6t', 'cs_test_6t'))).toBe(500);
+
+    expect(await deliver(checkoutEvent('evt_6t', 'cs_test_6t'))).toBe(200);
+    expect(topUps()).toEqual(['topup_cs_test_6t', 'topup_cs_test_6t']);
     expect(world.keys.get('key1')!.trafficCapGB).toBe(10);
     expect(world.customers.get(1)).toEqual({ keyId: 'key1', totalGb: 10 });
   });
