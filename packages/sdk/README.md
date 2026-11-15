@@ -637,6 +637,7 @@ This SDK is a thin wrapper around a public REST API. Any language with an HTTP c
 | `GET` | `/v1/reseller/pool-keys/audit` · `/:keyId/audit` | 90-day forensic log (all keys / one key) |
 | `GET` | `/v1/reseller/pool-keys/:keyId/usage?days=30` | Per-day MB series for one key |
 | `GET` | `/v1/reseller/analytics/pak-usage?days=30` | Daily GB across all keys + per-key breakdown (`traffic:read`) |
+| `GET` · `PUT` | `/v1/reseller/pool-keys/key-prefix` | Read / set the prefix of keys minted or regenerated afterwards (default `pak_`); no SDK method. See [custom key prefix](../../docs/WHITE-LABEL.md#custom-key-prefix) |
 | `DELETE` | `/v1/reseller/pool-keys/:keyId` | Remove key; not immediate socket termination |
 | `GET` | `/v1/reseller/pool-keys/operations/lookup` | Candidate: read operation by saved `Idempotency-Key` header |
 | `GET` | `/v1/reseller/pool-keys/operations/:operationId` | Candidate: read secret-free operation state |

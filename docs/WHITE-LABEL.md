@@ -69,6 +69,80 @@ http://psx_xxx-mbl-us-sid-alice:pak_xxx@proxy.yourbrand.com:7000
 socks5://psx_xxx-mbl-us:pak_xxx@proxy.yourbrand.com:7001
 ```
 
+## Custom key prefix
+
+The pool key is the proxy password your customer types, and by default every
+key starts with `pak_`. That prefix appears in our public documentation, so it
+gives away the upstream behind `proxy.yourbrand.com` as surely as a
+`gw.proxies.sx` hostname would. Choose your own prefix and the keys you mint
+carry it instead:
+
+```
+http://psx_xxx-peer-us:acme_xxx@proxy.yourbrand.com:7000
+```
+
+The `psx_xxx` username in that line appears in our public documentation too. To
+hide it as well, ask your account manager for an account username of your own
+(lowercase, no `-`) and pass it as `proxyUsername`: the gateway looks the
+account up by that name first.
+
+Read the setting with `GET /v1/reseller/pool-keys/key-prefix` (scope
+`customers:read`) and change it with `PUT` on the same path (scope
+`customers:write`). Both answer `{ "prefix": string | null, "effective": string }`:
+`prefix` is what you set (`null` when you have not), `effective` is the prefix
+the next key gets. The SDK has no method for these two routes; call them from
+your server with the same `psx_` key.
+
+```bash
+curl https://api.proxies.sx/v1/reseller/pool-keys/key-prefix \
+  -H "X-API-Key: psx_YOUR_API_KEY"
+# → { "prefix": null, "effective": "pak_" }
+
+curl -X PUT https://api.proxies.sx/v1/reseller/pool-keys/key-prefix \
+  -H "X-API-Key: psx_YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prefix":"acme_"}'
+# → { "prefix": "acme_", "effective": "acme_" }
+
+# Back to the default
+curl -X PUT https://api.proxies.sx/v1/reseller/pool-keys/key-prefix \
+  -H "X-API-Key: psx_YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prefix":null}'
+# → { "prefix": null, "effective": "pak_" }
+```
+
+The rules:
+
+- **Format:** 2 to 10 lowercase letters or digits, starting with a letter, then
+  one underscore (`acme_`, `px2_`). The value is trimmed and lowercased first,
+  so `" Acme_ "` is stored as `acme_`. Anything else answers `400`: a malformed
+  string with a message that states the rule, a missing or non-string value with
+  `prefix must be a string`.
+- **Reserved prefixes are refused** (`400`): our own credential prefixes such as
+  `pak_` and `psx_`, well-known secret prefixes of other services such as `sk_`
+  and `ghp_`, and generic words such as `key_` or `token_`.
+- **`null` restores the default** `pak_`. Sending `"pak_"` is refused as reserved.
+- **Only keys created or regenerated afterwards get the new prefix.** Existing
+  keys keep working unchanged, whatever their prefix; changing the setting again
+  never touches them.
+- **To move an existing key, regenerate it** (`poolKeys.regenerate()` or
+  `POST /v1/reseller/pool-keys/:id/regenerate`) with a persisted
+  `Idempotency-Key`, as the [shared-pool contract](./SHARED-POOL-CONTRACT.md)
+  describes, and give the customer the new value. The old value stops
+  authenticating new connections within about 30 seconds, when the gateway's
+  authentication cache expires. That is a source default, not a guaranteed
+  deadline: outage grace and tunnel rechecks can delay it, as for any
+  regeneration.
+- **Never validate a key by its prefix in your own code.** One account holds keys
+  with different prefixes at the same time: keys minted before a change keep
+  theirs, and [Private Pool](./PRIVATE-POOL.md) and
+  [x402](./X402-RESELLER-INTEGRATION.md) keys are managed by those products and
+  always keep `pak_`. Treat the key as an opaque string in
+  forms, imports and support tools (nothing in the kit checks the prefix), and
+  extend any log redaction or secret scanning that matches `pak_`, or keys with
+  your prefix pass through it unmasked.
+
 ## Notes
 - The white-label edge address is **infrastructure**, not a peer/exit IP, so
   pointing DNS at it does not expose any device. Same credentials, same pool keys.

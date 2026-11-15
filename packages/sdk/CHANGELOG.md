@@ -7,6 +7,13 @@ semver from 0.3.0 onwards (the public surface is everything exported from
 
 ## Unreleased
 
+- Docs only: the reseller API can set the prefix of the pool keys you mint
+  (`GET` / `PUT /v1/reseller/pool-keys/key-prefix`, default `pak_`). There is no
+  SDK method for it, and nothing in the SDK checks a key's prefix. See
+  [custom key prefix](../../docs/WHITE-LABEL.md#custom-key-prefix).
+  `PakUsageSummary.byKey[].keyPrefix` JSDoc corrected: it is the key's prefix
+  plus the first 8 hex characters, whatever the prefix length.
+
 - `PoolAccessKey.capMode` (`raw` | `balance`), `trafficUsedBalanceMB` / `trafficUsedBalanceGB`, `capMode` on create/update inputs, and `balanceMB` / `totalBalanceMB` on the per-key usage series (platform r106, 2026-11-13).
 
 - Docs only: the `ondemand` rotation JSDoc and README line now describe gateway
