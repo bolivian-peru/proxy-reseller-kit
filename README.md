@@ -80,7 +80,7 @@ For human-readable depth: [`packages/sdk/README.md`](./packages/sdk/README.md), 
 
 Traditional proxy resale means buying modem hardware, juggling SIM plans, running a farm, and wiring in a developer. Every price hike from your supplier eats your margin.
 
-The [Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy) takes care of the infrastructure — you get a single endpoint (`gw.proxies.sx:7000`), wholesale pricing with volume tiers, and a per-customer sub-key system (`pak_*`). Live pricing: see [client.proxies.sx](https://client.proxies.sx) or [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing).
+The [Proxies.sx Pool Gateway](https://client.proxies.sx/pool-proxy) takes care of the infrastructure — you get a single endpoint (`gw.proxies.sx:7000`), wholesale pricing with volume tiers, and a per-customer sub-key system (`pak_*` by default, or [your own prefix](docs/WHITE-LABEL.md#custom-key-prefix)). Live pricing: see [client.proxies.sx](https://client.proxies.sx) or [api.proxies.sx/v1/x402/pricing](https://api.proxies.sx/v1/x402/pricing).
 
 ### Pricing at a glance
 
@@ -514,6 +514,7 @@ Endpoints (`X-API-Key` auth, [`psx_` keys minted at client.proxies.sx/account](h
 | `GET` | `/v1/reseller/pool-keys/audit`, `/:id/audit` | 90-day forensic log, all keys / one key (v0.5.0+) |
 | `GET` | `/v1/reseller/pool-keys/:id/usage?days=30` | Per-day MB series for one key — the customer's chart (v0.14.0+) |
 | `GET` | `/v1/reseller/analytics/pak-usage?days=30` | Daily GB across all keys + per-key breakdown (v0.14.0+, `traffic:read`) |
+| `GET`, `PUT` | `/v1/reseller/pool-keys/key-prefix` | Read / set the prefix of keys minted or regenerated afterwards (default `pak_`); no SDK method. See [custom key prefix](docs/WHITE-LABEL.md#custom-key-prefix) |
 | `DELETE` | `/v1/reseller/pool-keys/:id` | Remove key; not immediate socket termination |
 | `GET` | `/v1/reseller/pool-keys/operations/lookup` | Deployed in backend r86: read by saved `Idempotency-Key` header |
 | `GET` | `/v1/reseller/pool-keys/operations/:operationId` | Deployed in backend r86: secret-free original operation evidence |
