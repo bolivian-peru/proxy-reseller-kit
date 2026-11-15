@@ -392,7 +392,7 @@ export interface PakUsageSummary {
   byKey: Array<{
     keyId: string;
     label: string;
-    /** First 12 characters of the `pak_` value — never the full secret. */
+    /** The key's prefix plus the first 8 hex characters of its random part (`pak_0123abcd`, `acme_0123abcd`) — never the full secret. */
     keyPrefix: string;
     gb: number;
     lastUsedAt: string | null;
