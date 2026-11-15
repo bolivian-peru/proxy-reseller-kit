@@ -81,6 +81,11 @@ carry it instead:
 http://psx_xxx-peer-us:acme_xxx@proxy.yourbrand.com:7000
 ```
 
+The `psx_xxx` username in that line appears in our public documentation too. To
+hide it as well, ask your account manager for an account username of your own
+(lowercase, no `-`) and pass it as `proxyUsername`: the gateway looks the
+account up by that name first.
+
 Read the setting with `GET /v1/reseller/pool-keys/key-prefix` (scope
 `customers:read`) and change it with `PUT` on the same path (scope
 `customers:write`). Both answer `{ "prefix": string | null, "effective": string }`:
@@ -110,8 +115,10 @@ curl -X PUT https://api.proxies.sx/v1/reseller/pool-keys/key-prefix \
 The rules:
 
 - **Format:** 2 to 10 lowercase letters or digits, starting with a letter, then
-  one underscore (`acme_`, `px2_`). Anything else answers `400` with a message
-  that states the rule.
+  one underscore (`acme_`, `px2_`). The value is trimmed and lowercased first,
+  so `" Acme_ "` is stored as `acme_`. Anything else answers `400`: a malformed
+  string with a message that states the rule, a missing or non-string value with
+  `prefix must be a string`.
 - **Reserved prefixes are refused** (`400`): our own credential prefixes such as
   `pak_` and `psx_`, well-known secret prefixes of other services such as `sk_`
   and `ghp_`, and generic words such as `key_` or `token_`.
@@ -129,8 +136,9 @@ The rules:
   regeneration.
 - **Never validate a key by its prefix in your own code.** One account holds keys
   with different prefixes at the same time: keys minted before a change keep
-  theirs, and a [Private Pool](./PRIVATE-POOL.md) key is minted under the
-  platform's house account and keeps `pak_`. Treat the key as an opaque string in
+  theirs, and [Private Pool](./PRIVATE-POOL.md) and
+  [x402](./X402-RESELLER-INTEGRATION.md) keys are managed by those products and
+  always keep `pak_`. Treat the key as an opaque string in
   forms, imports and support tools (nothing in the kit checks the prefix), and
   extend any log redaction or secret scanning that matches `pak_`, or keys with
   your prefix pass through it unmasked.
