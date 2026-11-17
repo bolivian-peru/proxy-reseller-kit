@@ -630,7 +630,7 @@ Details: [apps/starter/README.md](./apps/starter/README.md).
 - Docker (optional — you can bring your own Postgres)
 - Proxies.sx reseller API key (mint at [client.proxies.sx/account](https://client.proxies.sx/account))
 - Stripe account (test mode is fine for development)
-- Any SMTP provider for production email, or skip it — dev mode logs magic links to the console
+- Production email requires an SMTP host and sender. Local development can print the sign-in link to the console.
 
 ---
 

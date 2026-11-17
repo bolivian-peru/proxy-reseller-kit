@@ -214,7 +214,7 @@ server {
 
 ### Setting up email (optional but recommended)
 
-Any SMTP provider works. Cheapest free-tier options:
+Set both `EMAIL_SERVER_HOST` and `EMAIL_FROM` before accepting sign-ins. The starter rejects email sign-in requests if either is missing outside development. Any SMTP provider works. Cheapest free-tier options:
 
 | Provider | Free tier | Host |
 |---|---|---|
