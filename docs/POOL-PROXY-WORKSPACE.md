@@ -135,6 +135,13 @@ your balance, so your margin is the same in every country and countries mix free
 13 November 2026 (17:29 UTC); usage from before that counts at rate 1 (1 balance GB per GB),
 so a key switched to `balance` is never undercounted.
 
+**Flat-rate reseller accounts (from 16 November 2026).** A key's balance meter burns at the
+rate of the account that pays. A reseller account opened from 16 November 2026 pays one rate in
+every country (burn 1 everywhere), so on such an account `balance` counts exactly like `raw`
+and the table above does not apply; your cost per GB is the same in every country. Reseller
+accounts opened before that keep the tier burn unless we change it for the account. Read
+`byTier` in `GET /v1/reseller/pool-keys/:id/usage`: on a flat account all traffic is tier 1.
+
 Render the live response instead of copying those numbers into constants. When
 `pricing.live` is false, the described balance burn is 1:1; absent or invalid
 pricing remains unknown. Volume discounts apply to the amount on a single
