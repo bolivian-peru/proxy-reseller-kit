@@ -3,7 +3,9 @@ import Nodemailer from 'next-auth/providers/nodemailer';
 import PostgresAdapter from '@auth/pg-adapter';
 import { pool } from './db';
 
-const hasSmtpConfig = Boolean(process.env.EMAIL_SERVER_HOST && process.env.EMAIL_FROM);
+const smtpHost = process.env.EMAIL_SERVER_HOST?.trim();
+const emailFrom = process.env.EMAIL_FROM?.trim();
+const hasSmtpConfig = Boolean(smtpHost && emailFrom);
 
 /**
  * NextAuth (Auth.js v5) configuration.
@@ -25,12 +27,11 @@ const config: NextAuthConfig = {
   providers: [
     Nodemailer({
       // Auth.js requires a `server` value even when sendVerificationRequest is
-      // overridden. In dev (no SMTP env) we pass a harmless placeholder; the
-      // transport is never actually used because sendVerificationRequest logs
-      // the link to the server console instead.
+      // overridden. With incomplete SMTP settings the callback handles delivery
+      // and Auth.js never connects to the placeholder server.
       server: hasSmtpConfig
         ? {
-            host: process.env.EMAIL_SERVER_HOST as string,
+            host: smtpHost,
             port: Number(process.env.EMAIL_SERVER_PORT ?? 587),
             auth:
               process.env.EMAIL_SERVER_USER && process.env.EMAIL_SERVER_PASSWORD
@@ -41,15 +42,14 @@ const config: NextAuthConfig = {
                 : undefined,
           }
         : { host: '127.0.0.1', port: 25, auth: undefined },
-      from: process.env.EMAIL_FROM ?? 'noreply@localhost',
+      from: emailFrom || 'noreply@localhost',
       sendVerificationRequest: hasSmtpConfig
         ? undefined
-        : ({ identifier, url }) => {
-            console.log(`\n───────────────────────────────────────────────`);
-            console.log(`📧 Magic-link login for ${identifier}:`);
-            console.log(`   ${url}`);
-            console.log(`───────────────────────────────────────────────\n`);
-            return Promise.resolve();
+        : async ({ url }) => {
+            if (process.env.NODE_ENV !== 'development') {
+              throw new Error('Email delivery requires EMAIL_SERVER_HOST and EMAIL_FROM.');
+            }
+            console.log('Local sign-in link:', url);
           },
     }),
   ],

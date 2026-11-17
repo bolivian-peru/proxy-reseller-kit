@@ -226,7 +226,7 @@ Every variable used by the app is documented in `.env.example`. The agent rule: 
 ## Debugging
 
 - **"DATABASE_URL is not set"** — `src/lib/db.ts` throws at import time. Fix `.env` and restart.
-- **Magic link never arrives** — if SMTP isn't configured, check the server console. If SMTP is configured, check your provider's logs and `EMAIL_FROM` DNS (SPF/DKIM).
+- **Magic link never arrives** — under `pnpm dev`, check the local console when SMTP is unset. Production requires both `EMAIL_SERVER_HOST` and `EMAIL_FROM`. With both set, check your mail provider and the sender domain’s SPF/DKIM records.
 - **Stripe webhook 400** — signature mismatch. Make sure `STRIPE_WEBHOOK_SECRET` matches the one `stripe listen` printed (dev) or the dashboard endpoint secret (prod).
 - **Customer paid but no key**: check `purchases` for the row. `delivery_state = 'pending'` means delivery is not confirmed yet and the next Stripe retry continues it. `operation_token` is the provider `Idempotency-Key` to look up. Check the server console for the Pool API error. A row in `webhook_events` means the event was fully handled.
 - **Customer topped up but still cannot connect**: the key is disabled for a reason other than cap exhaustion, or the provider refused the resume (see the server console warning). Review the key's `lifecycleHolds` and resume it yourself.
