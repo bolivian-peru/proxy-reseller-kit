@@ -120,10 +120,11 @@ scope to add.
 
 | Method | Returns | Description |
 |---|---|---|
-| `create({ label, trafficCapGB?, qualityTier?, expiresAt?, idempotencyKey? })` | `PoolAccessKey` | Mint a new key. `trafficCapGB` is a whole number of 1 or more and is required unless the account is a partner account (omitting it returns `400`) |
+| `create({ label, trafficCapGB?, qualityTier?, expiresAt?, unlockedPorts?, idempotencyKey? })` | `PoolAccessKey` | Mint a new key. `trafficCapGB` is a whole number of 1 or more and is required unless the account is a partner account (omitting it returns `400`) |
 | `list()` | `PoolAccessKey[]` | List all your keys with usage |
+| `mailPorts()` (Unreleased) | `{ unlockable }` | Which mail ports (465, 587) your account may unlock on keys; `[]` when not enabled. Until the release, call `GET /v1/reseller/pool-keys/mail-ports`. See [mail ports](../../SKILL.md#mail-ports-465--587--off-by-default-per-key) |
 | `get(keyId)` | `PoolAccessKey` | Fetch a single key by id |
-| `update(keyId, { label?, enabled?, trafficCapGB?, qualityTier?, expiresAt? }, { idempotencyKey? }?)` | `PoolAccessKey` | Update supported fields; shared-key resume requires the separate conditional route |
+| `update(keyId, { label?, enabled?, trafficCapGB?, qualityTier?, expiresAt?, unlockedPorts? }, { idempotencyKey? }?)` | `PoolAccessKey` | Update supported fields; shared-key resume requires the separate conditional route |
 | `topUp(keyId, { addTrafficGB?, extendDays?, idempotencyKey? })` | `PoolAccessKey` | Atomically extend cap and/or expiry — use this for top-up flows. `addTrafficGB` is a whole number of 1 or more and is ignored on an uncapped (partner) key. A top-up keeps holds and does not resume a disabled key |
 | `regenerate(keyId, { idempotencyKey? }?)` | `PoolAccessKey` | Change the stored secret; caches and existing sockets prevent an immediate revocation guarantee |
 | `reveal(keyId)` (v0.5.0+) | `PoolAccessKey` | Audit-logged unmask. Records a `reveal` event server-side. Use in customer-facing dashboards instead of displaying `key` from `list()` |

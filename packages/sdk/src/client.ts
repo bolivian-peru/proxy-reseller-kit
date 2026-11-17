@@ -5,6 +5,7 @@ import type {
   TopUpPoolAccessKeyInput,
   PoolAccessKey,
   PoolKeyOperation,
+  MailSubmissionPort,
   PoolAccessKeyAuditEvent,
   AuditQueryOpts,
   PakUsageSeries,
@@ -289,6 +290,23 @@ export class PoolKeysApi {
   /** List all your Pool Access Keys with current usage. */
   list(): Promise<PoolAccessKey[]> {
     return this.client.request<PoolAccessKey[]>('/reseller/pool-keys');
+  }
+
+  /**
+   * Which mail ports (465, 587) this reseller account may unlock on its keys.
+   * `[]` means mail ports are not enabled for the account: do not offer the
+   * option. See {@link PoolAccessKey.unlockedPorts}.
+   *
+   * @example
+   * ```ts
+   * const { unlockable } = await proxies.poolKeys.mailPorts();
+   * if (unlockable.includes(587)) {
+   *   await proxies.poolKeys.update(keyId, { unlockedPorts: [587] });
+   * }
+   * ```
+   */
+  mailPorts(): Promise<{ unlockable: MailSubmissionPort[] }> {
+    return this.client.request<{ unlockable: MailSubmissionPort[] }>('/reseller/pool-keys/mail-ports');
   }
 
   /**

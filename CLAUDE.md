@@ -276,6 +276,7 @@ The kit's knowledge lives in three tiers. When you change behavior, update the t
 - Incidents are `{ id, severity: 'info'|'warning'|'critical', message, since }` inside `{ incidents, generatedAt, stale }` — there is no `title`.
 - `ttl` is immutable once a session row exists.
 - `ge` is Georgia. `mbl-de` always fails.
+- Mail ports: only 465 and 587, per key (`unlockedPorts`), on an account Proxies.sx enabled for mail ports (not automatic), carrier-modem (`-mbl-`) routes only. Port 25 and 2525 never open; IMAP and POP ports are refused. Never set `unlockedPorts` in a generic mint path.
 - Peer is the flagship network; `mbl` is the supportive 6-country tier.
 - **A Private Pool's country scoping is advisory, not enforced.** `allowedCountries` lives on the pool record and the gateway never reads it — it is absent from the auth response and from all routing code. Scoping is a property of the strings you generate, so a customer who edits `-us-` to `-br-` gets Brazil. The same is true of the first-party page. `qualityTier: 'safe'` (peer→mbl rewrite) is the one scoping lever the gateway *does* enforce. Never tell a reseller their country lock is server-side.
 

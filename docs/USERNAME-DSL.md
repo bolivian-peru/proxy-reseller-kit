@@ -424,7 +424,7 @@ fails SOCKS authentication.
 | `E_POOL_BUSY` | 503 | Matching endpoints exist but every one is at its connection capacity — retry in about 2 s. |
 | `E_STOCK_DEGRADED` | 502 | Endpoint selected, then went away mid-request. |
 | `E_SSRF_BLOCKED` | 403 | Target is private, localhost, or cloud metadata. |
-| `E_PORT_BLOCKED` | 403 | Destination port refused by policy (mail ports: SMTP, IMAP, POP). |
+| `E_PORT_BLOCKED` | 403 | Destination port refused by policy (mail ports: SMTP, IMAP, POP). Ports 465 and 587 pass only on a key with `unlockedPorts`, on an `-mbl-` route, as a tunnel. Port 25 and 2525 never open. SOCKS5: reply `0x02`. |
 | `E_INTERNAL` | 503 | Unexpected — file a ticket with the `req:` id. |
 
 ### Back off on refusals

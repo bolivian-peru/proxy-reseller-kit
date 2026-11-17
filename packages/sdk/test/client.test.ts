@@ -360,6 +360,33 @@ describe('ProxiesClient', () => {
     expect((init as RequestInit).method).toBeUndefined(); // GET (default)
   });
 
+  it('mailPorts reads which mail ports the account may unlock', async () => {
+    const fetchMock = mockFetch(200, { unlockable: [465, 587] });
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const res = await client.poolKeys.mailPorts();
+    expect(res.unlockable).toEqual([465, 587]);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/reseller/pool-keys/mail-ports');
+    expect((init as RequestInit).method).toBeUndefined(); // GET (default)
+  });
+
+  it('create and update send unlockedPorts in the body, null included', async () => {
+    const fetchMock = mockFetch(200, { ...KEY_FIXTURE, unlockedPorts: [587] });
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    await client.poolKeys.create({ label: 'mail', trafficCapGB: 1, unlockedPorts: [587] });
+    await client.poolKeys.update('65fabc', { unlockedPorts: null });
+    const [, createInit] = fetchMock.mock.calls[0]!;
+    const [, updateInit] = fetchMock.mock.calls[1]!;
+    expect(JSON.parse((createInit as RequestInit).body as string).unlockedPorts).toEqual([587]);
+    expect(JSON.parse((updateInit as RequestInit).body as string)).toEqual({ unlockedPorts: null });
+  });
+
   // ────────────────────────────────────────────────────────────────────
   //  0.5.0: reveal + audit endpoints (Pool Access Key security hardening)
   // ────────────────────────────────────────────────────────────────────

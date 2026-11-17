@@ -96,6 +96,7 @@ One balance covers every country. The price per GB depends on the exit country's
 - Volume discounts per single order: -10% from 25 GB, -20% from 50 GB, -30% from 100 GB, -40% from 250 GB. They follow the size of one purchase, not a monthly total.
 - Resellers prepaying 1 TB or more get volume pricing from $0.50/GB on the residential pool, by quote (contact us with countries and monthly volume). Carrier-modem traffic stays on the list tiers; dedicated modems are priced per day/week/month.
 - Pool keys can count their cap in balance GB (`capMode: 'balance'`), burnt at each country's tier rate like your own balance: one key, any country, and you sell one GB at your own price. See the [workspace guide](docs/POOL-PROXY-WORKSPACE.md#raw-allowance-weighted-account-balance-and-your-retail-price).
+- Mail: the gateway refuses mail ports. A pool key can be allowed to reach ports 465 and 587 (authenticated submission through the customer's own mailbox provider) once mail ports are enabled for your reseller account by Proxies.sx (not automatic): set `unlockedPorts` per key. Carrier-modem routes only, bounded connections, off by default, port 25 never, and you answer for what your customer sends. See [SKILL.md](SKILL.md#mail-ports-465--587--off-by-default-per-key).
 - GB never expire. The live tiers, their full country lists and the discounts are always in [`GET /v1/gateway/pool/stock`](https://api.proxies.sx/v1/gateway/pool/stock) → `pricing`; render that response instead of hardcoding this table.
 
 Public list prices and single-purchase volume discounts are published in the live stock response. Negotiated reseller wholesale terms are separate. Keep raw customer key caps, country-weighted reseller balance consumption and your own retail prices distinct; see the [pricing explanation](docs/POOL-PROXY-WORKSPACE.md#raw-allowance-weighted-account-balance-and-your-retail-price).
@@ -507,7 +508,8 @@ Endpoints (`X-API-Key` auth, [`psx_` keys minted at client.proxies.sx/account](h
 | `POST` | `/v1/reseller/pool-keys` | Mint key. Accepts `Idempotency-Key` header (v0.3.0+) |
 | `GET` | `/v1/reseller/pool-keys` | List keys + usage |
 | `GET` | `/v1/reseller/pool-keys/:id` | Fetch single key (v0.3.0+) |
-| `PATCH` | `/v1/reseller/pool-keys/:id` | Update label / cap / enabled / expiresAt |
+| `PATCH` | `/v1/reseller/pool-keys/:id` | Update label / cap / enabled / expiresAt / qualityTier / capMode / unlockedPorts |
+| `GET` | `/v1/reseller/pool-keys/mail-ports` | Which mail ports (465, 587) your account may unlock on keys; `[]` when not enabled |
 | `POST` | `/v1/reseller/pool-keys/:id/topup` | Atomic cap+expiry extension (v0.3.0+) |
 | `POST` | `/v1/reseller/pool-keys/:id/regenerate` | Rotate secret. Returns full record from v0.3.0 |
 | `POST` | `/v1/reseller/pool-keys/:id/reveal` | Audit-logged unmask of the `pak_` (v0.5.0+) |

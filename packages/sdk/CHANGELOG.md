@@ -7,6 +7,12 @@ semver from 0.3.0 onwards (the public surface is everything exported from
 
 ## Unreleased
 
+- `PoolAccessKey.unlockedPorts` and `unlockedPorts` on create/update inputs (`[465]`, `[587]`, `[465, 587]` or
+  `null`), `MAIL_SUBMISSION_PORTS`, `MailSubmissionPort`, and `poolKeys.mailPorts()`
+  (`GET /v1/reseller/pool-keys/mail-ports`). Mail ports are closed on every key unless enabled for the reseller
+  account by Proxies.sx and then set per key (platform backend {BE}, gateway {GW}, {DATE}). See
+  [mail ports](../../SKILL.md#mail-ports-465--587--off-by-default-per-key).
+
 - Docs only: the reseller API can set the prefix of the pool keys you mint
   (`GET` / `PUT /v1/reseller/pool-keys/key-prefix`, default `pak_`). There is no
   SDK method for it, and nothing in the SDK checks a key's prefix. See
