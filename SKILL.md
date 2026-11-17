@@ -566,6 +566,12 @@ UI pattern: catch `FRESH_AUTH_REQUIRED`, prompt the user for their current passw
 
 Cap suspension is independent of purchasing more allowance. Apply an authorized cap increase once, reconcile raw usage/cap and all holds, then review eligibility for a separate conditional resume. An old audit event alone cannot authorize it. Do not recreate a key or send `enabled: true` from routine sync/payment callbacks to bypass a disable.
 
+### Country limits on a key (platform, verified 2026-11-17)
+
+`allowedCountries` (ISO-2 list, 1-250) and `allowedTiers` (`1` Premium, `2` Plus, `3` Standard) are accepted on mint and `PATCH` over REST (the SDK has no typed field for them yet). A country is allowed when it is listed or its tier is listed; `null` removes the limit, an omitted field leaves it, `[]` is refused. The gateway then refuses, with `403 E_COUNTRY_NOT_ALLOWED`, any route outside the limit and any that could leave it: `-any` as the country, `-pin-`, `-failover-any`, `-failover-samenode`. `GET /v1/reseller/pool-keys/:id/usage` splits usage `byTier` and `byCountry`.
+
+Billing note: a reseller account opened from 2026-11-16 burns 1 GB of balance per GB in every country, so `capMode: 'balance'` counts the same as `'raw'` there; accounts opened earlier keep country-tier billing unless changed for them.
+
 ### `trafficCapGB` is mandatory — an uncapped key is partner-only
 
 Every mint and update must carry a **positive** `trafficCapGB`. This is enforced server-side by `assertCapAllowed()` in `src/reseller/services/reseller-pool-access-key.service.ts` and it is the single most common first-run failure:
