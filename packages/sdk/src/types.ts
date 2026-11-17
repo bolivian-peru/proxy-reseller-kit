@@ -193,8 +193,8 @@ export interface PoolAccessKey {
    * `403 MAIL_PORTS_NOT_ENABLED`. Works on carrier-modem routes only
    * (`-mbl-<cc>` in the proxy username, or a `'safe'` key), as a CONNECT or
    * SOCKS5 tunnel, and is bounded per key (see the docs for current limits).
-   * Setting `null` ends open mail connections on the key within about a
-   * minute. Port 25 and 2525 never open; IMAP and POP ports are refused.
+   * Setting `null` also ends open mail connections on the key (see the docs
+   * for timing). Port 25 and 2525 never open; IMAP and POP ports are refused.
    */
   unlockedPorts?: MailSubmissionPort[] | null;
   usageState?: 'observed' | 'unknown';
