@@ -185,7 +185,7 @@ device-exclusivity + committed peer capacity still go through the quote flow bel
 | | `-mbl-` private | `-peer-` private |
 |---|---|---|
 | What you reserve | Dedicated 4G/5G modems, removed from the shared pool - exclusively yours for the term | Committed capacity on the peer network - guaranteed, not exclusive |
-| Coverage | 6 countries (US, GB, FR, NL, PL, GE) | ~82–120 countries |
+| Coverage | Check `pools.mbl` for current carrier-modem stock | [Current peer country stock](https://api.proxies.sx/v1/gateway/pool/stock) in `pools.peer` |
 | IP behavior | Most stable; `-sid-` + `-rot-sticky` pins the modem (the carrier may still re-issue the IP) | IPs rotate naturally on the carrier - a feature for rotation use-cases |
 | Best for | Held sessions, consistent throughput, full isolation | Wide coverage, high-volume rotating workloads |
 

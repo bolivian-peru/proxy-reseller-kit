@@ -80,9 +80,9 @@ about one business day, then provisioned. Requesting a quote never charges.
   `pak_` keys, same DSL (`-sid-`, `-rot-`, `-city-`, `-carrier-` all work, scoped to
   the pool):
   - `mbl` - dedicated 4G/5G modems, pulled OUT of the shared pool and **exclusively**
-    the customer's for the term (6 countries — US, GB, FR, NL, PL, GE (Georgia), most stable tier).
+    the customer's for the term. Confirm the requested country and quantity with the provider.
   - `peer` - peer-network IPs: **committed capacity under the customer's own
-    credentials, NOT exclusive hardware** (community-shared, ~82–120 countries).
+    credentials, NOT exclusive hardware** (community-shared, country coverage varies with live stock).
 - **Reserved IPs** are the exception to "peer is never exclusive": a lease holds ONE
   specific device for one customer, and the credential (`-pin-lease-<id>`) keeps
   pointing at it across rotations. A lease can also be rotated to a different device
@@ -767,7 +767,7 @@ username fails auth. Use `buildProxyUrl(proxyUsername, pakKey, opts)`.
 
 | Token | Example | Meaning · what happens when nothing matches |
 |---|---|---|
-| Pool | `peer`, `mbl`, `any` | `peer` = **the flagship network** (~82–120 countries, mixed mobile + residential). `mbl` = our carrier modems, **exactly 6 countries: US GB FR NL PL GE**. `any`/`best` = no pool filter. |
+| Pool | `peer`, `mbl`, `any` | `peer` = **the flagship network** (mixed mobile and residential routes, with coverage that varies with live stock). `mbl` = our carrier modems, check `pools.mbl` for current countries. `any`/`best` = no pool filter. |
 | Country | `us`, `gb`, `fr`, `nl`, `pl`, `ge` | ISO alpha-2. Those 6 are the `mbl` set; `peer` spans far more. **`ge` is GEORGIA** — Germany is `de` and has **no `mbl` stock** (`mbl-de` always fails; use `peer-de`). An unrecognised country silently becomes `any` (global). |
 | `sid-{id}` | `sid-cust_8f3a21bd` | Session name. 1–64 chars `[a-z0-9_]`, no `-`. **Required for `sticky`/`auto*` to persist across connections** — without it every connection starts a fresh synthetic session. **A sid alone is NOT sticky**: with no `-rot-`, the default `auto10` still rotates it. The canonical token is `sid`; the gateway rewrites `-session-<id>` to it. |
 | `rot-{mode}` | `rot-sticky`, `rot-auto5` | `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, **not** a new IP per request). `auto5/10/20/60` re-pick every N min. `ondemand` re-picks a different endpoint on every new connection (with a `sid`, on `peer` and `mbl`, when another one matches). **Omitting `-rot-` applies the gateway default `auto10`** (~10 min) — it is not "no rotation". Unrecognised value → `auto10`, silently. |

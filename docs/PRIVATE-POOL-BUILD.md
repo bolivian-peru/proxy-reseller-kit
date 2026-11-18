@@ -77,9 +77,10 @@ modems. That is a genuine, verifiable quality guarantee — the closest analogue
 to "dedicated modems" available through the reseller API, and worth a real price
 premium.
 
-Its cost is coverage: `mbl` is **6 countries — US, GB, FR, NL, PL, GE**, and
-**`GE` is Georgia, not Germany**. A `'safe'` key asking for `de` gets nothing.
-Sell `'safe'` for stability, `'standard'` for reach.
+A `safe` key uses the carrier-modem pool. Check the chosen country in
+`pools.mbl` in [current stock](https://api.proxies.sx/v1/gateway/pool/stock)
+before offering it. The country code `ge` means Georgia and `de` means
+Germany. Coverage can change as devices enter or leave service.
 
 ---
 
