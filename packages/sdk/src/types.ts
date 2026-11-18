@@ -185,6 +185,18 @@ export interface PoolAccessKey {
   trafficUsedBalanceMB?: number | null;
   /** Same value as {@link trafficUsedBalanceMB} in GB for display. */
   trafficUsedBalanceGB?: number | null;
+  /**
+   * Mail submission ports (465, 587) this key may reach through the gateway.
+   * `null` (default): closed, like every other credential. Settable only when
+   * mail ports are enabled for your reseller account by Proxies.sx (not
+   * automatic; check {@link PoolKeysApi.mailPorts}); otherwise the API answers
+   * `403 MAIL_PORTS_NOT_ENABLED`. Works on carrier-modem routes only
+   * (`-mbl-<cc>` in the proxy username, or a `'safe'` key), as a CONNECT or
+   * SOCKS5 tunnel, and is bounded per key (see the docs for current limits).
+   * Setting `null` also ends open mail connections on the key (see the docs
+   * for timing). Port 25 and 2525 never open; IMAP and POP ports are refused.
+   */
+  unlockedPorts?: MailSubmissionPort[] | null;
   usageState?: 'observed' | 'unknown';
   expiryState?: 'observed' | 'unknown';
   observedAt?: string;
@@ -259,6 +271,100 @@ export type PoolQualityTier = 'safe' | 'standard';
 /** What a pool key's GB cap counts: real GB (`'raw'`) or balance GB burnt per country tier (`'balance'`). */
 export type PoolKeyCapMode = 'raw' | 'balance';
 
+/** Mail submission ports a pool key can be allowed to reach. Port 25 and 2525 never open; IMAP and POP ports are refused. */
+export const MAIL_SUBMISSION_PORTS = [465, 587] as const;
+export type MailSubmissionPort = (typeof MAIL_SUBMISSION_PORTS)[number];
+
+/** Limits in force per mail key, read from the gateway. "Hour" and "day" are UTC. */
+export interface MailPortLimits {
+  openPerKey: number;
+  secondsPerTunnel: number;
+  mbPerTunnel: number;
+  opensPerKeyHour: number;
+  mbPerKeyDay: number;
+  hostsPerKeyDay: number;
+}
+
+/**
+ * One of your keys with mail ports open or closed by the provider, as
+ * returned by {@link PoolKeysApi.mailPorts}. A `null` figure could not be
+ * read right now: it is unknown, never 0.
+ */
+export interface MailPortsKey {
+  keyId: string;
+  label: string;
+  enabled: boolean;
+  unlockedPorts: MailSubmissionPort[] | null;
+  closedByProvider: boolean;
+  closedAt: string | null;
+  openNow: number | null;
+  /** Attempts this UTC hour; can be above the limit (the excess was refused). */
+  opensThisHour: number | null;
+  mbToday: number | null;
+  hostsToday: number | null;
+  tunnelsToday: number | null;
+  tunnels7d: number | null;
+  mb7d: number | null;
+  lastOpenedAt: string | null;
+  /** Names of the limits reached now (`openPerKey`, `opensPerKeyHour`, `mbPerKeyDay`, `hostsPerKeyDay`). */
+  atLimit: (keyof MailPortLimits)[];
+}
+
+/** Response of {@link PoolKeysApi.mailPorts} (`GET /v1/reseller/pool-keys/mail-ports`). */
+export interface MailPortsState {
+  /** Ports `unlockedPorts` may name on your keys; `[]` when mail ports are not enabled for the account. */
+  unlockable: MailSubmissionPort[];
+  /** Whether mail ports are switched on; `null` when it could not be read. */
+  switchOn: boolean | null;
+  /** `countries`: where mail ports were measured to work (not enforced). */
+  rules: { ports: MailSubmissionPort[]; pools: string[]; countries: string[]; maxKeysPerReseller: number };
+  limits: MailPortLimits | null;
+  keys: MailPortsKey[] | null;
+  observedAt: string;
+}
+
+export type MailTunnelState = 'open' | 'closed' | 'close_not_recorded';
+
+/** Why a mail connection ended; `null` while it is open or when the end was not recorded. */
+export type MailTunnelReason =
+  | 'ended'
+  | 'time_limit'
+  | 'size_limit'
+  | 'ports_closed'
+  | 'switched_off'
+  | 'connect_failed'
+  | 'gateway';
+
+/** One mail connection of one of your keys. Bytes and seconds are `null` until the close is recorded. */
+export interface MailTunnel {
+  keyId: string;
+  openedAt: string;
+  closedAt: string | null;
+  state: MailTunnelState;
+  reason: MailTunnelReason | null;
+  port: MailSubmissionPort;
+  host: string;
+  country: string;
+  seconds: number | null;
+  bytesIn: number | null;
+  bytesOut: number | null;
+}
+
+/** Response of {@link PoolKeysApi.mailTunnels}. Pass `nextBefore` as `before` for the next page; `null` = no more. */
+export interface MailTunnelPage {
+  tunnels: MailTunnel[];
+  nextBefore: string | null;
+}
+
+export interface MailTunnelQueryOpts {
+  /** Narrow to one of your keys (404 if the key is not yours). */
+  keyId?: string;
+  /** Page back: connections opened strictly before this ISO datetime. */
+  before?: string | Date;
+  /** 1–200, default 50. */
+  limit?: number;
+}
+
 export interface CreatePoolAccessKeyInput {
   /** Human label. Must be non-empty. Shown in your admin; never sent to the gateway. */
   label: string;
@@ -271,6 +377,8 @@ export interface CreatePoolAccessKeyInput {
   trafficCapGB?: number | null;
   /** Count the cap in balance GB burnt per country tier (`'balance'`) instead of real GB (`'raw'`, default). See {@link PoolAccessKey.capMode}. */
   capMode?: PoolKeyCapMode;
+  /** Mail ports to open on this key: `[465]`, `[587]` or `[465, 587]`. Never set by default. See {@link PoolAccessKey.unlockedPorts}. */
+  unlockedPorts?: MailSubmissionPort[] | null;
   /**
    * Quality tier — pass `'safe'` to mint a modem-only **Private Pool** key, or
    * omit / `'standard'` for the general modems+peer tier. See {@link PoolQualityTier}.
@@ -430,6 +538,8 @@ export interface UpdatePoolAccessKeyInput {
   qualityTier?: PoolQualityTier;
   /** Switch what the cap counts. See {@link PoolAccessKey.capMode}. Earlier usage already counts at rate 1. */
   capMode?: PoolKeyCapMode;
+  /** Open (`[465]`, `[587]`, `[465, 587]`) or close (`null`) mail ports on this key; omit to leave unchanged. See {@link PoolAccessKey.unlockedPorts}. */
+  unlockedPorts?: MailSubmissionPort[] | null;
   /**
    * Pass an ISO/Date in the future to set or extend, `null` to remove an
    * existing expiry, or omit to leave unchanged.

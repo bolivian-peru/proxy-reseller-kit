@@ -97,6 +97,7 @@ One balance covers every country. The price per GB depends on the exit country's
 - Resellers prepaying 1 TB or more get volume pricing from $0.50/GB on the residential pool, by quote (contact us with countries and monthly volume). Carrier-modem traffic stays on the list tiers; dedicated modems are priced per day/week/month.
 - Pool keys can count their cap in balance GB (`capMode: 'balance'`), burnt at the rate your own account pays: one key, any country, and you sell one GB at your own price.
 - Reseller accounts opened from 16 November 2026 pay one rate in every country (each GB of traffic burns 1 GB of balance wherever it exits), so for them `capMode: 'balance'` counts the same as `'raw'`. Reseller accounts opened earlier keep the tier table above unless we change it for the account; the per-key usage split shows which applies (a flat account's traffic is all tier 1). See the [workspace guide](docs/POOL-PROXY-WORKSPACE.md#raw-allowance-weighted-account-balance-and-your-retail-price).
+- Mail: the gateway refuses mail ports. A pool key can be allowed to reach ports 465 and 587 (authenticated submission through the customer's own mailbox provider) once mail ports are enabled for your reseller account by Proxies.sx (not automatic): set `unlockedPorts` per key. Carrier-modem routes only, bounded connections, off by default, port 25 never, and you answer for what your customer sends. See [SKILL.md](SKILL.md#mail-ports-465--587--off-by-default-per-key).
 - GB never expire. The live tiers, their full country lists and the discounts are always in [`GET /v1/gateway/pool/stock`](https://api.proxies.sx/v1/gateway/pool/stock) → `pricing`; render that response instead of hardcoding this table.
 
 Public list prices and single-purchase volume discounts are published in the live stock response. Negotiated reseller wholesale terms are separate. Keep raw customer key caps, country-weighted reseller balance consumption and your own retail prices distinct; see the [pricing explanation](docs/POOL-PROXY-WORKSPACE.md#raw-allowance-weighted-account-balance-and-your-retail-price).
@@ -508,7 +509,9 @@ Endpoints (`X-API-Key` auth, [`psx_` keys minted at client.proxies.sx/account](h
 | `POST` | `/v1/reseller/pool-keys` | Mint key. Accepts `Idempotency-Key` header (v0.3.0+) |
 | `GET` | `/v1/reseller/pool-keys` | List keys + usage |
 | `GET` | `/v1/reseller/pool-keys/:id` | Fetch single key (v0.3.0+) |
-| `PATCH` | `/v1/reseller/pool-keys/:id` | Update label / cap / enabled / expiresAt / qualityTier / capMode / allowedCountries / allowedTiers |
+| `PATCH` | `/v1/reseller/pool-keys/:id` | Update label / cap / enabled / expiresAt / qualityTier / capMode / allowedCountries / allowedTiers / unlockedPorts |
+| `GET` | `/v1/reseller/pool-keys/mail-ports` | Mail ports (465, 587) your account may unlock on keys (`[]` when not enabled), the rules, the limits per key and each mail key's figures |
+| `GET` | `/v1/reseller/pool-keys/mail-ports/tunnels` | Your keys' mail connections, newest first (`keyId`, `before`, `limit`) |
 | `POST` | `/v1/reseller/pool-keys/:id/topup` | Atomic cap+expiry extension (v0.3.0+) |
 | `POST` | `/v1/reseller/pool-keys/:id/regenerate` | Rotate secret. Returns full record from v0.3.0 |
 | `POST` | `/v1/reseller/pool-keys/:id/reveal` | Audit-logged unmask of the `pak_` (v0.5.0+) |
@@ -527,7 +530,7 @@ The lifecycle routes were verified deployed on 4 November 2026, as recorded in t
 - `allowedCountries` (ISO-2 list) and `allowedTiers` (`1` Premium, `2` Plus, `3` Standard) on `POST` / `PATCH /v1/reseller/pool-keys[/:id]` limit where a key may route; a country is allowed when it is listed or its tier is listed, `null` removes a limit and `[]` is refused. A route outside the limit, or one that could leave it (`-any`, `-pin-`, `-failover-any`, `-failover-samenode`), answers `403 E_COUNTRY_NOT_ALLOWED`.
 - `GET /v1/reseller/pool-keys/:id/usage?days=30&countries=10` adds `byTier` and `byCountry` (top N, the rest in `otherCountries`) with raw and balance MB; traffic from before the split is `unattributedMB`.
 - A short login of your own (for example `acme`, so lines read `acme-peer-us`) is set by our team on request; see [white-label](docs/WHITE-LABEL.md#custom-login).
-- Mail ports are refused by default on the shared pool (`403 E_PORT_BLOCKED`); see the [error table](docs/USERNAME-DSL.md#error-codes-you-will-see).
+- Mail ports answer `403 E_PORT_BLOCKED` unless the key has `unlockedPorts` (465 and 587 only, `-mbl-` routes, reseller account enabled by Proxies.sx on request); see [mail ports](SKILL.md#mail-ports-465--587--off-by-default-per-key) and the [error table](docs/USERNAME-DSL.md#error-codes-you-will-see).
 
 **v0.3.0 production-readiness features:**
 - Persist `Idempotency-Key` and immutable intent before writes. Shared-pool mutations make one SDK attempt; reconcile uncertain outcomes using the [shared-pool contract](docs/SHARED-POOL-CONTRACT.md). Payment settlement and provider fulfilment remain separate effects.

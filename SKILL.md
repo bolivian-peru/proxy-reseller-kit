@@ -524,7 +524,9 @@ Use when the user's backend is **not JavaScript**. The SDK is a thin wrapper aro
 | `POST` | `/v1/reseller/pool-keys` | Mint a `pak_` key. Accepts optional `expiresAt` (ISO datetime) and `Idempotency-Key` header. **Sensitive — see Fresh-Auth below.** |
 | `GET` | `/v1/reseller/pool-keys` | List keys + usage (returns `expiresAt`, server-computed `isExpired`) |
 | `GET` | `/v1/reseller/pool-keys/{keyId}` | Fetch a single key by id (v0.3.0+) |
-| `PATCH` | `/v1/reseller/pool-keys/{keyId}` | Update `label` / `enabled` / `trafficCapGB` / `expiresAt` |
+| `PATCH` | `/v1/reseller/pool-keys/{keyId}` | Update `label` / `enabled` / `trafficCapGB` / `expiresAt` / `unlockedPorts` ([mail ports](#mail-ports-465--587--off-by-default-per-key)) |
+| `GET` | `/v1/reseller/pool-keys/mail-ports` | `{ unlockable, switchOn, rules, limits, keys, observedAt }`: mail ports (465, 587) this account may unlock on keys (`[]` = not enabled), the limits per key, and each mail key's figures |
+| `GET` | `/v1/reseller/pool-keys/mail-ports/tunnels` | Your keys' mail connections, newest first (`keyId`, `before`, `limit`) |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/topup` | Atomic cap-and/or-expiry extension (v0.3.0+). Body: `{addTrafficGB?, extendDays?}`. Accepts `Idempotency-Key` |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/regenerate` | Change the stored secret. No fixed cache/old-password/socket cutoff; recover ambiguity using the current scoped key. **Sensitive.** |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/reveal` | Audit-logged unmask (returns full pak_ + records `reveal` event). Use this in customer-facing UIs instead of displaying the key from `list`. |
@@ -593,6 +595,67 @@ Set the cumulative cap from verified entitlement. Accounting flushes, caches and
 open connections permit some overshoot; a cap is not a zero-overshoot spending
 guarantee. Never use rounded `trafficUsedGB` for eligibility or treat missing
 raw usage as zero.
+
+### Mail ports (465 / 587) — off by default, per key
+
+Status: live since 2026-11-18 (platform backend r116, gateway 60bb8c536). Checked on the wire on 2026-11-18: ports 465
+and 587 to major mail providers through `-mbl-` routes in US, GB, FR, NL, PL and GE (SOCKS5 checked in US). REST API;
+the MCP tools and the kit's React components do not carry this field.
+
+The gateway refuses mail ports (SMTP, IMAP, POP) on every credential. A pool key can be allowed to reach ports
+**465 and 587 only**, for authenticated submission through the customer's own mailbox provider.
+
+| You send | Reseller account not enabled | Reseller account enabled |
+|---|---|---|
+| `unlockedPorts` omitted | key minted, mail closed | key minted, mail closed |
+| `unlockedPorts: [587]` | `403` `MAIL_PORTS_NOT_ENABLED` | minted; 587 open on `-mbl-<cc>` routes |
+| `unlockedPorts: [465, 587]` | `403` | minted; both open |
+| `unlockedPorts: [25]`, `[2525]`, `[993]`, `[]`, `["587"]` | `400` | `400` (only 465 and 587 exist; `null` clears) |
+| `unlockedPorts: null` | cleared | cleared; open mail connections end within about a minute |
+| any value on a key Proxies.sx closed | `403` `MAIL_PORTS_CLOSED_ON_KEY` | `403` `MAIL_PORTS_CLOSED_ON_KEY` |
+| a value on a 26th key of the account | `403` | `409` `MAIL_PORTS_KEY_LIMIT` (25 keys per account) |
+
+- Enabled per reseller account by Proxies.sx on request (ask support); it is not automatic. Check with
+  `GET /v1/reseller/pool-keys/mail-ports` before you show the option; `"unlockable":[]` means do not offer it.
+- Port 25 and port 2525 never open, on any key. IMAP and POP ports are refused.
+- The customer's proxy username must name the modem pool: `<login>-mbl-<cc>` (checked on the wire in US, GB, FR,
+  NL, PL and GE; read `rules.countries` from `GET /v1/reseller/pool-keys/mail-ports` for the countries the API
+  reports as measured), or the key is `qualityTier: 'safe'`. `-peer-`, `-any-` and `-best-` answer `E_PORT_BLOCKED` for mail ports. Tunnels only
+  (CONNECT on 7000, SOCKS5 on 7001, on `gw.proxies.sx` or your own white-label address).
+- Per key: 5 open mail connections; 10 minutes and 50 MB per connection; 120 mail connections opened per UTC hour;
+  500 MB of mail traffic and 20 distinct destination hosts per UTC day. Over a limit: `429 E_RATE_LIMITED_CONN`; the
+  hourly and daily limits add `Retry-After` until the end of that UTC hour or day.
+  Mail traffic counts against the key's cap like any other traffic.
+- After `unlockedPorts: null`, mail connections on the key stop within about a minute (new ones refused, open
+  ones ended). If our API cannot be reached at that moment, open mail connections end at their 10-minute limit
+  at the latest. Proxies.sx can also close mail ports on one key or on your account (the key's field then reads
+  `null`), or for everyone (the field stays, connections are refused).
+- Activity: `GET /v1/reseller/pool-keys/mail-ports` also returns `switchOn`, `rules`, `limits` and, per mail key, the
+  figures against the limits now (`openNow`, `opensThisHour`, `mbToday`, `hostsToday`, `atLimit`) and the last 7 days
+  (`tunnels7d`, `mb7d`, `lastOpenedAt`); a `null` figure could not be read and is unknown, never 0.
+  `GET /v1/reseller/pool-keys/mail-ports/tunnels?keyId=&before=&limit=` lists your keys' mail connections, newest
+  first, kept 90 days (`limit` 1 to 200, default 50; page with `before=<nextBefore>`): port, mail host, country,
+  seconds, bytes and why it ended (`ended`, `time_limit`, `size_limit`, `ports_closed`, `switched_off`,
+  `connect_failed`, `gateway`; `null` while open). A malformed query is `400 INVALID_QUERY`; a key that is not
+  yours is `404`. In the SDK source on `main` (not yet in a published npm version): `poolKeys.mailPorts()` and
+  `poolKeys.mailTunnels({ keyId, before, limit })`.
+- On port 7000 the `E_PORT_BLOCKED` body says which case applies; SOCKS5 and white-label addresses give no reason:
+  check that the port is 465 or 587, that the key shows `unlockedPorts`, and that the username names `-mbl-<cc>`.
+- **Never** set it in a generic mint path (the starter's `fulfillment.ts` must not), never for an anonymous buyer.
+  The reseller that unlocks a key answers for what its customer sends; mail ports on a key are closed at the
+  first abuse report we trace to it.
+
+    curl -X PATCH https://api.proxies.sx/v1/reseller/pool-keys/$KEY_ID \
+      -H "X-API-Key: psx_YOUR_API_KEY" -H "Content-Type: application/json" \
+      -d '{"unlockedPorts":[587]}'        # open; send null to close
+
+**Mail ports: acceptable use.** Ports 465 and 587 on an unlocked key are for authenticated submission: a person
+or an application signing in to their own mailbox at their own mail provider and sending through it. Bulk mail,
+unsolicited mail, sending through someone else's account or relay, and trying passwords against mail servers are
+not allowed; spam is prohibited by the terms of service. Mail ports are enabled per reseller account by
+Proxies.sx, and the reseller decides per key. The reseller is responsible for the customer behind each key it
+unlocks and for what that customer sends. At the first abuse report we trace to a key, we close mail ports on
+that key; we may also close them for the reseller account or for everyone, at any time and without notice.
 
 Base URL: `https://api.proxies.sx/v1`.
 
@@ -779,6 +842,11 @@ catch (err) {
 }
 ```
 
+On the proxy connection itself, `403 E_PORT_BLOCKED` is a refused destination port (mail ports: SMTP, IMAP, POP).
+Ports 465 and 587 pass only on a key with `unlockedPorts`, on an `-mbl-` route; SOCKS5 answers reply `0x02`. Not
+retryable unchanged. See [mail ports](#mail-ports-465--587--off-by-default-per-key) and the
+[gateway error table](docs/USERNAME-DSL.md#error-codes-you-will-see).
+
 ---
 
 ## Security non-negotiables
@@ -792,6 +860,7 @@ DO NOT skip these. Burn them into any code generated for the user:
 4. **Verify Stripe webhook signatures.** The starter app's webhook handler does this; if you adapt it, do not comment out the signature check "to test".
 5. **Handle leaked keys through an authorized durable regeneration operation.** There is no fixed revocation deadline; binding release does not terminate open sockets.
 6. **Store `psx_` keys in a secrets manager**, not in source. The starter uses `.env`; production deployments should use 1Password / Doppler / AWS Secrets Manager / etc.
+7. **Never unlock mail ports by default.** `unlockedPorts` is set per known customer, never in a generic mint path.
 
 ### Password recovery and revocation
 
@@ -1062,5 +1131,6 @@ re-checking. See [error codes](./docs/USERNAME-DSL.md#error-codes-you-will-see).
 - [ ] Stripe webhook signature is verified (if using Stripe)
 - [ ] User can mint a `pak_*`, build a proxy URL, and route real traffic through it
 - [ ] User knows how to regenerate a leaked `pak_*`
+- [ ] No key is minted with `unlockedPorts` unless the user asked for mail for that customer
 - [ ] No specific pricing numbers were hardcoded — UI either reads `/v1/billing/public-pricing` / `/v1/gateway/pool/stock` or shows the user's own retail tiers
 - [ ] Nothing in the UI, logs or API responses shows a device exit IP (sessions carry none; lease rows are stripped by the handlers)

@@ -431,7 +431,7 @@ fails SOCKS authentication.
 | `E_UPSTREAM_REFUSED` | 590–599 | The peer or modem refused the HTTPS `CONNECT` before the tunnel opened; nothing was forwarded or billed — retry. |
 | `E_STOCK_DEGRADED` | 502 | Endpoint selected, then went away mid-request. |
 | `E_SSRF_BLOCKED` | 403 | Target is private, localhost, or cloud metadata. |
-| `E_PORT_BLOCKED` | 403 | Destination port refused by default: mail ports (SMTP 25, 465, 587, 2525; IMAP 143, 993; POP3 110, 995). |
+| `E_PORT_BLOCKED` | 403 | Destination port refused by policy (mail ports: SMTP, IMAP, POP). Ports 465 and 587 pass only on a key with `unlockedPorts` (reseller account enabled for mail ports by Proxies.sx), on an `-mbl-` route, as a tunnel; see [mail ports](../SKILL.md#mail-ports-465--587--off-by-default-per-key). Port 25 and 2525 never open. SOCKS5: reply `0x02`. Not retryable unchanged. |
 | `E_COUNTRY_NOT_ALLOWED` | 403 | The key is limited to other countries or tiers (`allowedCountries` / `allowedTiers`), or the route could leave them: `-any` as country, `-pin-`, `-failover-any` and `-failover-samenode` are refused on a country-limited key. |
 | `E_INTERNAL` | 503 | Unexpected — file a ticket with the `req:` id. |
 

@@ -22,6 +22,15 @@ export type {
   Protocol,
   PoolQualityTier,
   PoolKeyCapMode,
+  MailSubmissionPort,
+  MailPortLimits,
+  MailPortsKey,
+  MailPortsState,
+  MailTunnelState,
+  MailTunnelReason,
+  MailTunnel,
+  MailTunnelPage,
+  MailTunnelQueryOpts,
   PoolAccessKey,
   PoolKeyOperation,
   CreatePoolAccessKeyInput,
@@ -59,4 +68,4 @@ export type {
   ClientConfig,
 } from './types';
 
-export { isPoolKeyExpired, daysUntilPoolKeyExpiry } from './types';
+export { isPoolKeyExpired, daysUntilPoolKeyExpiry, MAIL_SUBMISSION_PORTS } from './types';
