@@ -100,9 +100,13 @@ consequences that cause most integration bugs:
 1. **No token value may itself contain a `-`.** `T-Mobile US` must be sent as
    `tmobile`. The SDK slugifies `carrier` / `isp` / `city` for you.
 2. **The parser is self-healing and never returns 400 for a bad optional
-   token.** It sanitizes, aliases, and defaults — then routes anyway, recording
-   what it fixed in an ops-only `corrections[]` log the customer never sees.
-   The only hard failures are a missing username or one longer than 256 chars.
+   token.** It sanitizes, aliases, and defaults — then routes anyway, and lists
+   every repair in the `X-Psx-Corrections` response header on the HTTP port
+   (codes such as `unknown_token`, `pool_omitted`, `country_alias`,
+   `sid_alias`, `rot_alias`). The only hard failures are a missing username or
+   one longer than 256 chars — unless the username carries `-parse-strict`,
+   which turns any repair into `400 E_USERNAME_PARSE` listing each problem.
+   Use `-parse-strict` while you build an integration, so a typo fails loudly.
 
 The practical danger is the flip side of that forgiveness: **a token you got
 wrong does not error — it is repaired or dropped.** An unknown token is skipped
@@ -167,8 +171,8 @@ per-country `modem` / `peer` counts — see [Verify it works](#verify-it-works).
 
 ## Every token
 
-Eleven optional tokens, three `pin` sub-types, and the `any` wildcard — the
-fifteen words the parser recognises. Every targeting token is **hard**: a
+Thirteen optional tokens (plus the spellings `type` for `iptype`, `mode` for
+`rot` and `session` for `sid`), three `pin` sub-types, and the `any` wildcard. Every targeting token is **hard**: a
 non-matching endpoint is excluded from selection, and the gateway never drops
 a filter on a retry.
 
@@ -186,12 +190,14 @@ a filter on a retry.
 | `failover` | `any` · `samecountry` · `samecarrier` · `samenode` · `strict` | policy, default `samecountry` | Unrecognised → `samecountry`. `strict` disables all substitution and fails clean instead. |
 | `pin` | `-pin-<type>-<id>` — consumes **two** parts | **hard** | See [Pinning](#pinning-port-device-lease). An unknown *type* is **dropped entirely and silently**. |
 | `strict` | **bare flag — no value** | modifier | Only active with `rot sticky`/`hard`; a no-op for every other mode. See [Strict sticky](#strict-sticky). |
+| `parse` | `strict` | parser mode | `-parse-strict` refuses the username (`400 E_USERNAME_PARSE`, the message lists each repair) instead of repairing it. Any other value is ignored. |
 
-Unknown tokens are skipped for forward compatibility, with a correction
-recorded on the gateway side that the customer never sees. `-session-<id>` is
-the one spelling the live gateway rewrites to `sid` for you; any other typo in
-a token name (`-sticky-` instead of `-rot-sticky`, `-country-us`) is silently
-dropped.
+Unknown tokens are skipped for forward compatibility, and each skip is listed
+in the `X-Psx-Corrections` response header. `-session-<id>` (to `sid`), `-type-`
+(to `iptype`) and `-mode-` (to `rot`) are the spellings the live gateway accepts
+for you; any other typo in a token name (`-sticky-` instead of `-rot-sticky`,
+`-country-us`) is skipped and reported, not refused — or refused with
+`-parse-strict`.
 
 ### Rotation modes
 
@@ -411,21 +417,27 @@ fails SOCKS authentication.
 | Code | Status | Meaning |
 |---|---|---|
 | `E_AUTH_REQUIRED` | 407 | No `Proxy-Authorization` header. |
-| `E_AUTH_INVALID` | 407 | Credentials rejected — wrong username shape, unknown account, disabled or expired key. |
-| `E_CAP_EXCEEDED` | 407 | The `pak_` hit its GB cap (`cap_exceeded`). Branch on this code rather than parsing the message. |
+| `E_AUTH_INVALID` | 407 | Credentials rejected — wrong username shape, unknown account, disabled, held or expired key; the backend reason follows. On a `psx_<id>` username with a password that is not a key and no other reason, the message adds "Use the proxy password shown on the Pool Proxy page (client.proxies.sx/pool-proxy), not the account login password." |
+| `E_CAP_EXCEEDED` | 407 | The `pak_` hit its GB cap (`cap_exceeded`), counted in real or balance GB per the key's `capMode`. Branch on this code rather than parsing the message. |
 | `E_BALANCE_EXHAUSTED` | 407 | The key is valid but **your reseller account** has no shared GB left — every key under it refuses until you top up. Not a per-key condition. |
-| `E_USERNAME_PARSE` | 400 | Username missing or > 256 chars — the only parse failures that exist. |
+| `E_USERNAME_PARSE` | 400 | Username missing or > 256 chars, or refused by `-parse-strict` (the message lists each problem). |
 | `E_RATE_LIMITED_AUTH` | 429 | Too many failed auths (per-IP 10/min → 30 s ban, 30/min → 5 min; per-account 25/min, 60/min). |
 | `E_RATE_LIMITED_CONN` | 429 | Over the concurrent-connection ceiling — **500 per account** (all your keys share it; raised per account on request). |
-| `E_SESSION_LIMIT` | 429 | Over the concurrent-session ceiling — **250 per account**, shared by every `-sid-` across all your keys. |
+| `E_SESSION_LIMIT` | 429 | Over the concurrent-session ceiling — **1,000 per account** by default (set per account for some resellers), shared by every `-sid-` across all your keys. |
 | `E_GATEWAY_CAPACITY` | 503 | The gateway's shared socket ceiling, not your account's — retry shortly. |
 | `E_WRONG_PORT` | 400 | An HTTP request on the SOCKS5 port (7001) or a SOCKS handshake on 7000. |
-| `E_NO_STOCK_COUNTRY` | 502 | Nothing online matched the filters. The message suggests a nearest alternative. |
-| `E_POOL_BUSY` | 503 | Matching endpoints exist but every one is at its connection capacity — retry in about 2 s. |
+| `E_NO_STOCK_COUNTRY` | 502 | Nothing online matched the filters. The message names your filters; the only alternative it suggests is the peer pool for an `mbl` route outside US, GB, FR, NL, PL, GE (`use the peer pool: -peer-<cc>`). A released Reserved IP lease answers "This Reserved IP lease is released or unknown. Remove the -pin-lease- token, or reserve again in Private Pool and copy the new connection line." |
+| `E_POOL_BUSY` | 503 | Matching endpoints exist but every one is at its connection capacity — retry in about 2 s. Only while that gateway policy is on; otherwise the same case is `E_NO_STOCK_COUNTRY`. |
+| `E_UPSTREAM_REFUSED` | 590–599 | The peer or modem refused the HTTPS `CONNECT` before the tunnel opened; nothing was forwarded or billed — retry. |
 | `E_STOCK_DEGRADED` | 502 | Endpoint selected, then went away mid-request. |
 | `E_SSRF_BLOCKED` | 403 | Target is private, localhost, or cloud metadata. |
-| `E_PORT_BLOCKED` | 403 | Destination port refused by policy (mail ports: SMTP, IMAP, POP). Ports 465 and 587 pass only on a key with `unlockedPorts`, on an `-mbl-` route, as a tunnel. Port 25 and 2525 never open. SOCKS5: reply `0x02`. |
+| `E_PORT_BLOCKED` | 403 | Destination port refused by policy (mail ports: SMTP, IMAP, POP). Ports 465 and 587 pass only on a key with `unlockedPorts` (reseller account enabled for mail ports by Proxies.sx), on an `-mbl-` route, as a tunnel; see [mail ports](../SKILL.md#mail-ports-465--587--off-by-default-per-key). Port 25 and 2525 never open. SOCKS5: reply `0x02`. Not retryable unchanged. |
+| `E_COUNTRY_NOT_ALLOWED` | 403 | The key is limited to other countries or tiers (`allowedCountries` / `allowedTiers`), or the route could leave them: `-any` as country, `-pin-`, `-failover-any` and `-failover-samenode` are refused on a country-limited key. |
 | `E_INTERNAL` | 503 | Unexpected — file a ticket with the `req:` id. |
+
+`E_ACCOUNT_DISABLED` exists in the code table but is never sent; a disabled
+account answers `E_AUTH_INVALID`. On a [white-label edge address](./WHITE-LABEL.md#refusals-on-the-white-label-edge)
+the same refusals carry neutral names in an `X-Proxy-Error` header instead.
 
 ### Back off on refusals
 

@@ -525,7 +525,8 @@ Use when the user's backend is **not JavaScript**. The SDK is a thin wrapper aro
 | `GET` | `/v1/reseller/pool-keys` | List keys + usage (returns `expiresAt`, server-computed `isExpired`) |
 | `GET` | `/v1/reseller/pool-keys/{keyId}` | Fetch a single key by id (v0.3.0+) |
 | `PATCH` | `/v1/reseller/pool-keys/{keyId}` | Update `label` / `enabled` / `trafficCapGB` / `expiresAt` / `unlockedPorts` ([mail ports](#mail-ports-465--587--off-by-default-per-key)) |
-| `GET` | `/v1/reseller/pool-keys/mail-ports` | `{ unlockable }`: mail ports (465, 587) this account may unlock on keys; `[]` = not enabled |
+| `GET` | `/v1/reseller/pool-keys/mail-ports` | `{ unlockable, switchOn, rules, limits, keys, observedAt }`: mail ports (465, 587) this account may unlock on keys (`[]` = not enabled), the limits per key, and each mail key's figures |
+| `GET` | `/v1/reseller/pool-keys/mail-ports/tunnels` | Your keys' mail connections, newest first (`keyId`, `before`, `limit`) |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/topup` | Atomic cap-and/or-expiry extension (v0.3.0+). Body: `{addTrafficGB?, extendDays?}`. Accepts `Idempotency-Key` |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/regenerate` | Change the stored secret. No fixed cache/old-password/socket cutoff; recover ambiguity using the current scoped key. **Sensitive.** |
 | `POST` | `/v1/reseller/pool-keys/{keyId}/reveal` | Audit-logged unmask (returns full pak_ + records `reveal` event). Use this in customer-facing UIs instead of displaying the key from `list`. |
@@ -567,6 +568,12 @@ UI pattern: catch `FRESH_AUTH_REQUIRED`, prompt the user for their current passw
 
 Cap suspension is independent of purchasing more allowance. Apply an authorized cap increase once, reconcile raw usage/cap and all holds, then review eligibility for a separate conditional resume. An old audit event alone cannot authorize it. Do not recreate a key or send `enabled: true` from routine sync/payment callbacks to bypass a disable.
 
+### Country limits on a key (platform, verified 2026-11-17)
+
+`allowedCountries` (ISO-2 list, 1-250) and `allowedTiers` (`1` Premium, `2` Plus, `3` Standard) are accepted on mint and `PATCH` over REST (the SDK has no typed field for them yet). A country is allowed when it is listed or its tier is listed; `null` removes the limit, an omitted field leaves it, `[]` is refused. The gateway then refuses, with `403 E_COUNTRY_NOT_ALLOWED`, any route outside the limit and any that could leave it: `-any` as the country, `-pin-`, `-failover-any`, `-failover-samenode`. `GET /v1/reseller/pool-keys/:id/usage` splits usage `byTier` and `byCountry`.
+
+Billing note: a reseller account opened from 2026-11-16 burns 1 GB of balance per GB in every country, so `capMode: 'balance'` counts the same as `'raw'` there; accounts opened earlier keep country-tier billing unless changed for them.
+
 ### `trafficCapGB` is mandatory — an uncapped key is partner-only
 
 Every mint and update must carry a **positive** `trafficCapGB`. This is enforced server-side by `assertCapAllowed()` in `src/reseller/services/reseller-pool-access-key.service.ts` and it is the single most common first-run failure:
@@ -591,7 +598,9 @@ raw usage as zero.
 
 ### Mail ports (465 / 587) — off by default, per key
 
-Status: live since {DATE} (platform backend {BE}, gateway {GW}). REST API; the MCP tools and the dashboards do not carry this field.
+Status: live since 2026-11-18 (platform backend r116, gateway 60bb8c536). Checked on the wire on 2026-11-18: ports 465
+and 587 to major mail providers through `-mbl-` routes in US, GB, FR, NL, PL and GE (SOCKS5 checked in US). REST API;
+the MCP tools and the kit's React components do not carry this field.
 
 The gateway refuses mail ports (SMTP, IMAP, POP) on every credential. A pool key can be allowed to reach ports
 **465 and 587 only**, for authenticated submission through the customer's own mailbox provider.
@@ -606,20 +615,30 @@ The gateway refuses mail ports (SMTP, IMAP, POP) on every credential. A pool key
 | any value on a key Proxies.sx closed | `403` `MAIL_PORTS_CLOSED_ON_KEY` | `403` `MAIL_PORTS_CLOSED_ON_KEY` |
 | a value on a 26th key of the account | `403` | `409` `MAIL_PORTS_KEY_LIMIT` (25 keys per account) |
 
-- Enabled per reseller account by Proxies.sx; it is not automatic. Check with `GET /v1/reseller/pool-keys/mail-ports`
-  before you show the option; `{"unlockable":[]}` means do not offer it. (SDK {SDK} and later:
-  `proxies.poolKeys.mailPorts()` and a typed `unlockedPorts`; earlier versions use the REST routes.)
+- Enabled per reseller account by Proxies.sx on request (ask support); it is not automatic. Check with
+  `GET /v1/reseller/pool-keys/mail-ports` before you show the option; `"unlockable":[]` means do not offer it.
 - Port 25 and port 2525 never open, on any key. IMAP and POP ports are refused.
-- The customer's proxy username must name the modem pool: `<login>-mbl-<cc>` (checked in {COUNTRIES}), or the key
-  is `qualityTier: 'safe'`. `-peer-`, `-any-` and `-best-` answer `E_PORT_BLOCKED` for mail ports. Tunnels only
+- The customer's proxy username must name the modem pool: `<login>-mbl-<cc>` (checked on the wire in US, GB, FR,
+  NL, PL and GE; read `rules.countries` from `GET /v1/reseller/pool-keys/mail-ports` for the countries the API
+  reports as measured), or the key is `qualityTier: 'safe'`. `-peer-`, `-any-` and `-best-` answer `E_PORT_BLOCKED` for mail ports. Tunnels only
   (CONNECT on 7000, SOCKS5 on 7001, on `gw.proxies.sx` or your own white-label address).
 - Per key: 5 open mail connections; 10 minutes and 50 MB per connection; 120 mail connections opened per UTC hour;
-  500 MB of mail traffic and 20 distinct destination hosts per UTC day. Over a limit: `429 E_RATE_LIMITED_CONN`.
+  500 MB of mail traffic and 20 distinct destination hosts per UTC day. Over a limit: `429 E_RATE_LIMITED_CONN`; the
+  hourly and daily limits add `Retry-After` until the end of that UTC hour or day.
   Mail traffic counts against the key's cap like any other traffic.
 - After `unlockedPorts: null`, mail connections on the key stop within about a minute (new ones refused, open
   ones ended). If our API cannot be reached at that moment, open mail connections end at their 10-minute limit
   at the latest. Proxies.sx can also close mail ports on one key or on your account (the key's field then reads
   `null`), or for everyone (the field stays, connections are refused).
+- Activity: `GET /v1/reseller/pool-keys/mail-ports` also returns `switchOn`, `rules`, `limits` and, per mail key, the
+  figures against the limits now (`openNow`, `opensThisHour`, `mbToday`, `hostsToday`, `atLimit`) and the last 7 days
+  (`tunnels7d`, `mb7d`, `lastOpenedAt`); a `null` figure could not be read and is unknown, never 0.
+  `GET /v1/reseller/pool-keys/mail-ports/tunnels?keyId=&before=&limit=` lists your keys' mail connections, newest
+  first, kept 90 days (`limit` 1 to 200, default 50; page with `before=<nextBefore>`): port, mail host, country,
+  seconds, bytes and why it ended (`ended`, `time_limit`, `size_limit`, `ports_closed`, `switched_off`,
+  `connect_failed`, `gateway`; `null` while open). A malformed query is `400 INVALID_QUERY`; a key that is not
+  yours is `404`. In the SDK source on `main` (not yet in a published npm version): `poolKeys.mailPorts()` and
+  `poolKeys.mailTunnels({ keyId, before, limit })`.
 - On port 7000 the `E_PORT_BLOCKED` body says which case applies; SOCKS5 and white-label addresses give no reason:
   check that the port is 465 or 587, that the key shows `unlockedPorts`, and that the username names `-mbl-<cc>`.
 - **Never** set it in a generic mint path (the starter's `fulfillment.ts` must not), never for an anonymous buyer.
@@ -825,7 +844,7 @@ catch (err) {
 
 On the proxy connection itself, `403 E_PORT_BLOCKED` is a refused destination port (mail ports: SMTP, IMAP, POP).
 Ports 465 and 587 pass only on a key with `unlockedPorts`, on an `-mbl-` route; SOCKS5 answers reply `0x02`. Not
-retryable. See [mail ports](#mail-ports-465--587--off-by-default-per-key) and the
+retryable unchanged. See [mail ports](#mail-ports-465--587--off-by-default-per-key) and the
 [gateway error table](docs/USERNAME-DSL.md#error-codes-you-will-see).
 
 ---

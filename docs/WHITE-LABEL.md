@@ -143,6 +143,50 @@ The rules:
   extend any log redaction or secret scanning that matches `pak_`, or keys with
   your prefix pass through it unmasked.
 
+## Custom login
+
+By default your customers' username starts with `psx_<your account id>`. For a
+fully branded line our team can set a short login of your own on your account
+(for example `acme`), so a customer types `acme-peer-us-sid-a1` with an
+`acme_…` key. It is set on request (there is no API to change it). Keys, usage
+and `GET /v1/gateway/pool/my-sessions` work the same under either name, and
+`psx_<id>` keeps working.
+
+## Refusals on the white-label edge
+
+A connection that arrives on the white-label edge address never sees our
+provider header or the dynamic refusal message (it can carry pool names,
+filters or backend text). It gets a neutral name in the `X-Proxy-Error` header
+and a body `<name>: <fixed text> (req: <uuid>)`. `Retry-After` is sent as on
+`gw.proxies.sx`.
+
+| Code on `gw.proxies.sx` | `X-Proxy-Error` | Fixed text |
+|---|---|---|
+| `E_AUTH_REQUIRED` | `auth_required` | proxy authentication required |
+| `E_AUTH_INVALID` | `auth_failed` | credentials rejected |
+| `E_RATE_LIMITED_AUTH` | `auth_throttled` | too many failed attempts, retry later |
+| `E_RATE_LIMITED_CONN` | `too_many_connections` | too many concurrent connections |
+| `E_BALANCE_EXHAUSTED` | `no_traffic_left` | no traffic remaining on this account |
+| `E_CAP_EXCEEDED` | `quota_reached` | traffic limit of this key reached |
+| `E_ACCOUNT_DISABLED` | `account_disabled` | account disabled |
+| `E_USERNAME_PARSE` | `bad_username` | username not understood |
+| `E_SSRF_BLOCKED` | `target_blocked` | destination not allowed |
+| `E_PORT_BLOCKED` | `port_blocked` | destination port not allowed |
+| `E_NO_STOCK_COUNTRY` | `no_exit_available` | no exit available for this selection |
+| `E_POOL_BUSY` | `exits_busy` | all matching exits are in use, retry shortly |
+| `E_STOCK_DEGRADED` | `exit_lost` | exit became unavailable, retry |
+| `E_UPSTREAM_REFUSED` | `exit_refused` | the exit refused the connection |
+| `E_SESSION_LIMIT` | `too_many_sessions` | too many active sessions |
+| `E_GATEWAY_CAPACITY` | `at_capacity` | at capacity, retry shortly |
+| `E_INTERNAL` | `unavailable` | temporarily unavailable, retry |
+| `E_WRONG_PORT` | `wrong_port` | the scheme must match the port |
+| `E_COUNTRY_NOT_ALLOWED` | `location_not_allowed` | this key does not include that location |
+
+Branch on `X-Proxy-Error` (edge) or `X-Proxies-Error-Code` (`gw.proxies.sx`),
+never on the text. Source: `NEUTRAL_ERRORS` in the gateway's
+`src/metrics/error-codes.ts`, verified against gateway 53204c93f on
+17 November 2026.
+
 ## Notes
 - The white-label edge address is **infrastructure**, not a peer/exit IP, so
   pointing DNS at it does not expose any device. Same credentials, same pool keys.
