@@ -371,7 +371,7 @@ import { buildProxyUrl } from '@proxies-sx/pool-sdk';
 
 | Field | Type | Notes |
 |---|---|---|
-| `pool` | `'mbl' \| 'peer' \| 'any' \| 'best'` | **Set explicitly; omission defaults to `mbl`.** `'peer'` = the flagship network (~82–120 countries, mixed mobile + residential). `'mbl'` = our carrier modems, exactly 6 countries. |
+| `pool` | `'mbl' \| 'peer' \| 'any' \| 'best'` | **Set explicitly; omission defaults to `mbl`.** `'peer'` = the flagship network (mixed mobile and residential routes, with coverage that varies with live stock). `'mbl'` = our carrier modems. Check `pools.mbl` for live coverage. |
 | `country` | `'us' \| 'gb' \| 'fr' \| 'nl' \| 'pl' \| 'ge'` and more | Those 6 are the **`mbl`** set; `peer` spans far more. **`'ge'` is Georgia** — Germany is `'de'`, which has no `mbl` stock (`mbl-de` always fails; use `pool: 'peer'`). |
 | `carrier` | `string` | `'att'`, `'tmobile'` — **hard** exact slug match on the device's carrier or ISP name, never widened. No match → `E_NO_STOCK_COUNTRY` 502. Prefer `asn` when you have it. |
 | `isp` | `string` | `'tmobile'`, `'comcast'` — **hard** slugified match (peer pool). No match → `E_NO_STOCK_COUNTRY` 502. |
@@ -676,7 +676,7 @@ http://psx_RESELLER_USERNAME-peer-us-sid-alice_session1-rot-sticky:pak_CUSTOMER_
 Token summary (separated by `-`) — **full reference, including what each filter
 does when nothing matches, in [`docs/USERNAME-DSL.md`](../../docs/USERNAME-DSL.md)**:
 
-- `peer` / `mbl` / `any` — pool. `peer` is the flagship network (~82–120 countries); `mbl` is our carrier-modem tier, exactly `us` `gb` `fr` `nl` `pl` `ge`. **`ge` is Georgia**; Germany is `de` and has no `mbl` stock.
+- `peer` / `mbl` / `any` — pool. `peer` is the flagship network (country coverage varies with live stock); `mbl` is our carrier-modem pool. Check `pools.mbl` for available countries. **`ge` is Georgia**; Germany is `de` and has no `mbl` stock.
 - `sid-<id>` — session name, `[a-z0-9_]{1,64}`, no hyphens. **Required for stickiness to persist across connections**, but not sufficient on its own. The canonical token is `sid`; the gateway rewrites `-session-<id>` to it.
 - `rot-sticky` / `rot-auto5|10|20|60` / `rot-ondemand` / `rot-hard` — `sticky`/`hard` pin the **device** (`hard` ≡ `sticky`, NOT a new IP per request); `auto*` re-pick every N min; `ondemand` re-picks a different endpoint on every new connection (with a `sid`). **Omit the token and the gateway default `auto10` applies** — omitting is not "no rotation".
 - `strict` — bare flag; hardens `sticky`/`hard` with an IP-stability floor.

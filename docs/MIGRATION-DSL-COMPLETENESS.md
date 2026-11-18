@@ -121,7 +121,7 @@ source:
 | `-sid-<id>` alone makes a session sticky | A sid without `-rot-sticky` still soft-rotates on the default `auto10`. **Both tokens are required** |
 | `sid` = "same exit IP for the session" | Sticky pins the **device**; carrier CGNAT may still re-NAT the address |
 | Username format `pak_xxx-mbl-COUNTRY` | The `pak_` is the **password**. Username is `psx_<reseller>-<pool>-<country>-…`; no code path resolves a `pak_` username |
-| `mbl` = production/recommended, `peer` = growing/residential | **`peer` is the flagship** (~82–120 countries, mixed mobile + residential); `mbl` is the supportive 6-country carrier-modem tier |
+| `mbl` = production/recommended, `peer` = growing/residential | **`peer` is the flagship** (mixed mobile and residential routes, with coverage that varies with live stock); `mbl` is the carrier-modem pool |
 | `ge` (ambiguous) | `ge` is **Georgia**. Germany is `de`, which has **no `mbl` stock** — `mbl-de` always fails |
 | `carrier` / `city` described as soft hints that silently widen | **Hard.** On the live gateway (release `d2e9f99e`) `carrier`, `city` and `state` are exact filters that are never dropped on a retry; no match refuses with `E_NO_STOCK_COUNTRY`. `city`/`state` match peers only, so they refuse on `mbl`. The 0.13.x docs called them soft; corrected 2026-11-03 |
 | Session routes unscoped, "lock them down until 0.6.x" | Per-customer scoping shipped in **0.6.0** and has been on npm for several releases |

@@ -37,7 +37,7 @@ reserved and how exclusive it can be.
 | | `-mbl-` private (Modem pool) | `-peer-` private (Peer network) |
 |---|---|---|
 | What you reserve | Dedicated 4G/5G mobile modems, **pulled out of the shared pool and exclusively yours** for the term | **Committed capacity** on the peer network - a guaranteed share under your own credentials (community-shared devices, so not locked hardware) |
-| Coverage | 6 countries (US, GB, FR, NL, PL, GE — **`ge` is Georgia**) | ~82–120 countries |
+| Coverage | Check `pools.mbl` for current carrier-modem stock (`ge` is Georgia) | [Current peer country stock](https://api.proxies.sx/v1/gateway/pool/stock) in `pools.peer` |
 | IP behaviour | Most stable exit behaviour; `-sid-` + `-rot-sticky` pins the modem (the carrier may still re-issue the IP) | IPs rotate naturally on the carrier - great when you *want* rotation |
 | Best for | Held sessions, consistent throughput, full isolation | Wide country reach, high-volume rotating workloads |
 | Exclusivity | Full - no other customer routes through your modems | Committed, not exclusive - peers stay part of the shared community network |

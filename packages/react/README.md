@@ -145,7 +145,7 @@ countries **that pool actually has stock in**:
   `us`, `gb`, `fr`, `nl`, `pl`, `ge`. Adding anything else mints a username the
   gateway cannot fill. The classic trap is `de`: `mbl-de` has **no stock** and
   always fails, and `ge` is **Georgia**, not Germany.
-- `pool="peer"` — the flagship network, ~82–120 countries. This is the setting
+- `pool="peer"` — the flagship network, country coverage varies with live stock. This is the setting
   to change when you want a wide country list; widening `countries` on its own
   leaves the pool token at `mbl` and every extra country breaks.
 
