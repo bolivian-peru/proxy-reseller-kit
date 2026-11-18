@@ -360,17 +360,55 @@ describe('ProxiesClient', () => {
     expect((init as RequestInit).method).toBeUndefined(); // GET (default)
   });
 
-  it('mailPorts reads which mail ports the account may unlock', async () => {
-    const fetchMock = mockFetch(200, { unlockable: [465, 587] });
+  it('mailPorts reads which mail ports the account may unlock, with limits and key figures', async () => {
+    const fetchMock = mockFetch(200, {
+      unlockable: [465, 587],
+      switchOn: true,
+      rules: { ports: [465, 587], pools: ['mbl'], countries: ['US'], maxKeysPerReseller: 25 },
+      limits: { openPerKey: 5, secondsPerTunnel: 600, mbPerTunnel: 50, opensPerKeyHour: 120, mbPerKeyDay: 500, hostsPerKeyDay: 20 },
+      keys: [
+        {
+          keyId: '65fabc', label: 'mail', enabled: true, unlockedPorts: [587], closedByProvider: false, closedAt: null,
+          openNow: 1, opensThisHour: 3, mbToday: 0.2, hostsToday: 1, tunnelsToday: 3, tunnels7d: 9, mb7d: 0.5,
+          lastOpenedAt: '2026-11-18T03:00:00.000Z', atLimit: [],
+        },
+      ],
+      observedAt: '2026-11-18T03:00:05.000Z',
+    });
     const client = new ProxiesClient({
       apiKey: 'psx_x',
       fetch: fetchMock as unknown as typeof fetch,
     });
     const res = await client.poolKeys.mailPorts();
     expect(res.unlockable).toEqual([465, 587]);
+    expect(res.limits?.openPerKey).toBe(5);
+    expect(res.keys?.[0]?.unlockedPorts).toEqual([587]);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toContain('/reseller/pool-keys/mail-ports');
     expect((init as RequestInit).method).toBeUndefined(); // GET (default)
+  });
+
+  it('mailTunnels builds query string with keyId / before / limit', async () => {
+    const fetchMock = mockFetch(200, { tunnels: [], nextBefore: null });
+    const client = new ProxiesClient({
+      apiKey: 'psx_x',
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const page = await client.poolKeys.mailTunnels({
+      keyId: '65fabc',
+      before: new Date('2026-11-18T03:00:00Z'),
+      limit: 20,
+    });
+    expect(page).toEqual({ tunnels: [], nextBefore: null });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/reseller/pool-keys/mail-ports/tunnels?');
+    expect(url).toContain('keyId=65fabc');
+    expect(url).toContain('before=2026-11-18T03%3A00%3A00.000Z');
+    expect(url).toContain('limit=20');
+    expect((init as RequestInit).method).toBeUndefined(); // GET (default)
+    await client.poolKeys.mailTunnels();
+    expect(fetchMock.mock.calls[1]![0]).toMatch(/\/mail-ports\/tunnels$/);
+    await expect(client.poolKeys.mailTunnels({ limit: 0 })).rejects.toThrow(/limit must be > 0/);
   });
 
   it('create and update send unlockedPorts in the body, null included', async () => {

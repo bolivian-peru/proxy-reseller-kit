@@ -5,7 +5,9 @@ import type {
   TopUpPoolAccessKeyInput,
   PoolAccessKey,
   PoolKeyOperation,
-  MailSubmissionPort,
+  MailPortsState,
+  MailTunnelPage,
+  MailTunnelQueryOpts,
   PoolAccessKeyAuditEvent,
   AuditQueryOpts,
   PakUsageSeries,
@@ -293,9 +295,10 @@ export class PoolKeysApi {
   }
 
   /**
-   * Which mail ports (465, 587) this reseller account may unlock on its keys.
-   * `[]` means mail ports are not enabled for the account: do not offer the
-   * option. See {@link PoolAccessKey.unlockedPorts}.
+   * Which mail ports (465, 587) this reseller account may unlock on its keys,
+   * the rules and limits, and today's figures for each of your mail keys.
+   * `unlockable: []` means mail ports are not enabled for the account: do not
+   * offer the option. See {@link PoolAccessKey.unlockedPorts}.
    *
    * @example
    * ```ts
@@ -305,8 +308,37 @@ export class PoolKeysApi {
    * }
    * ```
    */
-  mailPorts(): Promise<{ unlockable: MailSubmissionPort[] }> {
-    return this.client.request<{ unlockable: MailSubmissionPort[] }>('/reseller/pool-keys/mail-ports');
+  mailPorts(): Promise<MailPortsState> {
+    return this.client.request<MailPortsState>('/reseller/pool-keys/mail-ports');
+  }
+
+  /**
+   * Mail connections of your keys, newest first (kept 90 days). Page with
+   * `{ before: page.nextBefore }`.
+   *
+   * @example
+   * ```ts
+   * const page = await proxies.poolKeys.mailTunnels({ keyId, limit: 50 });
+   * const refused = page.tunnels.filter(t => t.reason === 'connect_failed');
+   * ```
+   */
+  async mailTunnels(opts: MailTunnelQueryOpts = {}): Promise<MailTunnelPage> {
+    const qs = new URLSearchParams();
+    if (opts.keyId) qs.set('keyId', opts.keyId);
+    if (opts.before) {
+      const iso = opts.before instanceof Date ? opts.before.toISOString() : opts.before;
+      qs.set('before', iso);
+    }
+    if (opts.limit !== undefined) {
+      if (opts.limit <= 0) {
+        throw new ProxiesConfigError('poolKeys.mailTunnels: limit must be > 0');
+      }
+      qs.set('limit', String(opts.limit));
+    }
+    const tail = qs.toString();
+    return this.client.request<MailTunnelPage>(
+      `/reseller/pool-keys/mail-ports/tunnels${tail ? '?' + tail : ''}`,
+    );
   }
 
   /**
