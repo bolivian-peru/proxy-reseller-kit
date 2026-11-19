@@ -1,0 +1,8 @@
+# Commit identities used by the Proxies.sx maintainer's own machines and agents.
+# Four April 2026 commits carried a GitHub noreply address that GitHub resolves to an
+# unrelated account; ten carried an Anthropic noreply address. All were made and pushed
+# by the maintainer (bolivian-peru). Nobody else has ever had write access.
+peruvian <kristijonasgn@gmail.com> peruvian <peruvian@users.noreply.github.com>
+peruvian <kristijonasgn@gmail.com> peruvian <noreply@anthropic.com>
+peruvian <kristijonasgn@gmail.com> bolivian-peru <dev@bolivian-peru.noreply.github.com>
+peruvian <kristijonasgn@gmail.com> Proxies.sx <dev@proxies.sx>
