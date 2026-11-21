@@ -252,7 +252,7 @@ Verify these limits against your own deployment before taking live payments:
 
 Remaining work is tracked in
 [issue #4](https://github.com/bolivian-peru/proxy-reseller-kit/issues/4).
-Custom integrations, including Portproof, do not use this starter and must be
+Custom integrations do not use this starter and must be
 assessed against their own code and deployment.
 
 ## Pick an integration path
