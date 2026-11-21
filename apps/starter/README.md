@@ -65,7 +65,7 @@ Remaining work is tracked in
 
 Provider lifecycle fixes do not automatically repair this application-level
 workflow. This limitation applies to `apps/starter`, not independently implemented
-custom integrations such as Portproof.
+custom integrations.
 
 ## Setup (10 minutes)
 

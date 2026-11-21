@@ -248,7 +248,7 @@ or dispute handling, and purchases recorded before the journal are treated as
 delivered. The flow is tested with fakes and a real PostgreSQL, not against the
 live provider. Remaining work is tracked in
 [issue #4](https://github.com/bolivian-peru/proxy-reseller-kit/issues/4).
-Portproof's custom integration does not use this starter; its local
+A custom integration does not use this starter; its local
 implementation and production deployment must be evaluated separately.
 
 ## Joint rollout
